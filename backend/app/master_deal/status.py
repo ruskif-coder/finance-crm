@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Статус мастер-сделки — что сейчас происходит с пакетом (владелец 19.10.2026).
+"""Статус мастер-сделки — что сейчас происходит с пакетом (владелец 19.10.2026, 02.11.2026).
 
 черновик → согласование → ждём 1С → выставление → ждём оплату → [ждём сканы] → архив.
-«Ждём сканы» — только у бумаги (оплачено, но сканов подписанных нет): у ЭДО подпись клиента придёт из Диадока, и из «ждём
-оплату» пакет идёт прямо в архив. Бумагу определяет подпись у нас (`signed_by_us_at`) или признак договора — пакет, ушедший
-бумагой, остаётся бумажным, даже если у договора потом поставили ЭДО.
-Первые два перехода ставит система: «В конструктор ДС» (ДС созданы → согласование) и «Подтвердить ДС» (→ ждём 1С); их откат —
-свои кнопки («Вернуть в раскладку»), потому что за ними стоят документы, а не только надпись. Дальше пакет двигают руками:
-вперёд на шаг — у кого есть редактирование мастер-сделок, назад на шаг — мастер или админ («мастер может и админ»).
-Архив бумаги — только со сканом к КАЖДОМУ ДС и УПД пакета (`issue.missing_scans`); это блокировка, не предупреждение."""
+Пакет, заведённый на старте ради первичного ДС (`issued_at_start`, 02.11.2026): черновик → согласование → ждём закрытия;
+«Отправить в ДО» на итоговой сверке возвращает его в черновик, и дальше он идёт обычным путём. «Ждём закрытия» стоит в
+списке ПЕРЕД «ждём 1С»: всё от «ждём 1С» — закрытые сделки (расчёт СК, `agency_terms.calc`), стартовый пакет к ним не относится.
+«Ждём сканы» — только у бумаги (оплачено, подписанных ещё нет). Бумагу определяет канал документов, уже ушедших клиенту
+(`sign_channel`), до отправки — признак договора: ушедшее бумагой остаётся бумагой, даже если у договора потом поставили ЭДО.
+Системные переходы (черновик, согласование, ждём закрытия, ждём 1С) ставят кнопки «В конструктор ДС», «Подтвердить ДС»,
+«Отправить в ДО»; их откат — свои кнопки, потому что за ними стоят документы, а не только надпись. Дальше пакет двигают
+руками: вперёд на шаг — у кого есть редактирование мастер-сделок, назад на шаг — мастер или админ. Условия шагов — по
+документам (`issue`): «ждём оплату» — все выставлены, архив — все подписаны; это блокировка, не предупреждение."""
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-DRAFT, AGREE, WAIT_1C, ISSUE, WAIT_PAY, WAIT_SCANS, ARCHIVE = STATUSES = (
-    "черновик", "согласование", "ждём 1С", "выставление", "ждём оплату", "ждём сканы", "архив")
-SYSTEM = (DRAFT, AGREE, WAIT_1C)        # в эти статусы — только системой (и их собственными кнопками отката)
+DRAFT, AGREE, WAIT_CLOSE, WAIT_1C, ISSUE, WAIT_PAY, WAIT_SCANS, ARCHIVE = STATUSES = (
+    "черновик", "согласование", "ждём закрытия", "ждём 1С", "выставление", "ждём оплату", "ждём сканы", "архив")
+SYSTEM = (DRAFT, AGREE, WAIT_CLOSE, WAIT_1C)   # в эти статусы — только системой (и их собственными кнопками отката)
 HIDDEN = (ARCHIVE,)                     # реестр по умолчанию не показывает
 PAPER = "бумага"
 
@@ -33,18 +35,23 @@ def channel_of(db: Session, m) -> Optional[str]:
 
 
 def is_paper(db: Session, m) -> bool:
-    """Подпись у нас — бумага навсегда; отправлено без подписи у нас — ушло по ЭДО и ЭДО остаётся, даже если признак договора
-    потом сменили (ревью 21.10.2026); до отправки — по признаку договора."""
-    if getattr(m, "signed_by_us_at", None):
-        return True
-    if getattr(m, "sent_at", None):
-        return False
+    """Бумага ли этот пакет: документы, уже ушедшие клиенту, держат свой канал (хоть один бумажный — бумага); ничего не ушло —
+    по признаку договора (ревью 21.10.2026: ушедшее по ЭДО не становится бумагой от смены признака)."""
+    from app.master_deal import issue as IS
+    gone = {getattr(d, "sign_channel", None) for d in IS.docs(db, m)} - {None}
+    if gone:
+        return PAPER in gone
     return channel_of(db, m) == PAPER
 
 
 def sequence(db: Session, m) -> tuple:
-    """Стадии ЭТОГО пакета: у ЭДО «ждём сканы» нет."""
-    return STATUSES if is_paper(db, m) else tuple(s for s in STATUSES if s != WAIT_SCANS)
+    """Стадии ЭТОГО пакета: у ЭДО нет «ждём сканы», «ждём закрытия» — только у пакета со стартовым ДС."""
+    skip = set()
+    if not is_paper(db, m):
+        skip.add(WAIT_SCANS)
+    if not getattr(m, "issued_at_start", False):
+        skip.add(WAIT_CLOSE)
+    return tuple(s for s in STATUSES if s not in skip)
 
 
 def label(db: Session, m) -> str:
@@ -66,45 +73,46 @@ def _step(db: Session, m, d: int) -> Optional[str]:
     return seq[j] if 0 <= i and 0 <= j < len(seq) else None
 
 
-def _missing(db: Session, m) -> list:
-    from app.master_deal.issue import missing_scans
-    return missing_scans(db, m)
+def _issue():
+    from app.master_deal import issue as IS
+    return IS
 
 
 def actions(db: Session, m, user) -> dict:
     """Что показать в карточке: куда можно руками вперёд и назад (None — кнопки нет)."""
     nxt, prv = _step(db, m, 1), _step(db, m, -1)
-    return {"next": nxt if nxt and m.status not in (DRAFT, AGREE) else None,
+    return {"next": nxt if nxt and m.status not in SYSTEM[:-1] else None,
             "prev": prv if prv and prv not in SYSTEM[:-1] and m.status not in SYSTEM and _can_back(user) else None,
             "channel": channel_of(db, m) if m.status in (WAIT_1C, ISSUE) else None}
+
+
+def _check_forward(db: Session, m, to: str) -> None:
+    IS = _issue()
+    if m.status in SYSTEM[:-1]:
+        raise StatusError(409, "Этот шаг ставит система: ДС создаются «В конструктор ДС», подтверждаются «Подтвердить ДС», "
+                               "стартовый пакет возвращает в работу «Отправить в ДО»")
+    if to == ISSUE and not channel_of(db, m):
+        raise StatusError(409, "У договора не задано «Выставление» — ЭДО или бумага. Проставьте его в реестре договоров")
+    if to == WAIT_PAY:
+        left = IS.not_sent(db, m)
+        if left:
+            raise StatusError(409, "В «ждём оплату» — когда выставлены все документы. Не выставлены: " + ", ".join(left))
+    if to == ARCHIVE:
+        left = IS.unsigned(db, m)
+        if left or not IS.state(db, m)["total"]:
+            raise StatusError(409, "В архив — когда подписаны все документы пакета. Не подписаны: " + (", ".join(left) or "документов нет"))
 
 
 def move(db: Session, m, to: str, user) -> None:
     if to not in STATUSES:
         raise StatusError(400, "Статус: " + " / ".join(STATUSES))
     if to == _step(db, m, 1):
-        if m.status in (DRAFT, AGREE):
-            raise StatusError(409, "Этот шаг ставит система: ДС создаются «В конструктор ДС», подтверждаются «Подтвердить ДС»")
-        if to == ISSUE and not channel_of(db, m):
-            raise StatusError(409, "У договора не задано «Выставление» — ЭДО или бумага. Проставьте его в реестре договоров")
-        if to == WAIT_PAY and not getattr(m, "sent_at", None):
-            raise StatusError(409, "Сначала отметьте отправку клиенту — «Отправлено» на выставлении")
-        if to == ARCHIVE:
-            miss = _missing(db, m) if is_paper(db, m) else []
-            if miss:
-                raise StatusError(409, "В архив — когда приложены сканы подписанных ко всем документам. Нет: " + ", ".join(miss))
-            if not getattr(m, "docs_closed_at", None):
-                raise StatusError(409, "В архив — когда документы закрыты: отправлены в ЭДО или приложены сканы")
+        _check_forward(db, m, to)
     elif to == _step(db, m, -1):
         if m.status in SYSTEM:
             raise StatusError(409, "Назад отсюда — своей кнопкой: «Вернуть в раскладку» или снятие подтверждения ДС")
         if not _can_back(user):
             raise StatusError(403, "Вернуть статус назад может мастер или админ")
-        if m.status == WAIT_PAY:                          # назад из «ждём оплату» — отмена отправки
-            closed_by_send = m.docs_closed_at and not getattr(m, "signed_by_us_at", None)   # ЭДО: закрыто отправкой
-            m.sent_at = m.sent_by = m.track_no = None
-            if closed_by_send:
-                m.docs_closed_at = m.docs_closed_by = None
     else:
         raise StatusError(409, f"Двигаем на один шаг: из «{m.status}» — в соседний статус")
     m.status, m.updated_at = to, datetime.utcnow()
@@ -148,26 +156,36 @@ def todo(db: Session, m) -> Optional[dict]:
         if n:
             return _t(f"заявка юристу по ДС ({n})", "юрист", "warn")
         return _t(f"подтвердить ДС ({_drafts(db, m)})", "аккаунт")
+    if m.status == WAIT_CLOSE:
+        return _t("ДС на старте выпущен — закрытие после итоговой сверки", "аккаунт")
     if m.status == WAIT_1C:
         if not channel_of(db, m):
             return _t("в договоре не задано ЭДО или бумага", "аккаунт", "bad")
         return _t("ждём УПД из 1С", "1С")
+    return _todo_issue(db, m)
+
+
+def _todo_issue(db: Session, m) -> Optional[dict]:
+    """Выставление и дальше — по документам: отклонённый клиентом документ важнее всего остального."""
+    if m.status not in (ISSUE, WAIT_PAY, WAIT_SCANS):
+        return None
+    IS = _issue()
+    bad = IS.rejected(db, m)
+    if bad:
+        return _t("клиент отклонил: " + ", ".join(bad), "аккаунт", "bad")
     if m.status == ISSUE:
-        ch = channel_of(db, m)
-        if ch == "бумага":
-            if not getattr(m, "signed_by_us_at", None):
-                return _t("распечатать и подписать у нас", "финансы")
-            return _t("отправить клиенту · бумага", "аккаунт")
-        return _t("отправить в ЭДО" if ch else "в договоре не задано ЭДО или бумага", "аккаунт", "info" if ch else "bad")
+        if not channel_of(db, m):
+            return _t("в договоре не задано ЭДО или бумага", "аккаунт", "bad")
+        left = IS.not_sent(db, m)
+        return _t(f"выставить клиенту · осталось {len(left)}", "аккаунт") if left else _t("всё выставлено — ждём оплату", "финансы")
     if m.status == WAIT_PAY:
         return _t("ждём оплату", "финансы")
-    if m.status == WAIT_SCANS:
-        miss = _missing(db, m)
-        if not miss:
-            return _t("сканы на месте — закрыть пакет", "аккаунт")
-        late = m.sent_at and (datetime.utcnow() - m.sent_at).days >= _due_days(db)
-        return _t(f"прикрепить сканы подписанных · не хватает {len(miss)}", "аккаунт", "bad" if late else "warn")
-    return None
+    left = IS.unsigned(db, m)
+    if not left:
+        return _t("всё подписано — закрыть пакет", "аккаунт")
+    sent = IS.last_sent_at(db, m)
+    late = bool(sent and (datetime.utcnow() - sent).days >= _due_days(db))
+    return _t(f"ждём подписанных · не хватает {len(left)}", "аккаунт", "bad" if late else "warn")
 
 
 def _due_days(db: Session) -> int:
@@ -177,21 +195,14 @@ def _due_days(db: Session) -> int:
 
 def row_step(db: Session, m) -> Optional[str]:
     """Действие прямо из строки реестра (хендофф 19.10.2026): шаги-отметки без ввода данных; остальное — «открыть».
-    docs_1c / edo_sent / signed / paper_sent / paid / scans / archive; contract — красная ссылка в договор; None — «открыть».
-    `scans` не открывает окно, а раскрывает строку: сканов несколько, и каждый грузится в свою позицию."""
+    docs_1c / docs / paid / archive; contract — красная ссылка в договор; None — «открыть».
+    `docs` не открывает окно, а раскрывает строку: с 02.11.2026 у каждого документа своя отметка подписи."""
     if m.status == WAIT_1C:                      # до интеграции 1С — отметка руками; с 1С её поставит ответ «УПД готовы»
         return "docs_1c" if channel_of(db, m) else "contract"
     if m.status == ISSUE:
-        ch = channel_of(db, m)
-        if not ch:
-            return "contract"
-        if ch == "ЭДО" and not getattr(m, "signed_by_us_at", None):
-            return "edo_sent"
-        return "paper_sent" if getattr(m, "signed_by_us_at", None) else "signed"
-    if m.status == WAIT_PAY:
-        if is_paper(db, m):
-            return "paid"
-        return "archive" if getattr(m, "docs_closed_at", None) else None
-    if m.status == WAIT_SCANS:
-        return "scans" if _missing(db, m) else "archive"
+        return "docs" if channel_of(db, m) else "contract"
+    if m.status == WAIT_PAY and is_paper(db, m):
+        return "paid"
+    if m.status in (WAIT_PAY, WAIT_SCANS):
+        return "archive" if (not _issue().unsigned(db, m) and _issue().state(db, m)["total"]) else "docs"
     return None

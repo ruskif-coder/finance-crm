@@ -19,6 +19,7 @@ from app.annex_tpl import doc_kind as DK
 from app.final_recon import closing as CL
 from app.master_deal import layout as LY
 from app.master_deal import package as PK
+from app.master_deal import doc_sign as DSG
 from app.master_deal import primary as PR
 from app.master_deal import service as MS
 from app.master_deal.models import MasterDeal, MasterDealUpd
@@ -63,8 +64,10 @@ def _snapshot(ds: dict) -> list:
 
 def ready(db: Session, m: MasterDeal) -> list:
     """Почему нельзя в конструктор ДС — список причин (пусто — можно)."""
+    from app.master_deal import start as SP
+    start = SP.in_start_phase(db, m)               # ДС на старте: на план и без сверки (02.11.2026)
     lay = LY.layout(db, m)
-    deals_total = sum((CL.compute(db, d)["total_net"] or 0) for d in _deals(db, m))
+    deals_total = sum((CL.compute(db, d, plan_only=start)["total_net"] or 0) for d in _deals(db, m))
     why = []
     if m.status != "черновик":
         why.append("ДС пакета уже созданы")
@@ -79,8 +82,7 @@ def ready(db: Session, m: MasterDeal) -> list:
         why.append("не задан номер ДС")
     if abs(lay["total_net"] - deals_total) >= 0.05:
         why.append("сумма не сходится с суммой сделок")
-    g = MS.gate(db, m)
-    if not g["ok"]:
+    if not start and not MS.gate(db, m)["ok"]:
         why.append("сверка не завершена у всех сделок")
     return why
 
@@ -107,11 +109,17 @@ def create(db: Session, m: MasterDeal, user) -> list:
         raise MS.MasterError(409, reason or "У договора не определён шаблон ДС")
     pf, pt = _bounds(m.period)
     lay = LY.layout(db, m, with_src=True)
+    from app.master_deal import start as SP
+    issue_kind = "primary" if SP.in_start_phase(db, m) else "fact"
     prim = PR.primary_of(db, m)
     if prim is not None:
         from app.sales import annex_signed
         if annex_signed.signed_state(db, prim)["signed"]:        # подпись — перепроверка прямо сейчас
             return _close_on_signed(db, m, prim, lay)
+        if DSG.at_client(prim):
+            # Владелец 02.11.2026: пересобирать можно, пока ДС не ушёл клиенту; ушёл и не подписан — подмена документа на подписи.
+            raise MS.MasterError(409, f"Первичный ДС {prim.number or ''} уже у клиента («{prim.sign_state}») и не подписан — "
+                                      "отметьте подпись или отзовите его у клиента, потом закрывайте")
     made = []
     for ds in lay["ds"]:
         sub = SUB_ADDONS if ds["kind"] == "addons" else None
@@ -126,7 +134,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
             a = SalesAnnex(contract_id=c.id, period_from=pf, period_to=pt, date=annex_date(pf), total_amount=ds["gross"],
                            vat_rate=lay["vat_rate"], status="черновик", template_version_id=version.id,
                            created_by=getattr(user, "id", None), master_deal_id=m.id, kind=ds["kind"], sub_no=sub, rows=_snapshot(ds),
-                           issue_kind="fact")
+                           issue_kind=issue_kind)
             db.add(a)
         db.flush()
         by_deal: dict = {}
@@ -136,7 +144,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
         rate = (lay["vat_rate"] or 0) / 100.0
         for deal_id, net in by_deal.items():
             db.add(SalesDealAnnexAllocation(deal_id=deal_id, annex_id=a.id, amount=round(net * (1 + rate), 2)))
-        for k in ds["upds"]:
+        for k in ([] if issue_kind == "primary" else ds["upds"]):     # на старте УПД нет — они по факту, на закрытии
             db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=a.id, brand=k["brand"], service=k["service"],
                                  net=k["net"], vat=k["vat"], gross=k["gross"]))
         base = prim.no if (prim is not None and prim.no is not None) else (m.start_no or 0) + 1
@@ -156,6 +164,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
                 rebuild_frozen(db, a, c)
             except Exception as e:                     # HTTPException сборки — понятным отказом пакета
                 raise MS.MasterError(getattr(e, "status_code", 409), f"Первичный ДС не пересобрался: {getattr(e, 'detail', e)}")
+            DSG.issued(db, a, user, reason="пересобран по факту")   # новый текст — новый круг согласования с клиентом
     m.status, m.updated_at = "согласование", datetime.utcnow()
     db.flush()
     return made
@@ -174,6 +183,10 @@ def _close_on_signed(db: Session, m: MasterDeal, prim, lay: dict) -> list:
     prim.master_deal_id = m.id                          # ДС остаётся первичным, без снимка строк — печатается как был подписан
     m.status, m.updated_at = "согласование", datetime.utcnow()
     db.flush()
+    # Подтверждать нечего — ДС подписан и с номером: «Подтвердить ДС пакета» ответила бы «неподтверждённых нет», а системный
+    # статус руками не сдвинуть. Без этого пакет навсегда оставался в «согласовании» (ревью 02.11.2026).
+    after_confirm(db, m)
+    db.flush()
     return [{"id": prim.id, "kind": "primary_signed", "number": prim.number or "первичный ДС"}]
 
 
@@ -181,9 +194,14 @@ def revert(db: Session, m: MasterDeal) -> int:
     """«Вернуть в раскладку»: удалить черновики ДС пакета. Нельзя, если ДС подтверждён или по нему открыта заявка юристу."""
     from app.sales.models import SalesAnnex
     PK._editable(db, m)
+    from app.master_deal import start as SP
     rows = db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id).all()
     # Первичный ДС пакета: подписанный (без снимка строк) — только отвязать; пересобранный по факту (со снимком) — назад нельзя.
-    prim = [a for a in rows if a.issue_kind == "primary"]
+    # Стартовый пакет (02.11.2026): на старте его ДС — обычные черновики этого пакета; на закрытии подписанный ДС старта
+    # остаётся в своём пакете (отвязывать некуда), пересобранный — назад нельзя.
+    prim = [] if SP.in_start_phase(db, m) else [a for a in rows if a.issue_kind == "primary"]
+    if m.issued_at_start and prim and all(DSG.is_signed(a) for a in prim):
+        return _revert_signed_start(db, m)
     if any(a.rows is not None for a in prim):
         raise MS.MasterError(409, "Первичный ДС уже пересобран по факту — вернуть в раскладку нельзя, правьте ДС в конструкторе")
     if any(a.no is not None for a in rows if a not in prim):
@@ -202,6 +220,14 @@ def revert(db: Session, m: MasterDeal) -> int:
     m.status, m.updated_at = "черновик", datetime.utcnow()
     db.flush()
     return len(rows)
+
+
+def _revert_signed_start(db: Session, m: MasterDeal) -> int:
+    """Стартовый пакет закрывался на подписанный ДС старта: убрать комплекты УПД, ДС остаётся в пакете как был подписан."""
+    n = db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).delete(synchronize_session=False)
+    m.status, m.updated_at = "черновик", datetime.utcnow()
+    db.flush()
+    return n
 
 
 def annexes_of(db: Session, m: MasterDeal) -> list:
@@ -259,3 +285,17 @@ def set_basis(db: Session, m: MasterDeal, upd_no: int, text_: Optional[str]) -> 
             raise MS.MasterError(400, err)
     k.basis_text = t
     db.flush()
+
+
+def after_confirm(db: Session, m: MasterDeal) -> bool:
+    """Все ДС пакета подтверждены — пакет уходит дальше: стартовый ждёт закрытия, обычный — УПД из 1С. Зовут ОБЕ кнопки:
+    «Подтвердить ДС пакета» в карточке и «Подтвердить номер» на странице ДС (до 02.11.2026 вторая пакет не двигала, и он
+    навсегда оставался в «согласовании»). True — статус сменился."""
+    from app.master_deal import start as SP
+    from app.sales.models import SalesAnnex
+    if m.status != "согласование":
+        return False
+    if db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id, SalesAnnex.no.is_(None)).count():
+        return False
+    m.status, m.updated_at = SP.status_after_confirm(db, m), datetime.utcnow()
+    return True

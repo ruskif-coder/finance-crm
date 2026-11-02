@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Выставление пакета: вилка ЭДО / бумага (владелец 19.10.2026).
+"""Выставление пакета — по документам (владелец 02.11.2026; прежняя версия 19.10 отмечала отправку на пакете целиком).
 
-ЭДО (до подключения интеграции): «отправлено в ЭДО» → сразу «ждём оплату», документы закрыты отправкой.
-Бумага: «подписано у нас» → «отправлено» (трек по желанию) → «ждём оплату»; висит «прикрепить сканы подписанных документов»,
-через N дней (настройка, по умолчанию 14) — красным. Архив — только когда документы закрыты."""
+У каждого документа — свой статус подписи (`doc_sign`). Пакет его только сводит:
+  «выставление» → «ждём оплату» — сам, когда выставлены ВСЕ документы (и руками — только при этом же условии);
+  архив — когда подписаны ВСЕ; бумага по-прежнему через «Оплачено» → «ждём сканы»;
+  отклонённый документ красит «что нужно сейчас» и называет себя.
+Поломки: пакет уходит в оплату с невыставленным УПД; в архив с отклонённым ДС; отклонение не видно в реестре."""
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,176 +16,125 @@ from app.master_deal import status as ST
 
 
 class _M:
-    def __init__(self, status="выставление", channel="бумага"):
+    def __init__(self, status="выставление", channel="ЭДО", start=False):
         self.id, self.code, self.status, self.channel, self.updated_at = 1, "M-T", status, channel, None
-        self.signed_by_us_at = self.signed_by_us_by = self.sent_at = self.sent_by = None
-        self.track_no = self.docs_closed_at = self.docs_closed_by = None
+        self.issued_at_start = start
+
+
+def _d(state, label, channel="ЭДО"):
+    return SimpleNamespace(sign_state=state, sign_channel=channel, label=label)
 
 
 class _U:
     id = 7
-    role = type("R", (), {"key": "role_8", "is_master": False})()
+    role = type("R", (), {"key": "admin", "is_master": True})()
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch):
-    # 19.10.2026: скан — к каждому документу; «сканов нет» = список недостающих документов
-    st = {"scans": 0}
+def env(monkeypatch):
+    st = {"docs": [_d("выставлен", "ДС № 2"), _d(None, "УПД № 1")], "sent_at": None}
     monkeypatch.setattr(ST, "channel_of", lambda db, m: m.channel)
-    monkeypatch.setattr(IS, "channel_of", lambda db, m: m.channel)
-    monkeypatch.setattr(IS, "missing_scans", lambda db, m: [] if st["scans"] else ["ДС № 2"])
-    monkeypatch.setattr(ST, "_missing", lambda db, m: [] if st["scans"] else ["ДС № 2"])
+    monkeypatch.setattr(IS, "docs", lambda db, m: st["docs"])
+    monkeypatch.setattr(IS, "doc_label", lambda d: d.label)
+    monkeypatch.setattr(IS, "last_sent_at", lambda db, m: st["sent_at"])
     monkeypatch.setattr(IS, "due_days", lambda db: 30)
-    monkeypatch.setattr(ST, "_due_days", lambda db: 30)
     return st
 
 
-def test_edo_send_closes_docs_and_goes_to_payment():
-    m = _M(channel="ЭДО")
-    IS.sent(None, m, _U(), None)
-    assert m.status == "ждём оплату" and m.sent_at and m.docs_closed_at and m.track_no is None
-
-
-def test_paper_needs_our_signature_before_sending():
+def test_pack_goes_to_payment_by_itself_when_every_doc_is_out(env):
     m = _M()
+    assert IS.sync(None, m) is False and m.status == "выставление", "УПД ещё не выставлен"
+    env["docs"][1].sign_state = "выставлен"
+    assert IS.sync(None, m) is True and m.status == "ждём оплату"
+
+
+def test_rejected_doc_holds_the_pack(env):
+    env["docs"][1].sign_state = "отклонён"
+    m = _M()
+    assert IS.sync(None, m) is False
     with pytest.raises(ST.StatusError) as e:
-        IS.sent(None, m, _U(), "RA123")
-    assert "подпиш" in e.value.message
-    IS.signed_by_us(None, m, _U())
-    IS.sent(None, m, _U(), " RA123 ")
-    assert m.status == "ждём оплату" and m.track_no == "RA123" and m.docs_closed_at is None
+        ST.move(None, m, "ждём оплату", _U())
+    assert "УПД № 1" in e.value.message
 
 
-def test_signed_by_us_only_for_paper_and_only_on_issue():
-    with pytest.raises(ST.StatusError):
-        IS.signed_by_us(None, _M(channel="ЭДО"), _U())
-    with pytest.raises(ST.StatusError):
-        IS.signed_by_us(None, _M(status="ждём 1С"), _U())
-
-
-def test_send_twice_is_refused():
-    m = _M(channel="ЭДО")
-    IS.sent(None, m, _U(), None)
-    m.status = "выставление"
-    with pytest.raises(ST.StatusError):
-        IS.sent(None, m, _U(), None)
-
-
-def test_scans_close_paper_docs_and_last_removed_reopens(_env):
-    m = _M(status="ждём оплату")
-    m.signed_by_us_at = m.sent_at = datetime.utcnow()      # бумага уходит клиенту только после «подписано у нас» (`issue.sent`)
-    _env["scans"] = 1
-    IS.scans_changed(None, m, _U())
-    assert m.docs_closed_at
-    _env["scans"] = 0
-    IS.scans_changed(None, m, _U())
-    assert m.docs_closed_at is None
-
-
-def test_scans_do_not_touch_edo_docs(_env):
-    m = _M(status="ждём оплату", channel="ЭДО")
-    m.docs_closed_at = datetime.utcnow()
-    IS.scans_changed(None, m, _U())
-    assert m.docs_closed_at, "у ЭДО документы закрыты отправкой — сканы их не открывают"
-
-
-def test_hand_move_issue_to_payment_needs_sending():
-    with pytest.raises(ST.StatusError) as e:
-        ST.move(None, _M(), "ждём оплату", _U())
-    assert "отправ" in e.value.message
-
-
-def test_archive_needs_closed_docs(_env):
-    """Бумага — в архив из «ждём сканы» и со всеми сканами (подробно — test_master_deal_scans); ЭДО — из «ждём оплату»."""
-    m = _M(status="ждём сканы")
-    m.signed_by_us_at = datetime.utcnow()
+def test_archive_needs_every_doc_signed(env):
+    env["docs"] = [_d("подписан", "ДС № 2"), _d("выставлен", "УПД № 1")]
+    m = _M("ждём оплату")
     with pytest.raises(ST.StatusError) as e:
         ST.move(None, m, "архив", _U())
-    assert "скан" in e.value.message
-    _env["scans"] = 1
-    m.docs_closed_at = datetime.utcnow()
+    assert "УПД № 1" in e.value.message and "ДС № 2" not in e.value.message
+    env["docs"][1].sign_state = "подписан"
     ST.move(None, m, "архив", _U())
     assert m.status == "архив"
 
 
-@pytest.mark.parametrize("prep,text,who,tone", [
-    (lambda m: None, "распечатать и подписать у нас", "финансы", "info"),
-    (lambda m: setattr(m, "signed_by_us_at", datetime.utcnow()), "отправить клиенту · бумага", "аккаунт", "info"),
+def test_paper_still_goes_through_paid_and_waiting_for_signed(env):
+    env["docs"] = [_d("выставлен", "ДС № 2", "бумага")]
+    m = _M("ждём оплату", channel="бумага")
+    assert ST.sequence(None, m)[-3:] == ("ждём оплату", "ждём сканы", "архив")
+    ST.move(None, m, "ждём сканы", _U())
+    with pytest.raises(ST.StatusError):
+        ST.move(None, m, "архив", _U())
+
+
+def test_no_docs_no_archive(env):
+    env["docs"] = []
+    with pytest.raises(ST.StatusError):
+        ST.move(None, _M("ждём оплату"), "архив", _U())
+
+
+@pytest.mark.parametrize("docs,status,text,tone", [
+    ([("выставлен", "ДС № 2"), (None, "УПД № 1")], "выставление", "выставить клиенту · осталось 1", "info"),
+    ([("выставлен", "ДС № 2"), ("отклонён", "УПД № 1")], "выставление", "клиент отклонил: УПД № 1", "bad"),
+    ([("подписан", "ДС № 2"), ("отклонён", "УПД № 1")], "ждём оплату", "клиент отклонил: УПД № 1", "bad"),
+    ([("подписан", "ДС № 2"), ("выставлен", "УПД № 1")], "ждём оплату", "ждём оплату", "info"),
+    ([("подписан", "ДС № 2"), ("выставлен", "УПД № 1")], "ждём сканы", "ждём подписанных · не хватает 1", "warn"),
+    ([("подписан", "ДС № 2")], "ждём сканы", "всё подписано — закрыть пакет", "info"),
 ])
-def test_todo_paper_on_issue(prep, text, who, tone):
-    m = _M()
-    prep(m)
-    t = ST.todo(None, m)
-    assert (t["text"], t["who"], t["tone"]) == (text, who, tone)
+def test_todo(env, docs, status, text, tone):
+    env["docs"] = [_d(s, lab) for s, lab in docs]
+    t = ST.todo(None, _M(status))
+    assert (t["text"], t["tone"]) == (text, tone)
 
 
-def test_todo_edo_on_issue():
-    assert ST.todo(None, _M(channel="ЭДО"))["text"] == "отправить в ЭДО"
+def test_waiting_for_signed_turns_red_after_due_days(env):
+    env["docs"] = [_d("выставлен", "ДС № 2")]
+    env["sent_at"] = datetime.utcnow() - timedelta(days=31)
+    assert ST.todo(None, _M("ждём сканы"))["tone"] == "bad"
 
 
-def test_todo_payment_and_scans(_env):
-    m = _M(status="ждём оплату")
-    m.sent_at = datetime.utcnow() - timedelta(days=3)
-    assert (ST.todo(None, m)["text"], ST.todo(None, m)["who"]) == ("ждём оплату", "финансы")
-    m.status = "ждём сканы"
-    t = ST.todo(None, m)
-    assert t["text"] == "прикрепить сканы подписанных · не хватает 1" and t["tone"] == "warn"
-    m.sent_at = datetime.utcnow() - timedelta(days=31)
-    assert ST.todo(None, m)["tone"] == "bad"
-    _env["scans"] = 1
-    assert ST.todo(None, m)["text"] == "сканы на месте — закрыть пакет"
-
-
-def test_scans_still_close_paper_if_contract_switched_to_edo_later(_env):
-    """Пакет ушёл бумагой, потом у договора поставили ЭДО — сканы всё равно закрывают этот пакет (ветку держит подпись у нас)."""
-    m = _M(status="ждём оплату", channel="ЭДО")
-    m.signed_by_us_at = m.sent_at = datetime.utcnow()
-    _env["scans"] = 1
-    IS.scans_changed(None, m, _U())
-    assert m.docs_closed_at
-
-
-def test_back_from_payment_cancels_sending():
-    """Откат «ждём оплату» → «выставление» — отмена отправки: отметку снимаем, иначе отправить снова нельзя."""
-    master = type("R", (), {"key": "role_9", "is_master": True})()
-    u = _U()
-    u.role = master
-    m = _M(channel="ЭДО")
-    IS.sent(None, m, u, None)
-    ST.move(None, m, "выставление", u)
-    assert m.sent_at is None and m.docs_closed_at is None
-    IS.sent(None, m, u, None)
-    assert m.status == "ждём оплату"
-    p = _M()
-    IS.signed_by_us(None, p, u)
-    IS.sent(None, p, u, "RA1")
-    ST.move(None, p, "выставление", u)
-    assert p.sent_at is None and p.track_no is None and p.signed_by_us_at, "подпись у нас — физический факт, её не снимаем"
-
-
-# ── действие из строки реестра (хендофф «мастер и шапка», 19.10.2026): только шаги-отметки без ввода данных ──
-
-@pytest.mark.parametrize("status,channel,prep,want", [
-    ("выставление", "ЭДО", None, "edo_sent"),
-    ("выставление", "бумага", None, "signed"),
-    ("выставление", "бумага", "signed", "paper_sent"),
-    ("ждём оплату", "бумага", "sent", "paid"),
-    ("ждём оплату", "бумага", "closed", "paid"),
-    ("ждём оплату", "ЭДО", "closed", "archive"),
-    ("ждём 1С", None, None, "contract"),
-    ("ждём 1С", "ЭДО", None, "docs_1c"),
-    ("согласование", "ЭДО", None, None),
-    ("архив", "ЭДО", "closed", None),
+@pytest.mark.parametrize("status,channel,signed,want", [
+    ("выставление", "ЭДО", False, "docs"),
+    ("выставление", None, False, "contract"),
+    ("ждём оплату", "бумага", False, "paid"),
+    ("ждём оплату", "ЭДО", False, "docs"),
+    ("ждём оплату", "ЭДО", True, "archive"),
+    ("ждём сканы", "бумага", False, "docs"),
+    ("ждём сканы", "бумага", True, "archive"),
 ])
-def test_row_step(status, channel, prep, want):
-    m = _M(status=status, channel=channel)
-    now = datetime.utcnow()
-    if prep in ("signed", "sent"):
-        m.signed_by_us_at = now
-    if prep == "sent":
-        m.sent_at = now
-    if prep == "closed":
-        m.sent_at = m.docs_closed_at = now
-        if channel == "бумага":                 # бумага ушла клиенту только после «подписано у нас»
-            m.signed_by_us_at = now
-    assert ST.row_step(None, m) == want
+def test_row_step(env, status, channel, signed, want):
+    env["docs"] = [_d("подписан" if signed else "выставлен", "ДС № 2", channel or "ЭДО")]
+    assert ST.row_step(None, _M(status, channel)) == want
+
+
+def test_waiting_for_closing_is_start_packs_only_and_not_a_closed_status():
+    from app.agency_terms import calc
+    assert ST.STATUSES.index("ждём закрытия") < ST.STATUSES.index("ждём 1С")
+    assert "ждём закрытия" not in calc._done_statuses(), "стартовый пакет не закрыт — в расчёт СК не идёт"
+    assert "ждём закрытия" not in ST.sequence(None, _M("черновик"))
+    assert "ждём закрытия" in ST.sequence(None, _M("черновик", start=True))
+    with pytest.raises(ST.StatusError):                                  # ставит только система
+        ST.move(None, _M("ждём закрытия", start=True), "ждём 1С", _U())
+    assert ST.todo(None, _M("ждём закрытия", start=True))["who"] == "аккаунт"
+
+
+def test_back_from_waiting_for_signed_to_payment_keeps_docs(env):
+    m = _M("ждём сканы", channel="бумага")
+    env["docs"] = [_d("выставлен", "ДС № 2", "бумага")]
+    ST.move(None, m, "ждём оплату", _U())
+    assert m.status == "ждём оплату" and env["docs"][0].sign_state == "выставлен", "назад — не отмена отправки документов"
+
+
+@pytest.mark.parametrize("name,ok", [("скан.pdf", True), ("скан.JPG", True), ("все.zip", False), ("x.rar", False)])
+def test_one_file_one_document_no_archives(name, ok):
+    assert IS.scan_ext_ok(name) is ok

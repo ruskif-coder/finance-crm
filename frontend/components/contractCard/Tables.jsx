@@ -41,7 +41,7 @@ export function Masters({ rows }) {
                  { t: 'пакет', w: '120px', mono: true, bold: true, cell: m => <Link href={`/accounts/master/${m.code}`} style={link}>{m.code}</Link> },
                  { t: 'период', w: '90px', mono: true, cell: m => m.period },
                  { t: 'статус', cell: m => m.status_label || m.status },
-                 { t: 'ушёл в ДО', w: '110px', mono: true, cell: m => fmtDateFull(m.sent_at) },
+                 { t: 'у клиента', w: '110px', mono: true, cell: m => fmtDateFull(m.sent_at) },
                  { t: 'документы закрыты', w: '150px', mono: true, cell: m => fmtDateFull(m.docs_closed_at) },
                ]} />
   )

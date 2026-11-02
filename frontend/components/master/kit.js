@@ -45,11 +45,14 @@ export const sameSettings = (a, b) => Object.keys(SETTING_LABEL).every(k => a?.[
 
 export const Dot = ({ c }) => <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: c, marginRight: 6, flex: '0 0 7px' }} />
 
+// Справка без тревоги (tone="info") — синяя, как подсказки экрана.
+const NOTE_INFO = ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)']
+
 export function Note({ tone = 'warn', children, style }) {
   // [подложка, рамка, текст, маркер]: маркер — яркий цвет смысла (--warning = оранжевый), текст — тёмный тон той же гаммы.
   const t = { warn: ['var(--warning-bg)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],
     ok: ['var(--income-tint)', 'var(--income-border)', 'var(--income-fg)', 'var(--income)'],
-    bad: ['var(--danger-bg)', 'var(--danger-border)', 'var(--danger-fg)', 'var(--danger)'] }[tone]
+    bad: ['var(--danger-bg)', 'var(--danger-border)', 'var(--danger-fg)', 'var(--danger)'] }[tone] || NOTE_INFO
   return (
     <div style={{ display: 'flex', gap: 10, padding: '10px 14px', borderRadius: 12, background: t[0], border: `1px solid ${t[1]}`, color: t[2], fontSize: 12.5, lineHeight: 1.5, ...style }}>
       <span style={{ width: 7, height: 7, borderRadius: 2, background: t[3], marginTop: 6, flex: '0 0 7px' }} /><span style={{ minWidth: 0 }}>{children}</span>

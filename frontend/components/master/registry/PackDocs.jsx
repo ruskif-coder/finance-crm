@@ -9,7 +9,7 @@ import { downloadFile } from '@/lib/download'
 import { rub0 } from '@/lib/salesFormat'
 import { SVC_DOT } from '@/lib/masterStatus'
 import { MONO } from '@/components/salesTableKit'
-import { SignBadge, downloadScan, signFrame } from '@/components/master/docParts'
+import { SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
 
 const GRID = { display: 'grid', gridTemplateColumns: '260px minmax(120px,1fr) 150px max-content', gap: 10, alignItems: 'center' }
 const ICON = { dl: 'M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14', none: 'M5 12h14', ok: 'M5 12.5l4.5 4.5L19 7.5', plus: 'M12 5v14M5 12h14',
@@ -57,14 +57,16 @@ function Doc({ label, num, ready, title, onClick, tail }) {
   )
 }
 
-function KitRow({ k, i, paper, code, onPick, setErr }) {
+function KitRow({ k, i, code, onPick, setErr, canEdit, onDone }) {
+  const s = k.sign?.state || 'upd'
   return (
     <div style={{ ...GRID, padding: '5px 10px', borderTop: '1px solid var(--border-row)', minWidth: 0 }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
-        <span aria-hidden style={{ width: 3, height: 18, borderRadius: 2, background: k.signed === 'both' ? 'var(--income)' : signFrame(k.signed, true), flex: '0 0 3px' }} />
+        <span aria-hidden style={{ width: 3, height: 18, borderRadius: 2, background: signFrame(s, true), flex: '0 0 3px' }} />
         <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
           Комплект {i}{k.upd_doc_no ? ` · УПД № ${k.upd_doc_no}` : ''}</span>
-        <SignBadge s={k.signed} small />
+        <SignBadge s={s} small />
+        {canEdit && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={k.sign} onDone={onDone} setErr={setErr} small />}
       </span>
       <span title={k.deals.length ? `сделки: ${k.deals.join(', ')}` : undefined}
         style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.group}</span>
@@ -78,7 +80,7 @@ function KitRow({ k, i, paper, code, onPick, setErr }) {
         <span data-noexp style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
           <Doc label="Счёт" num={k.invoice_no} ready title={`Счёт${k.invoice_no ? ` № ${k.invoice_no}` : ''} · из 1С`} />
           <Doc label="УПД" num={k.upd_doc_no} ready title={`УПД${k.upd_doc_no ? ` № ${k.upd_doc_no}` : ''} · из 1С`}
-            tail={paper ? <ScanTail scan={k.scan} what="УПД" onScan={() => downloadScan(code, k.scan, setErr)} onPick={() => onPick(`u${k.upd_no}`)} /> : null} />
+            tail={scanOpen(k) ? <ScanTail scan={k.scan} what="УПД" onScan={() => downloadScan(code, k.scan, setErr)} onPick={() => onPick(`u${k.upd_no}`)} /> : null} />
           <Doc label="Отчёт" ready title="Отчёт · из 1С" />
         </span>
       )}
@@ -86,7 +88,7 @@ function KitRow({ k, i, paper, code, onPick, setErr }) {
   )
 }
 
-function Pack({ d, kitStart, status, canEdit, paper, code, onPick, setErr }) {
+function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone }) {
   const edit = canEdit && EDIT_STATUSES.has(status)
   const extra = d.kind === 'extra'
   return (
@@ -94,7 +96,8 @@ function Pack({ d, kitStart, status, canEdit, paper, code, onPick, setErr }) {
       <div style={{ ...GRID, padding: '6px 10px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
           <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>{d.number}</span>
-          <SignBadge s={d.signed} small />
+          <SignBadge s={d.sign?.state || 'none'} small />
+          {canEdit && <SignActions code={code} target={{ annex_id: d.annex_id }} sign={d.sign} onDone={onDone} setErr={setErr} small />}
         </span>
         <span title={`Услуги в ДС: ${d.services.join(', ')}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           <span style={{ display: 'flex', alignItems: 'baseline', gap: '4px 8px', flex: '0 0 auto' }}>
@@ -123,25 +126,24 @@ function Pack({ d, kitStart, status, canEdit, paper, code, onPick, setErr }) {
             <span title="ДС — скачать" onClick={() => downloadFile(d.doc_url, null, setErr)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 9px', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
               <Svg d={ICON.dl} />ДС pdf</span>
-            {paper && <ScanTail scan={d.scan} what="ДС" onScan={() => downloadScan(code, d.scan, setErr)} onPick={() => onPick(`a${d.annex_id}`)} />}
+            {scanOpen(d) && <ScanTail scan={d.scan} what="ДС" onScan={() => downloadScan(code, d.scan, setErr)} onPick={() => onPick(`a${d.annex_id}`)} />}
           </span>
         </span>
       </div>
-      {d.kits.map((k, j) => <KitRow key={k.upd_no} k={k} i={kitStart + j} paper={paper} code={code} onPick={onPick} setErr={setErr} />)}
+      {d.kits.map((k, j) => <KitRow key={k.upd_no} k={k} i={kitStart + j} code={code} onPick={onPick} setErr={setErr} canEdit={canEdit} onDone={onDone} />)}
     </div>
   )
 }
 
-/** Все ДС пакета. Сканы на ДС/УПД показываются только у бумаги и только когда их уже ждут (после отправки клиенту). */
-export default function PackDocs({ m, canEdit, onPick, setErr }) {
-  const scansOn = !!m.docs?.scans?.need
+/** Все ДС пакета с отметками подписи каждого документа (02.11.2026). Скан — только у бумаги, ушедшей клиенту. */
+export default function PackDocs({ m, canEdit, onPick, setErr, onDone }) {
   let start = 1
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: 10, alignItems: 'start' }}>
       {m.docs.ds.map(d => {
         const s = start
         start += d.kits.length
-        return <Pack key={d.annex_id} d={d} kitStart={s} status={m.status} canEdit={canEdit} paper={scansOn} code={m.code} onPick={onPick} setErr={setErr} />
+        return <Pack key={d.annex_id} d={d} kitStart={s} status={m.status} canEdit={canEdit} code={m.code} onPick={onPick} setErr={setErr} onDone={onDone} />
       })}
     </div>
   )

@@ -168,21 +168,18 @@ def test_signed_primary_stays_and_upds_close_by_fact(env):
     m = _package(db, deals, u, {"addons_separate": False})
     p = _primary(db, m, deals, u, confirmed_no=None)
     total_before = float(p.total_amount)
-    orig = annex_signed._from_file
-    annex_signed._from_file = lambda db, a: {"signed": True, "at": None}
-    try:
-        info = PR.info(db, m, LY.layout(db, m)["total_gross"])
-        assert info["branch"] == "signed" and info["diff"] < 0
-        made = TA.create(db, m, u)
-        assert made[0]["kind"] == "primary_signed" and made[0]["id"] == p.id
-        assert float(p.total_amount) == total_before and p.rows is None and p.issue_kind == "primary", "подписанный ДС не тронут"
-        assert db.query(MasterDealUpd).filter_by(master_deal_id=m.id, annex_id=p.id).count() >= 1
-        assert TA.revert(db, m) == 1 and p.master_deal_id is None, "вернуть — только отвязать, ДС остаётся"
-        p.total_amount = 1.0                                 # подписан на сумму меньше закрытия
-        with pytest.raises(MS.MasterError):
-            TA.create(db, m, u)
-    finally:
-        annex_signed._from_file = orig
+    p.sign_state = "подписан"                                # отметка подписи на ДС (02.11.2026; прежде — файл ДС у сделки)
+    assert annex_signed.signed_state(db, p)["signed"]
+    info = PR.info(db, m, LY.layout(db, m)["total_gross"])
+    assert info["branch"] == "signed" and info["diff"] < 0
+    made = TA.create(db, m, u)
+    assert made[0]["kind"] == "primary_signed" and made[0]["id"] == p.id
+    assert float(p.total_amount) == total_before and p.rows is None and p.issue_kind == "primary", "подписанный ДС не тронут"
+    assert db.query(MasterDealUpd).filter_by(master_deal_id=m.id, annex_id=p.id).count() >= 1
+    assert TA.revert(db, m) == 1 and p.master_deal_id is None, "вернуть — только отвязать, ДС остаётся"
+    p.total_amount = 1.0                                     # подписан на сумму меньше закрытия
+    with pytest.raises(MS.MasterError):
+        TA.create(db, m, u)
 
 
 def _fill_signer(db, cp, fio, position):

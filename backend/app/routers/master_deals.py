@@ -3,7 +3,6 @@
 Здесь только ручки: разбор запроса, область видимости, журнал. Логика — пакет `app/master_deal` (scope, registry, view, files,
 status, issue, deal_stages, …). Пишущие ручки берут пакет через `_master_rw`: все сделки пакета в области пользователя и строка
 пакета заблокирована до коммита (аудит 20.10: иначе запись проходила, а ответ был 403; две параллельные отметки шли обе)."""
-from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -18,6 +17,7 @@ from app.master_deal import files as FL
 from app.master_deal import registry as RG
 from app.master_deal import scope as SC
 from app.master_deal import service as MS
+from app.master_deal import start as SP
 from app.master_deal import status as MST
 from app.master_deal import to_annex as TA
 from app.master_deal import view as VW
@@ -96,6 +96,24 @@ def deal_fork(deal_id: int, db: Session = Depends(get_db), user: User = Depends(
     """Что показать в модалке «Отправить в ДО»: уже в пакете / открытые пакеты того же договора и месяца / почему нельзя."""
     from app.master_deal import scope as SC
     return MS.fork(db, _deal(db, deal_id, user), SC.own_reps(db, user))
+
+
+@router.post("/deal/{deal_id}/start")
+def deal_start(deal_id: int, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """«Создать» ДС в карточке сделки (02.11.2026): пакет со стартовым ДС — одна сделка, раскладка по МП. Повторное нажатие
+    ведёт в тот же пакет. Отказ — почему нельзя (стадия, доходный договор, период)."""
+    d = _deal(db, deal_id, user)
+    _lock_deals(db, [d.id])
+    existed = MS.item_of(db, d.id) is not None
+    try:
+        m = SP.start(db, d, user)
+    except MS.MasterError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    db.commit()
+    if not existed:
+        log_action(db, user, "master_deal_start", "sales_deal", d.id, f"{d.code}: ДС на старте — мастер-сделка {m.code}")
+    return {"code": m.code}
 
 
 def _lock_deals(db: Session, ids) -> None:
@@ -320,8 +338,8 @@ def master_confirm_ds(code: str, db: Session = Depends(get_db), user: User = Dep
             AX.confirm_one(db, a, AX.ConfirmIn(), user)
             db.flush()                                 # сессии без autoflush: номер основного ДС должен быть виден ДС допов
             out.append(a)
-        if m.status == MST.AGREE:                      # все ДС пакета подтверждены — ждём 1С
-            m.status, m.updated_at = MST.WAIT_1C, datetime.utcnow()
+        db.flush()
+        TA.after_confirm(db, m)                        # все ДС пакета подтверждены — ждём 1С (стартовый пакет — ждёт закрытия)
         return out
     try:
         done = AX.commit_confirm(db, None, drafts[0].id, work)
@@ -351,35 +369,34 @@ def master_upd_basis(code: str, upd_no: int, payload: BasisIn, db: Session = Dep
 
 # ── выставление: ЭДО / бумага, сканы ──────────────────────────────────────────────────────────────
 
-class SentIn(BaseModel):
-    track_no: Optional[constr(max_length=64)] = None      # колонка varchar(64): длиннее — 422, а не 500 (аудит 20.10)
+class DocSignIn(BaseModel):
+    annex_id: Optional[int] = None                       # один ДС пакета …
+    upd_no: Optional[int] = None                         # … или один УПД
+    state: constr(max_length=20)
+    reason: Optional[constr(max_length=500)] = None      # отказ — причина клиента; отправка бумаги — трек
 
 
-def _issue_act(db: Session, code: str, user, fn, what: str):
+@router.post("/{code}/doc-sign")
+def master_doc_sign(code: str, payload: DocSignIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """Отметка подписи ОДНОГО документа пакета (02.11.2026): клиент может отказать в подписи одного документа, поэтому
+    отметки — у документа, а не у пакета. Все выставлены — пакет сам уходит в «ждём оплату»."""
+    from app.master_deal import doc_sign as DSG
+    from app.master_deal import issue as IS
     m = _master_rw(db, code, user)
+    doc = IS.find_doc(db, m, payload.annex_id, payload.upd_no)
+    if doc is None:
+        raise HTTPException(404, "Такого документа в пакете нет (или ДС ещё не подтверждён)")
     was = m.status
     try:
-        fn(m)
-    except MST.StatusError as e:
+        IS.mark_doc(db, m, doc, payload.state, user, payload.reason)
+    except DSG.SignError as e:
         db.rollback()
         raise HTTPException(e.status, e.message)
-    moved = DST.journal_tail(DST.follow(db, m, was, user), m.status)   # «Отправлено» уводит пакет в «ждём оплату» — сделки в «Оплату»
-    return _done(db, user, m, "master_deal_issue", f"{what}{moved}")
-
-
-@router.post("/{code}/issue/signed")
-def master_issue_signed(code: str, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
-    """Бумага: распечатано и подписано у нас."""
-    from app.master_deal import issue as IS
-    return _issue_act(db, code, user, lambda m: IS.signed_by_us(db, m, user), "подписано у нас")
-
-
-@router.post("/{code}/issue/sent")
-def master_issue_sent(code: str, payload: SentIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
-    """Отправлено клиенту → «ждём оплату». ЭДО — документы закрыты; бумага — ждём сканы."""
-    from app.master_deal import issue as IS
-    track = (payload.track_no or "").strip()
-    return _issue_act(db, code, user, lambda m: IS.sent(db, m, user, track), "отправлено клиенту" + (f", трек {track}" if track else ""))
+    moved = DST.journal_tail(DST.follow(db, m, was, user), m.status)   # пакет ушёл в «ждём оплату» — сделки в «Оплату»
+    if m.status != was:
+        CN.status_changed(db, m, was, user)
+    why = f" — {payload.reason.strip()}" if (payload.reason or "").strip() else ""
+    return _done(db, user, m, "master_deal_doc_sign", f"{IS.doc_label(doc)} — «{doc.sign_state}»{why}{moved}")
 
 
 @router.post("/{code}/files")

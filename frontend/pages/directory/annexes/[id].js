@@ -27,6 +27,7 @@ import { annexTemplatesApi, errorOf } from '@/lib/annexTemplatesApi'
 import AnnexQuickEdit from '@/components/annex/AnnexQuickEdit'
 import AnnexDateField from '@/components/annex/AnnexDateField'
 import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
+import { SignActions, SignBadge } from '@/components/master/docParts'
 
 const dm = (d) => fmtCalendarDate(d)
 
@@ -311,6 +312,13 @@ export default function AnnexAssembly() {
                 </span>
               )}
             </>
+          )}
+          {/* Подпись ДС вне мастер-сделки (02.11.2026): ДС пакета отмечают в карточке пакета — там отметка двигает и его статус. */}
+          {!!a?.no && !a.master && (
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+              <SignBadge s={a.sign?.state || 'none'} />
+              {mayEdit && <SignActions url={`/annexes/${a.id}/sign`} target={{}} sign={a.sign} onDone={setA} setErr={setErr} />}
+            </span>
           )}
         </span>
 

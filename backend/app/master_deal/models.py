@@ -32,7 +32,10 @@ class MasterDeal(Base):
     start_no = Column(Integer)                     # последний актуальный № ДС по договору; ДС пакета — от следующего
     moved = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))   # id строк-допов, перенесённых в основной ДС
     saved_by = Column(Integer, ForeignKey("users.id"))
-    # Выставление (2026-10-19_master_deal_issue.sql): ЭДО — отправкой закрыты документы; бумага — подпись у нас, отправка, сканы.
+    # Пакет заведён на старте ради первичного ДС (2026-11-02_start_pack_and_doc_sign.sql): одна сделка, без объединения.
+    issued_at_start = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Выставление пакетом (2026-10-19_master_deal_issue.sql). С 02.11.2026 подпись — у каждого документа (`doc_sign`), эти
+    # отметки остаются историей и кодом не читаются.
     signed_by_us_at = Column(DateTime)
     signed_by_us_by = Column(Integer, ForeignKey("users.id"))
     sent_at = Column(DateTime)
@@ -70,6 +73,8 @@ class MasterDealUpd(Base):
     onec_invoice_no = Column(String(40))     # № счёта, выпущенного 1С (2026-10-19_master_deal_upd_onec_numbers.sql)
     onec_upd_no = Column(String(40))         # № УПД, выпущенного 1С
     onec_invoice_date = Column(Date)         # дата счёта в 1С (2026-10-20_master_deal_operation_bridge.sql)
+    sign_state = Column(String(20))            # где УПД у клиента — правит только app/master_deal/doc_sign.py
+    sign_channel = Column(String(10))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
@@ -88,3 +93,19 @@ class MasterDealFile(Base):
     content_type = Column(String(120))
     uploaded_by = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class DocSignEvent(Base):
+    """История подписи документа — ДС или УПД (2026-11-02_start_pack_and_doc_sign.sql): отказ и повторная отправка дают
+    несколько кругов по одному документу, колонки документа держат только последний."""
+    __tablename__ = "doc_sign_events"
+    id = Column(Integer, primary_key=True)
+    annex_id = Column(Integer, ForeignKey("sales_annexes.id", ondelete="CASCADE"))
+    upd_id = Column(Integer, ForeignKey("master_deal_upds.id", ondelete="CASCADE"))
+    state = Column(String(20), nullable=False)
+    channel = Column(String(10))
+    source = Column(String(10), nullable=False, default="вручную", server_default="вручную")
+    reason = Column(Text)
+    file_id = Column(Integer, ForeignKey("master_deal_files.id", ondelete="SET NULL"))
+    by_user = Column(Integer, ForeignKey("users.id"))
+    at = Column(DateTime, nullable=False, server_default=func.now())

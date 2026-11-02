@@ -152,8 +152,8 @@ export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, 
         <span style={CAP}>Получится</span>
         <div style={{ display: 'flex', gap: 22, marginTop: 6 }}>
           <span><b style={{ fontFamily: MONO, fontSize: 24, color: 'var(--accent-fg)' }}>{lay.ds.length}</b><span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)' }}>ДС</span></span>
-          <span><b style={{ fontFamily: MONO, fontSize: 24, color: 'var(--accent-fg)' }}>{lay.upd_count}</b>
-            <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)' }}>{plural(lay.upd_count, ['комплект', 'комплекта', 'комплектов'])} закрывающих</span></span>
+          {!m.issue?.start?.phase && <span><b style={{ fontFamily: MONO, fontSize: 24, color: 'var(--accent-fg)' }}>{lay.upd_count}</b>
+            <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)' }}>{plural(lay.upd_count, ['комплект', 'комплекта', 'комплектов'])} закрывающих</span></span>}
         </div>
         <div style={{ fontSize: 12.5, marginTop: 8 }}>Пакет <b style={{ fontFamily: MONO }}>{rub2(lay.total_net)}</b> до НДС</div>
         <div style={{ fontSize: 12, marginTop: 4, color: sumOk ? 'var(--income-fg)' : 'var(--danger-fg)' }}>

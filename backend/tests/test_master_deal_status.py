@@ -11,8 +11,7 @@ class _M:
     def __init__(self, status, channel="ЭДО"):
         self.status, self.id, self.code, self.updated_at = status, 1, "M-T", None
         self.channel = channel
-        # выставление (19.10): отправка и закрытые документы — условия шагов «ждём оплату» и «архив»
-        self.signed_by_us_at = self.sent_at = self.docs_closed_at = None
+        self.issued_at_start = False
 
 
 class _U:
@@ -24,18 +23,21 @@ class _U:
 @pytest.fixture(autouse=True)
 def _channel(monkeypatch):
     monkeypatch.setattr(ST, "channel_of", lambda db, m: m.channel)
-    monkeypatch.setattr(ST, "_missing", lambda db, m: [])
+    from types import SimpleNamespace as NS
+    from app.master_deal import issue as IS
+    # 02.11.2026: условия «ждём оплату» и «архив» — документы пакета; здесь все подписаны, проверяем только право и шаг
+    monkeypatch.setattr(IS, "docs", lambda db, m: [NS(sign_state="подписан", sign_channel=m.channel)])
+    monkeypatch.setattr(IS, "doc_label", lambda d: "ДС № 1")
 
 
 def test_order_and_values():
-    assert ST.STATUSES == ("черновик", "согласование", "ждём 1С", "выставление", "ждём оплату", "ждём сканы", "архив")
+    assert ST.STATUSES == ("черновик", "согласование", "ждём закрытия", "ждём 1С", "выставление", "ждём оплату", "ждём сканы",
+                           "архив")
 
 
 @pytest.mark.parametrize("frm,to", [("ждём 1С", "выставление"), ("выставление", "ждём оплату"), ("ждём оплату", "архив")])
 def test_forward_by_hand_for_editor(frm, to):
-    from datetime import datetime
     m = _M(frm)
-    m.sent_at = m.docs_closed_at = datetime.utcnow()       # условия выставления выполнены — проверяем только право и шаг
     ST.move(None, m, to, _U())
     assert m.status == to
 
@@ -129,20 +131,25 @@ def test_todo_later_steps(_todo):
     assert ST.todo(None, _M("ждём 1С"))["who"] == "1С"
     t = ST.todo(None, _M("ждём 1С", channel=None))
     assert t["tone"] == "bad" and "ЭДО или бумага" in t["text"]
-    assert ST.todo(None, _M("выставление", "бумага"))["text"] == "распечатать и подписать у нас"   # подробно — test_master_deal_issue
+    assert ST.todo(None, _M("выставление", "бумага"))["text"] == "всё выставлено — ждём оплату"   # подробно — test_master_deal_issue
     assert ST.todo(None, _M("ждём оплату"))["who"] == "финансы"     # 19.10: сканы — своя стадия «ждём сканы»
     assert ST.todo(None, _M("архив")) is None
 
 
-def test_sent_by_edo_stays_edo_after_contract_switches_to_paper(monkeypatch):
-    """Ушло клиенту по ЭДО — «ждём сканы» не появляется, даже если признак договора потом сменили на бумагу (ревью 21.10.2026)."""
-    from datetime import datetime
+def test_pack_that_went_by_edo_stays_edo_after_contract_switches_to_paper(monkeypatch):
+    """Ушло клиенту по ЭДО — «ждём сканы» не появляется, даже если признак договора потом сменили на бумагу (ревью 21.10.2026).
+    С 02.11.2026 канал держит документ (`sign_channel`), а не отметки пакета."""
     from types import SimpleNamespace as NS
+    from app.master_deal import issue as IS
     from app.master_deal import status as S
     monkeypatch.setattr(S, "channel_of", lambda db, m: "бумага")
-    assert S.is_paper(None, NS(signed_by_us_at=None, sent_at=datetime.utcnow())) is False
-    assert S.is_paper(None, NS(signed_by_us_at=None, sent_at=None)) is True
-    assert S.is_paper(None, NS(signed_by_us_at=datetime.utcnow(), sent_at=datetime.utcnow())) is True
+    docs = {"v": [NS(sign_state="выставлен", sign_channel="ЭДО")]}
+    monkeypatch.setattr(IS, "docs", lambda db, m: docs["v"])
+    assert S.is_paper(None, NS()) is False
+    docs["v"] = [NS(sign_state="выпущен", sign_channel=None)]
+    assert S.is_paper(None, NS()) is True, "ничего не ушло — решает признак договора"
+    docs["v"] = [NS(sign_state="выставлен", sign_channel="ЭДО"), NS(sign_state="подписан у нас", sign_channel="бумага")]
+    assert S.is_paper(None, NS()) is True
 
 
 def test_layout_and_start_no_locked_once_ds_drafts_exist(monkeypatch):

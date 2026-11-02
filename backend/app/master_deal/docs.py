@@ -1,30 +1,19 @@
 # -*- coding: utf-8 -*-
 """Документы пакета — одна модель для карточки и расхлопа реестра (хендофф «реестр + карточка», 19.10.2026).
 
-ДС[] → комплекты УПД[]; у каждого документа — электронный файл, скан (бумага) и статус подписания:
-  none   — не выпущен (ДС не подтверждён);
-  issued — выпущен, не подписан;
-  ours   — бумага: подписан нами, ждём клиента;
-  sent   — ЭДО: отправлен; подпись клиента придёт из Диадока (до интеграции — так и остаётся);
-  both   — бумага: скан подписанного приложен.
-Счёт, УПД и Отчёт придут из 1С — до интеграции у комплекта их нет (`onec: False`), экран пишет «ждём 1С»."""
+ДС[] → комплекты УПД[]; у каждого документа — электронный файл, скан (бумага) и подпись (`sign`, 02.11.2026): где документ
+у клиента (`doc_sign`: выпущен / согласован / подписан у нас / выставлен / подписан / отклонён), каким каналом и куда его
+можно отметить дальше. Счёт, УПД и Отчёт придут из 1С — до интеграции у комплекта их нет (`onec: False`), экран пишет «ждём 1С»."""
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.master_deal import doc_sign as DSG
 from app.master_deal import issue as IS
 from app.master_deal import status as ST
 
 EXTRA = "Доп. размещение"
-
-
-def _signed(confirmed: bool, paper: bool, m, scan) -> str:
-    if not confirmed:
-        return "none"
-    if paper:
-        return "both" if scan else ("ours" if m.signed_by_us_at else "issued")
-    return "sent" if m.sent_at else "issued"
 
 
 def _services(rows: list) -> list:
@@ -46,8 +35,12 @@ def _files(db: Session, m) -> dict:
 
 
 def build(db: Session, m) -> dict:
+    from app.master_deal.models import MasterDealUpd
     from app.sales.models import SalesAnnex
     paper = ST.is_paper(db, m)
+    channel = ST.channel_of(db, m)
+    upd_rows = {u.upd_no: u for u in db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id)}
+    upd_open = m.status in (ST.ISSUE, ST.WAIT_PAY, ST.WAIT_SCANS)        # УПД отмечают, когда они пришли из 1С
     files = _files(db, m)
     annexes = (db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id)
                .order_by(SalesAnnex.sub_no.isnot(None), SalesAnnex.sub_no, SalesAnnex.id).all())
@@ -67,22 +60,21 @@ def build(db: Session, m) -> dict:
             "kind": "extra" if a.kind == "addons" else "base", "primary": a.issue_kind == "primary",
             "services": _services(a.rows), "gross": float(a.total_amount or 0), "confirmed": confirmed,
             "net": round(sum(float(r.get("amount") or 0) for r in (a.rows or [])), 2) if a.rows is not None else None,
-            "doc_url": f"/annexes/{a.id}/docx", "scan": scan, "signed": _signed(confirmed, paper, m, scan),
+            "doc_url": f"/annexes/{a.id}/docx", "scan": scan, "sign": DSG.view(db, a, channel),
             "kits": [{"upd_no": k[0], "group": " · ".join(x for x in (k[2], k[3]) if x) or "весь пакет", "gross": float(k[4] or 0),
                       "net": float(k[8] or 0), "deals": (codes.get(a.id) or "").split(", ") if codes.get(a.id) else [], "onec": bool(k[5]),
                       "invoice_no": k[6], "upd_doc_no": k[7],
-                      "scan": files.get(("u", k[0])), "signed": _signed(confirmed, paper, m, files.get(("u", k[0])))}
+                      "scan": files.get(("u", k[0])), "sign": _upd_sign(db, upd_rows.get(k[0]), channel, upd_open)}
                      for k in kits if k[1] == a.id],
         })
-    req = IS.required_scans(db, m) if paper else []
-    miss = IS.missing_scans(db, m) if paper else []
-    return {"paper": paper, "ds": ds,
-            "scans": {"need": paper and m.status in (ST.WAIT_PAY, ST.WAIT_SCANS, ST.ARCHIVE) and bool(m.sent_at),
-                      "required": len(req), "have": len(req) - len(miss), "missing": miss,
-                      "ds": [len([x for x in req if x["annex_id"]]), len([d for d in ds if d["scan"]])],
-                      "upd": [len([x for x in req if x["upd_no"]]), sum(1 for d in ds for k in d["kits"] if k["scan"])],
-                      "targets": [{"annex_id": x["annex_id"], "upd_no": x["upd_no"], "label": x["label"]} for x in req
-                                  if x["label"] in miss]}}
+    return {"paper": paper, "ds": ds, "summary": IS.state(db, m)}
+
+
+def _upd_sign(db: Session, u, channel: Optional[str], open_: bool) -> dict:
+    if u is None:
+        return {"state": None, "channel": None, "next": []}
+    v = DSG.view(db, u, channel)
+    return v if open_ else {**v, "next": []}
 
 
 def events(db: Session, m, limit: int = 10) -> list:

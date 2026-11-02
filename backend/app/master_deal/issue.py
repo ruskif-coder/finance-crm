@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Выставление пакета — вилка ЭДО / бумага (владелец 19.10.2026).
+"""Выставление пакета — сводка по документам (владелец 02.11.2026; до того — отметки на пакете целиком, 19.10.2026).
 
-ЭДО, пока интеграции нет: одна отметка «отправлено в ЭДО» — документы закрыты, пакет сразу «ждём оплату». Подпись в ЭДО
-придёт вместе с интеграцией Диадока; до неё ожидание подписи и отказы были бы ручной работой без пользы («до подключения
-избыточно»).
-Бумага: «подписано у нас» → «отправлено» (трек по желанию) → «ждём оплату» → «Оплачено» → «ждём сканы» → архив.
-Скан — к КАЖДОМУ документу (владелец 19.10.2026: «скан к документу, ибо надо понимать, что есть что»): к каждому ДС пакета и к
-каждому УПД. Один файл — один документ, архивы не принимаются. Документы закрыты, когда сканы есть у всех; убрали любой —
-снова открыты. Срок до красного в «ждём сканы» — настройка `company_settings.master_scans_due_days` (по умолчанию 30)."""
+Клиент может отказать в подписи одного документа пакета после всех согласований, поэтому статус подписи — у КАЖДОГО ДС и
+УПД (`doc_sign`), а пакет его только сводит:
+  «выставление» → «ждём оплату» — сам, когда выставлены все документы (`sync`); руками — при том же условии;
+  архив — когда подписаны все; у бумаги между ними по-прежнему «Оплачено» → «ждём сканы»;
+  отклонённый документ держит пакет и называет себя в «что нужно сейчас».
+Скан — к КАЖДОМУ бумажному документу (19.10.2026: «скан к документу, ибо надо понимать, что есть что»); приложенный скан
+ушедшей клиенту бумаги и есть отметка «подписан». Срок до красного у неподписанных — `company_settings.master_scans_due_days`
+(по умолчанию 30) от последней выставленной отметки."""
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.master_deal.status import ISSUE, WAIT_PAY, StatusError, channel_of, is_paper
+from app.master_deal import doc_sign as DS
 
-PAPER, EDO = "бумага", "ЭДО"
 SCAN_DS, SCAN_UPD = "скан ДС", "скан УПД"
 SCAN_EXTS = (".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff")      # один файл — один документ: без архивов
 DUE_DEFAULT = 30      # владелец 19.10.2026
@@ -34,69 +34,100 @@ def scan_ext_ok(filename: str) -> bool:
     return (filename or "").lower().endswith(SCAN_EXTS)
 
 
+def docs(db: Session, m) -> list:
+    """Документы пакета, уходящие клиенту: подтверждённые ДС и комплекты УПД."""
+    return DS.pack_docs(db, m)
+
+
+def doc_label(d) -> str:
+    return DS.label(d)
+
+
+def labels_of(db: Session, m, pick) -> list:
+    """Подписи документов пакета, отобранных `pick(doc)` — номер ДС тем словом, что в документе."""
+    from app.master_deal import to_annex as TA
+    numbers = {x["id"]: x["number"] for x in TA.annexes_of(db, m)} if db is not None else {}
+    out = []
+    for d in docs(db, m):
+        if pick(d):
+            out.append(numbers.get(d.id) if (DS.is_annex(d) and numbers.get(d.id)) else doc_label(d))
+    return out
+
+
+def state(db: Session, m) -> dict:
+    return DS.summary(docs(db, m))
+
+
+def not_sent(db: Session, m) -> list:
+    return labels_of(db, m, lambda d: d.sign_state not in DS.OUT)
+
+
+def unsigned(db: Session, m) -> list:
+    return labels_of(db, m, lambda d: d.sign_state != DS.SIGNED)
+
+
+def rejected(db: Session, m) -> list:
+    return labels_of(db, m, lambda d: d.sign_state == DS.REJECTED)
+
+
+def last_sent_at(db: Session, m) -> Optional[datetime]:
+    """Когда документы пакета последний раз уходили клиенту — от этого считается срок ожидания подписанных."""
+    return db.execute(text("""
+        SELECT max(e.at) FROM doc_sign_events e
+          LEFT JOIN sales_annexes a ON a.id = e.annex_id
+          LEFT JOIN master_deal_upds u ON u.id = e.upd_id
+         WHERE e.state = 'выставлен' AND (a.master_deal_id = :m OR u.master_deal_id = :m)"""), {"m": m.id}).scalar()
+
+
+def closed_at(db: Session, m) -> Optional[datetime]:
+    """Когда документы пакета закрыты — последний из «подписан», если подписаны все; иначе None."""
+    if not state(db, m)["all_signed"]:
+        return None
+    return db.execute(text("""
+        SELECT max(e.at) FROM doc_sign_events e
+          LEFT JOIN sales_annexes a ON a.id = e.annex_id
+          LEFT JOIN master_deal_upds u ON u.id = e.upd_id
+         WHERE e.state = 'подписан' AND (a.master_deal_id = :m OR u.master_deal_id = :m)"""), {"m": m.id}).scalar()
+
+
+def sync(db: Session, m) -> bool:
+    """После отметки документа: все выставлены — пакет из «выставления» уходит в «ждём оплату». True — статус сменился."""
+    from app.master_deal.status import ISSUE, WAIT_PAY
+    if m.status != ISSUE or not state(db, m)["all_sent"]:
+        return False
+    m.status, m.updated_at = WAIT_PAY, datetime.utcnow()
+    return True
+
+
 def required_scans(db: Session, m) -> list:
-    """Документы пакета, к которым нужен скан: каждый ДС (по annex_id) и каждый комплект УПД (по upd_no)."""
-    ds = db.execute(text("""SELECT id, coalesce(number, '') FROM sales_annexes WHERE master_deal_id = :m
-                             ORDER BY sub_no IS NOT NULL, sub_no, id"""), {"m": m.id}).all()
-    upd = db.execute(text("SELECT upd_no FROM master_deal_upds WHERE master_deal_id = :m ORDER BY upd_no"), {"m": m.id}).all()
+    """Документы пакета, к которым можно приложить скан: каждый ДС (по annex_id) и каждый комплект УПД (по upd_no)."""
     from app.master_deal import to_annex as TA
     numbers = {x["id"]: x["number"] for x in TA.annexes_of(db, m)}
-    return ([{"kind": SCAN_DS, "annex_id": a, "upd_no": None, "label": numbers.get(a) or n or f"ДС id {a}"} for a, n in ds]
-            + [{"kind": SCAN_UPD, "annex_id": None, "upd_no": u, "label": f"УПД № {u}"} for (u,) in upd])
+    out = []
+    for d in docs(db, m):
+        if DS.is_annex(d):
+            out.append({"kind": SCAN_DS, "annex_id": d.id, "upd_no": None, "label": numbers.get(d.id) or doc_label(d), "doc": d})
+        else:
+            out.append({"kind": SCAN_UPD, "annex_id": None, "upd_no": d.upd_no, "label": doc_label(d), "doc": d})
+    return out
 
 
-def _have(db: Session, m) -> set:
-    rows = db.execute(text("SELECT annex_id, upd_no FROM master_deal_files WHERE master_deal_id = :m"), {"m": m.id}).all()
-    return {("a", a) for a, _ in rows if a is not None} | {("u", u) for _, u in rows if u is not None}
+def find_doc(db: Session, m, annex_id: Optional[int], upd_no: Optional[int]):
+    """Документ пакета по ссылке экрана: один ДС (annex_id) или один УПД (upd_no). Чужой или черновик — None."""
+    if (annex_id is None) == (upd_no is None):
+        return None
+    for d in docs(db, m):
+        if (DS.is_annex(d) and d.id == annex_id) or (not DS.is_annex(d) and d.upd_no == upd_no):
+            return d
+    return None
 
 
-def missing_scans(db: Session, m) -> list:
-    have = _have(db, m)
-    return [x["label"] for x in required_scans(db, m)
-            if (("a", x["annex_id"]) if x["annex_id"] is not None else ("u", x["upd_no"])) not in have]
-
-
-def _uid(user) -> Optional[int]:
-    return getattr(user, "id", None)
-
-
-def signed_by_us(db: Session, m, user) -> None:
-    if m.status != ISSUE:
-        raise StatusError(409, "Отметить подпись можно на «выставлении»")
-    if channel_of(db, m) != PAPER:
-        raise StatusError(409, "Подпись у нас отмечается только для бумаги — у договора ЭДО")
-    if m.signed_by_us_at:
-        raise StatusError(409, "Уже отмечено: подписано у нас")
-    m.signed_by_us_at, m.signed_by_us_by, m.updated_at = datetime.utcnow(), _uid(user), datetime.utcnow()
-
-
-def sent(db: Session, m, user, track_no: Optional[str]) -> None:
-    """Отправлено клиенту → «ждём оплату». ЭДО закрывает документы сразу, бумага ждёт сканов."""
-    if m.status != ISSUE:
-        raise StatusError(409, "Отметить отправку можно на «выставлении»")
-    # Ветку держит подпись у нас: подписали бумагой, а у договора потом поставили ЭДО — пакет остаётся бумажным (аудит 20.10)
-    ch = PAPER if m.signed_by_us_at else channel_of(db, m)
-    if not ch:
-        raise StatusError(409, "У договора не задано «Выставление» — ЭДО или бумага")
-    if m.sent_at:
-        raise StatusError(409, "Уже отмечено: отправлено")
-    if ch == PAPER and not m.signed_by_us_at:
-        raise StatusError(409, "Сначала распечатайте и подпишите у нас — отметка «Подписано у нас»")
-    now = datetime.utcnow()
-    m.sent_at, m.sent_by = now, _uid(user)
-    m.track_no = ((track_no or "").strip() or None) if ch == PAPER else None
-    if ch == EDO:
-        m.docs_closed_at, m.docs_closed_by = now, _uid(user)
-    m.status, m.updated_at = WAIT_PAY, now
-
-
-def scans_changed(db: Session, m, user) -> None:
-    """После загрузки или удаления скана: бумажные документы закрыты, когда сканы есть у КАЖДОГО документа пакета."""
-    if not is_paper(db, m):
-        return
-    full = not missing_scans(db, m)
-    if full and not m.docs_closed_at:
-        m.docs_closed_at, m.docs_closed_by = datetime.utcnow(), _uid(user)
-    elif not full and m.docs_closed_at:
-        m.docs_closed_at = m.docs_closed_by = None
-    m.updated_at = datetime.utcnow()
+def mark_doc(db: Session, m, doc, state: str, user, reason: Optional[str] = None) -> bool:
+    """Отметка подписи документа пакета. УПД — только когда комплекты пришли из 1С («выставление» и дальше): раньше их нет.
+    Возвращает True, если пакет от этого сменил статус (все выставлены → «ждём оплату»)."""
+    from app.master_deal.status import ISSUE, WAIT_PAY, WAIT_SCANS
+    if not DS.is_annex(doc) and m.status not in (ISSUE, WAIT_PAY, WAIT_SCANS):
+        raise DS.SignError(409, "УПД выставляют клиенту после получения документов из 1С — на «выставлении»")
+    DS.mark(db, doc, state, user, reason=reason)
+    db.flush()
+    return sync(db, m)

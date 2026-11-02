@@ -187,9 +187,9 @@ register(Event(
 ))
 register(Event(
     key="master_scans_overdue", direction="account", group="Закрытие месяца",
-    title="Бумажный пакет без сканов дольше срока",
-    description="Документы отправлены на бумаге больше 30 дней назад, а сканов подписанных нет.",
-    tone="bad", action="Приложить сканы", widget_group="Документы", scan=True,
+    title="Документы пакета без подписи дольше срока",
+    description="Документы ушли клиенту больше 30 дней назад, а подписаны не все: нет скана бумаги, подписи в ЭДО или клиент отказал.",
+    tone="bad", action="Отметить подпись", widget_group="Документы", scan=True,
     recipients=_COLLECTOR, channels={"app": True, "tg": True},
     params={"repeat_days": 3},
 ))

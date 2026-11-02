@@ -289,18 +289,18 @@ def _plan_fact(db: Session, deal, rec, base: list, base_net: float) -> dict:
     return {"plan": plan, "fact": fact, "bonus": bonus, "source": source, "entry": entry, "frozen": frozen}
 
 
-def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras: list) -> dict:
+def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras: list, *, plan_only: bool = False) -> dict:
     """Режим и суммы ДС: по факту / под МП / вручную, платные допы, НДС, СК. СК (владелец 14.10): «скидка в счёт» уменьшает сумму ДС;
     «постоплата» — отдельным документом потом, сумму ДС не трогает."""
     from app.final_recon import sk as SK
     from app.sales.mp_amounts import mp_amounts_by_deal, vat_pct_of
     plan, fact = pf["plan"], pf["fact"]
-    mode = (rec.ds_mode if rec and rec.ds_mode else None) or default_mode(plan, fact)
+    mode = "plan" if plan_only else ((rec.ds_mode if rec and rec.ds_mode else None) or default_mode(plan, fact))
     by_fact = _r2(min(fact, plan) / plan * base_net) if (fact is not None and plan) else None
     amounts = {"fact": by_fact, "plan": base_net,
                "manual": _r2(rec.ds_manual_net) if rec and rec.ds_manual_net is not None else None}
     base_ds = amounts.get(mode)
-    if pf["frozen"] and rec.base_net is not None:
+    if pf["frozen"] and rec.base_net is not None and not plan_only:
         base_ds = _r2(rec.base_net)
     paid_extras = _r2(sum((e["amount"] or 0) for e in extras if not e.get("bonus")))
     vat = vat_pct_of(deal, mp_amounts_by_deal(db, [deal.id]))
@@ -357,11 +357,14 @@ def _meta(db: Session, rec, frozen: bool, base_net: float, paid_extras: float) -
     }
 
 
-def compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict:
-    """Состояние блока «Итоговая сверка» сделки. `rec` — строка сверки (если уже загружена).
+def compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None, plan_only: bool = False) -> dict:
+    """Состояние блока «Итоговая сверка» сделки. `rec` — строка сверки (если уже загружена). `plan_only` — суммы «под МП»
+    независимо от выбранного режима: ДС на старте выпускается на план, когда факта и сверки ещё нет (02.11.2026).
 
     В реестре мастер-сделок (`memo`) сверка одной сделки считается один раз за запрос: «что сделать», раскладка и
     эффективность звали её до трёх раз (аудит 21.10.2026, F1). Вне `memo` — всегда свежий расчёт."""
+    if plan_only:
+        return _compute(db, deal, rec=rec, plan_only=True)
     memo = getattr(db, "info", {}).get("cl_memo") if rec is None else None
     if memo is None:
         return _compute(db, deal, rec=rec)
@@ -385,7 +388,7 @@ class memo:
         return False
 
 
-def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict:
+def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None, plan_only: bool = False) -> dict:
     """Расчёт сверки без кэша. Шаги — `_plan_fact`, `_money`, `_lines`, `_meta`."""
     from app.sales import annex as annex_mod
     rec = rec if rec is not None else db.get(FinalReconDeal, deal.id)
@@ -394,7 +397,7 @@ def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict
     extras = [r for r in rows if r.get("kind") == "extra"]
     base_net = _r2(sum(r["amount"] or 0 for r in base))
     pf = _plan_fact(db, deal, rec, base, base_net)
-    mo = _money(db, deal, rec, pf, base_net, base, extras)
+    mo = _money(db, deal, rec, pf, base_net, base, extras, plan_only=plan_only)
     plan, fact, mode, total_net = pf["plan"], pf["fact"], mo["mode"], mo["total_net"]
     meta = _meta(db, rec, pf["frozen"], base_net, mo["paid_extras"])
     # Можно ли ещё менять сумму ДС (мастеру и админу; кто именно — решает роутер): до отправки — да, после — пока пакет не ушёл в 1С.

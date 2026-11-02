@@ -41,10 +41,12 @@ def lines(db: Session, m: MasterDeal) -> list:
     """Все строки пакета: базовая услуга (сумма по пину сверки) и допы — с брендом, услугой, сделкой и устойчивым id."""
     from app.sales import annex as annex_mod
     from app.sales.models import SalesDeal, SalesService
+    from app.master_deal import start as SP
+    plan_only = SP.in_start_phase(db, m)          # ДС на старте — на план: факта и сверки ещё нет (02.11.2026)
     out = []
     for it in db.query(MasterDealItem).filter(MasterDealItem.master_deal_id == m.id).order_by(MasterDealItem.id):
         d = db.get(SalesDeal, it.deal_id)
-        st = CL.compute(db, d)
+        st = CL.compute(db, d, plan_only=plan_only)
         svc = db.get(SalesService, d.service_id).name if d.service_id else "—"
         brand = annex_mod.deal_brand(db, [d.id]) or "без бренда"
         rows = annex_mod.plan_rows(db, [d.id])
@@ -118,7 +120,9 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     ls = [x for x in lines(db, m) if not (x["kind"] == "bonus" and st["bonus_addons"] == "hide")]
     moved = set(st.get("moved") or [])
     paid_extras = [x for x in ls if x["kind"] == "extra"]
-    sep = bool(st["addons_separate"]) and bool(paid_extras)
+    # На старте одна сделка — один ДС (владелец 02.11.2026): два первичных уронили бы закрытие на «разные первичные ДС».
+    from app.master_deal import start as SP
+    sep = bool(st["addons_separate"]) and bool(paid_extras) and not SP.in_start_phase(db, m)
     addons_paid = [x for x in paid_extras if x["id"] not in moved] if sep else []
     if sep and addons_paid:
         main = [x for x in ls if x["kind"] == "base" or x["id"] in moved]

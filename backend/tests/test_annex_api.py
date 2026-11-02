@@ -298,7 +298,9 @@ def test_the_document_is_built_once_for_the_screen_and_for_the_paper(env):
     assert from_screen["missing"] == for_paper["missing"]
 
 
-# ── создание из сделки ───────────────────────────────────────────────────────
+# ── черновик на сделку ───────────────────────────────────────────────────────
+# Кнопка «Создать» в карточке сделки с 02.11.2026 заводит мастер-сделку со стартовым ДС (tests/test_start_pack.py); здесь
+# черновик собирается прямой ручкой реестра — то, что проверяют тесты ниже (связь со сделкой, файл), от входа не зависит.
 
 def _deal_ready_for_annex(db):
     """Сделка, из которой ДС собирается целиком: плательщик с договором и период."""
@@ -312,57 +314,17 @@ def _deal_ready_for_annex(db):
     """)).scalar()
 
 
-def test_annex_is_assembled_from_the_deal_without_asking_again(env):
-    """Кнопка «Создать» в документах сделки. Плательщик даёт договор, период берётся у
-    сделки, сумма — её собственная: переспрашивать это формой значит просить человека
-    ввести то, что система уже знает."""
-    from app.sales.models import SalesAnnex, SalesDealAnnexAllocation as Alloc
-    did = _deal_ready_for_annex(env.db)
-    if not did:
-        pytest.skip('на стенде нет сделки с плательщиком-договором и периодом')
-    out = A.create_from_deal(did, env.db, env.user)
-    try:
-        assert out["is_draft"] and out["period_from"] and out["total_amount"] > 0
-        # Дата документа — начало РК (владелец 14.10.2026).
-        assert out["date"] == out["period_from"]
-    finally:
-        env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).delete()
-        env.db.query(SalesAnnex).filter(SalesAnnex.id == out["id"]).delete()
-        env.db.commit()
-
-
-def test_the_link_to_the_deal_is_actually_written(env):
-    """До 05.09.2026 `deal_ids` участвовал только в сборке предпросмотра и не сохранялся:
-    приложение выпускалось, а связь со сделкой не возникала — вернуть выручку авторам
-    было нечем, и таблица размещения в документе бралась из воздуха."""
-    from app.sales.models import SalesAnnex, SalesDealAnnexAllocation as Alloc
-    did = _deal_ready_for_annex(env.db)
-    if not did:
-        pytest.skip('на стенде нет подходящей сделки')
-    out = A.create_from_deal(did, env.db, env.user)
-    try:
-        rows = env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).all()
-        assert [(r.deal_id, r.amount) for r in rows] == [(did, out["total_amount"])]
-    finally:
-        env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).delete()
-        env.db.query(SalesAnnex).filter(SalesAnnex.id == out["id"]).delete()
-        env.db.commit()
-
-
-def test_missing_source_data_is_named_not_guessed(env):
-    """Приложение не на тот договор исправляется только выпуском нового номера, поэтому
-    нехватка исходных данных — отказ с объяснением, а не умолчание."""
+def _annex_for(env, did):
+    from app.models import Contract
     from app.sales.models import SalesDeal
-    d = (env.db.query(SalesDeal)
-         .filter(SalesDeal.payer_counterparty_id.is_(None),
-                 SalesDeal.counterparty_id.is_(None)).first())
-    if d:
-        with pytest.raises(HTTPException) as e:
-            A.create_from_deal(d.id, env.db, env.user)
-        assert e.value.status_code == 400 and "плательщик" in str(e.value.detail)
-    with pytest.raises(HTTPException) as e2:
-        A.create_from_deal(10**9, env.db, env.user)
-    assert e2.value.status_code == 404
+    d = env.db.get(SalesDeal, did)
+    c = (env.db.query(Contract).filter(Contract.counterparty_id == d.payer_counterparty_id)
+         .order_by(Contract.contract_date.desc().nullslast(), Contract.id.desc()).first())
+    import calendar
+    pf = d.period_from
+    pt = d.period_to or pf.replace(day=calendar.monthrange(pf.year, pf.month)[1])
+    return A.create_annex(A.AnnexIn(contract_id=c.id, deal_ids=[d.id], period_from=pf, period_to=pt,
+                                    total_amount=float(d.amount_with_vat or d.amount)), env.db, env.user)
 
 
 # ── номер и дата руками ──────────────────────────────────────────────────────
@@ -438,7 +400,7 @@ def test_screen_gets_the_deals_the_annex_covers(env):
     did = _deal_ready_for_annex(env.db)
     if not did:
         pytest.skip('на стенде нет подходящей сделки')
-    out = A.create_from_deal(did, env.db, env.user)
+    out = _annex_for(env, did)
     try:
         deals = A.get_annex(out["id"], env.db, env.user)["deals"]
         assert [x["id"] for x in deals] == [did]

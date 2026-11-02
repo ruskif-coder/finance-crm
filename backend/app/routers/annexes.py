@@ -16,7 +16,6 @@
 Разделение на черновик и подтверждение не формальность: брошенный черновик не должен
 сжигать номер, а занятый номер не должен меняться задним числом.
 """
-import calendar
 import logging
 import os
 from datetime import date, datetime
@@ -35,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.annex_tpl import document as tpl_doc
 from app.annex_tpl import doc_kind as DK
+from app.master_deal import doc_sign as DSG
 from app.sales import annex_signed
 from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
@@ -44,12 +44,12 @@ from app.audit import log_action
 from app.database import get_db
 from app.models import Contract, Counterparty, User
 from app.permissions import require_permission
-from app.routers.sales_dashboard import _assert_deal_in_scope, _scope_deal_ids
+from app.routers.sales_dashboard import _scope_deal_ids
 from app.sales import annex as annex_build
 from app.sales import annex_docx as docx_build
 from app.sales import rugram
 from app.sales.models import (AnnexTemplate, SalesAdvertiser, SalesAnnex, SalesDeal,
-                              SalesDealAnnexAllocation as Alloc, SalesMediaPlan)
+                              SalesDealAnnexAllocation as Alloc)
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -265,66 +265,6 @@ def _link_deals(db: Session, a: SalesAnnex, deal_ids, total: float) -> None:
             part = round(float(total or 0) * (weights[i] / base), 2) if base else 0
             left = round(left - part, 2)
         db.add(Alloc(deal_id=d.id, annex_id=a.id, amount=part))
-
-
-def _deal_period(db: Session, d: SalesDeal):
-    """Период размещения: сначала медиаплан, потом сама сделка.
-
-    Замерено 05.09.2026: у медиапланов на стенде `date_from`/`date_to` пустые, а период
-    сделки заполнен у 442 из 920. Требовать даты именно у плана значило бы отказывать там,
-    где период известен — и человек не понял бы, чего от него хотят.
-
-    Конец месяца достраивается, когда у сделки задано только начало: приложение на период
-    нулевой длины подписать нельзя.
-    """
-    mp = (db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == d.id,
-                                          SalesMediaPlan.status != "rejected")
-          .order_by(SalesMediaPlan.version.desc(), SalesMediaPlan.id.desc()).first())
-    if mp and mp.date_from and mp.date_to:
-        return mp.date_from, mp.date_to
-    pf, pt = d.period_from, d.period_to
-    if pf and not pt:
-        pt = pf.replace(day=calendar.monthrange(pf.year, pf.month)[1])
-    return pf, pt
-
-
-@router.post("/from-deal/{deal_id}")
-def create_from_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(CREATE)):
-    """Завести черновик приложения ПРЯМО ИЗ СДЕЛКИ — кнопка «Создать» в её документах.
-
-    Всё, что нужно документу, у сделки уже есть, и переспрашивать это формой значит
-    заставлять человека вводить то, что система знает: плательщик даёт договор, медиаплан
-    — период, сама сделка — сумму с НДС. Чего не хватает — называется вслух, а не
-    заменяется умолчанием: приложение не на тот договор или не за тот период исправляется
-    только выпуском нового номера.
-    """
-    d = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if not d:
-        raise HTTPException(404, "Сделка не найдена")
-    # Ручка трогает КОНКРЕТНУЮ сделку, значит спрашивает область видимости: роль «свои»
-    # не выпускает документ по чужой сделке. Прибор `test_deal_scope` считает маршрут без
-    # этой проверки дырой — и поймал её здесь 05.09.2026.
-    _assert_deal_in_scope(db, user, d)
-    cp_id = d.payer_counterparty_id or d.counterparty_id
-    if not cp_id:
-        raise HTTPException(400, "У сделки не указан плательщик — договор брать не от кого")
-    c = (db.query(Contract).filter(Contract.counterparty_id == cp_id)
-         .order_by(Contract.contract_date.desc().nullslast(), Contract.id.desc()).first())
-    if not c:
-        raise HTTPException(400, "У плательщика нет договора в реестре")
-    pf, pt = _deal_period(db, d)
-    if not pf or not pt:
-        raise HTTPException(400, "У сделки не задан период размещения — брать его неоткуда")
-    # Сумма приложения приходит из МЕДИАПЛАНА, а не из сделки: план — источник
-    # (владелец 06.09.2026), и приложение выпускается уже на этапе сборки, когда план
-    # зафиксирован. Сумма сделки остаётся лишь запасом на случай, когда строк плана нет
-    # вовсе — тогда и таблицы в документе не будет, и расходиться нечему.
-    amount = float(d.amount_with_vat or d.amount or 0)
-    if amount <= 0:
-        raise HTTPException(400, "У сделки нулевая сумма")
-    return create_annex(AnnexIn(contract_id=c.id, deal_ids=[d.id],
-                                period_from=pf, period_to=pt,
-                                total_amount=amount), db, user)
 
 
 @router.put("/{annex_id}")
@@ -600,6 +540,8 @@ def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple
     a.status = "подтверждён"
     a.confirmed_by = getattr(user, "id", None)
     a.confirmed_at = datetime.utcnow()     # колонка — момент (в базе UTC), а не дата
+    from app.master_deal import doc_sign as DSG
+    DSG.issued(db, a, user)                # подпись документа начинается с «выпущен» (02.11.2026)
     return c, no
 
 
@@ -636,8 +578,24 @@ def confirm_annex(annex_id: int, payload: ConfirmIn, db: Session = Depends(get_d
     текстом, а не пятисоткой.
     """
     a = _annex(db, annex_id, user)
-    c, no = commit_confirm(db, payload.no, a.id, lambda: confirm_one(db, a, payload, user))
+    moved = {}
+
+    def work():
+        out = confirm_one(db, a, payload, user)
+        if getattr(a, "master_deal_id", None):   # ДС пакета: подтверждён последний — пакет уходит дальше (02.11.2026)
+            from app.master_deal import to_annex as TA
+            from app.master_deal.models import MasterDeal
+            db.flush()
+            m = db.get(MasterDeal, a.master_deal_id)
+            if TA.after_confirm(db, m):
+                moved["m"] = m
+        return out
+    c, no = commit_confirm(db, payload.no, a.id, work)
     db.refresh(a)
+    if moved.get("m") is not None:
+        # До `log_action`: он коммитит, а уведомление, поставленное после последнего коммита, откатилось бы с концом запроса.
+        from app.notify import closing as CN
+        CN.status_changed(db, moved["m"], "согласование", user)
     log_action(db, user, "annex_confirm", "contract", c.id, f"{a.number}")
     return _out(a)
 
@@ -783,9 +741,35 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
             "next_no": annex_build.next_no(db, c),
             # ДС мастер-сделки: ссылка «← Раскладка M-…» и номер, который займёт подтверждение (из раскладки).
             "master": _master_ref(db, a),
-            # Вид ДС и подпись (16.10.2026): первичный на план или по факту; подпись — из источников (сейчас файл, позже ЭДО).
+            # Вид ДС и подпись (16.10.2026): первичный на план или по факту; подпись — из источников (отметка на ДС, позже ЭДО).
             "issue_kind": getattr(a, "issue_kind", None),
-            "signed": annex_signed.signed_state(db, a)}
+            "signed": annex_signed.signed_state(db, a),
+            # Где ДС у клиента и куда его отметить дальше (02.11.2026). ДС пакета отмечают в карточке мастер-сделки.
+            "sign": DSG.view(db, a)}
+
+
+class SignIn(BaseModel):
+    state: str
+    reason: Optional[str] = None        # отказ — причина клиента; отправка бумаги — трек
+
+
+@router.post("/{annex_id}/sign")
+def sign_annex(annex_id: int, payload: SignIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Отметка подписи ДС вне мастер-сделки (выпущенного до пакетов, 02.11.2026: «на все ДС»). ДС пакета — в его карточке,
+    там отметка двигает и статус пакета."""
+    a = _annex(db, annex_id, user)
+    if a.master_deal_id:
+        raise HTTPException(409, "ДС в мастер-сделке — подпись отмечают в её карточке")
+    try:
+        DSG.mark(db, a, payload.state, user, reason=payload.reason)
+    except DSG.SignError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    db.commit()
+    db.refresh(a)
+    log_action(db, user, "annex_sign", "contract", a.contract_id, f"{a.number}: «{a.sign_state}»"
+               + (f" — {payload.reason.strip()}" if (payload.reason or "").strip() else ""))
+    return get_annex(annex_id, db, user)
 
 
 def _master_ref(db: Session, a) -> Optional[dict]:

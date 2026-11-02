@@ -150,20 +150,24 @@ export default function MasterDealPage() {
                 Нет позиций для ДС.</div>
             ) : (
               <>
-                {m.docs?.scans?.need && <div style={{ marginBottom: 14 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={mayEdit} onChanged={apply} /></div>}
+                <div style={{ marginBottom: 14 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={mayEdit} onChanged={apply} /></div>
                 {lay.ds.map(ds => (
                   <DsCard key={ds.kind} ds={ds} vat={lay.vat_rate} locked={locked} moved={draft.moved || []}
                     separate={!!draft.addons_separate && lay.has_paid_extras} flash={flash} onMove={toggleMove}
-                    doc={docOf(m, ds)} paper={!!m.docs?.paper} code={m.code} onPick={pickScan}
+                    doc={docOf(m, ds)} code={m.code} onPick={pickScan} canEdit={mayEdit} onDone={apply} atStart={!!m.issue?.start?.phase}
                     basis={(m.upds || []).filter(u => u.annex_id === docOf(m, ds)?.annex_id)} busy={busy} onBasis={apply} />
                 ))}
               </>
             )}
-            <IssuePanel m={m} busy={busy} canEdit={mayEdit}
-              onSigned={() => call(() => api.post(`/master-deals/${m.code}/issue/signed`, {}, auth()))}
-              onSent={(track_no) => call(() => api.post(`/master-deals/${m.code}/issue/sent`, { track_no }, auth()))}
-              footer={docsRow} />
-            {/* Первичный ДС пакета (выпущен на старте на план, владелец 16.10.2026): не подписан — пересоберём его по факту с тем же
+            <IssuePanel m={m} footer={docsRow} />
+            {/* ДС на старте (02.11.2026): пакет одной сделки, раскладка по МП, после подтверждения ждёт итоговой сверки. */}
+            {!!m.issue?.start?.phase && (
+              <Note tone="info" style={{ marginBottom: 14 }}>
+                <b>ДС на старте</b> — на план по медиаплану, одна сделка. После подтверждения пакет ждёт итоговой сверки; «Отправить в ДО»
+                вернёт его сюда, и он закроется по факту: ДС, ещё не ушедший клиенту, пересоберётся с тем же номером.
+              </Note>
+            )}
+            {/* Первичный ДС пакета (выпущен на старте на план, владелец 16.10.2026): не ушёл клиенту — пересоберём его по факту с тем же
                 номером; подписан — не трогаем, закрываем по факту, расхождение видно. Подпись перепроверяется при нажатии. */}
             {!!m.primary && (
               m.primary.error ? <Note tone="bad" style={{ marginBottom: 14 }}>{m.primary.error}</Note>
@@ -177,7 +181,8 @@ export default function MasterDealPage() {
                 ) : (
                   <Note tone="ok" style={{ marginBottom: 14 }}>
                     <b>Первичный {m.primary.number} не подписан</b> ({m.primary.source}) — важен только номер: при «В конструктор ДС» он
-                    пересоберётся по факту ({rub2(m.primary.closing_gross)} с НДС), номер и дата сохранятся.
+                    пересоберётся по факту ({rub2(m.primary.closing_gross)} с НДС), номер и дата сохранятся. Если он уже у клиента —
+                    сначала отметьте подпись или отзовите его.
                   </Note>
                 )
             )}

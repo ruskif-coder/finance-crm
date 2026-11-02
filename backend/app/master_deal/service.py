@@ -37,8 +37,10 @@ def candidates(db: Session, deal, own=None) -> list:
     per = period_of(deal)
     if not (deal.ord_final_contract_id and per):
         return []
+    # Пакет со стартовым ДС — одна сделка, без объединения (владелец 02.11.2026).
     rows = (db.query(MasterDeal).filter(MasterDeal.contract_id == deal.ord_final_contract_id, MasterDeal.period == per,
-                                        MasterDeal.status.in_(OPEN)).order_by(MasterDeal.id).all())
+                                        MasterDeal.status.in_(OPEN), MasterDeal.issued_at_start.is_(False))
+            .order_by(MasterDeal.id).all())
     if own is not None:
         from app.master_deal import scope as SC
         rows = [m for m in rows if SC.all_in_scope(db, m, own)]
@@ -116,6 +118,8 @@ def _taken(db: Session, deal, m, user) -> None:
 
 def attach(db: Session, deal, m, user) -> None:
     """Прикрепить сделку к пакету без перехода и заморозки — её сверка закончится позже, своей кнопкой."""
+    if getattr(m, "issued_at_start", False):
+        raise MasterError(409, f"{m.code} — пакет со стартовым ДС одной сделки, к нему не присоединяют")
     if item_of(db, deal.id):
         raise MasterError(409, f"{deal.code} уже в пакете")
     db.add(MasterDealItem(master_deal_id=m.id, deal_id=deal.id, added_by=getattr(user, "id", None)))
@@ -165,6 +169,10 @@ def send(db: Session, deal, user, *, target: str, master_id: Optional[int] = Non
     f = fork(db, deal, SC.own_reps(db, user) if user is not None else None)
     if f.get("in_master"):
         target = "existing"
+        own = db.get(MasterDeal, f["in_master"]["id"])
+        if own.issued_at_start and own.status == "согласование":    # неподтверждённый ДС старта держит закрытие — до заморозки
+            from app.master_deal import start as SP
+            SP.reopen_for_closing(db, own)
     elif f.get("blocked"):
         raise MasterError(409, f["blocked"])
     if target not in ("new", "join", "existing"):
@@ -191,6 +199,9 @@ def send(db: Session, deal, user, *, target: str, master_id: Optional[int] = Non
 
     if target == "existing":
         m = db.get(MasterDeal, f["in_master"]["id"])
+        if m.issued_at_start:                         # стартовый пакет возвращается в работу — закрываться по факту
+            from app.master_deal import start as SP
+            SP.reopen_for_closing(db, m)
     elif target == "join":
         m = db.get(MasterDeal, master_id) if master_id else None
         if not m or m.id not in {c["id"] for c in f["candidates"]}:

@@ -80,7 +80,6 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
   const kits = ds.flatMap(d => d.kits)
   const total = ds.length + kits.length * 3
   const ready = ds.length + kits.filter(k => k.onec).length * 3          // ДС скачивается всегда; счёт, УПД, отчёт — после 1С
-  const scans = m.docs?.scans
   return wrap(
     <div data-noexp style={{ display: 'grid', gridTemplateColumns: 'minmax(0,0.8fr) minmax(0,2.4fr) 270px', background: 'var(--bg-card)', border: '1px solid var(--accent-border)', borderRadius: 12, overflow: 'hidden', cursor: 'default' }}>
       <Deals deals={m.deals} />
@@ -95,8 +94,8 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
           )}
         </span>
         {!ds.length && <span style={{ padding: '8px 0', borderTop: '1px solid var(--border-row)', fontSize: 11.5, color: 'var(--text-faint)' }}>ДС ещё не собраны — комплекты и документы появятся после раскладки</span>}
-        {!!ds.length && <PackDocs m={m} canEdit={canEdit} onPick={setPicked} setErr={setErr} />}
-        {!!scans?.need && <div style={{ maxWidth: 1120 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={canEdit} onChanged={apply} /></div>}
+        {!!ds.length && <PackDocs m={m} canEdit={canEdit} onPick={setPicked} setErr={setErr} onDone={apply} />}
+        <div style={{ maxWidth: 1120 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={canEdit} onChanged={apply} /></div>
         {!!err && <span style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{err}</span>}
       </div>
       <Events code={code} events={m.events || []} />

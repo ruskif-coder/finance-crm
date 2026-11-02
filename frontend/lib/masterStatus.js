@@ -8,6 +8,7 @@ import { MONO } from '@/components/salesTableKit'
 export const MASTER_TONE = {
   'черновик': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],      // §6: сборка и согласование — синие
   'согласование': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],
+  'ждём закрытия': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],   // ДС на старте — до итоговой сверки
   'ждём 1С': ['var(--violet-tint)', 'var(--violet-border)', 'var(--violet-fg)', 'var(--violet-fg)'],
   'выставление': ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],
   'ждём оплату': ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],

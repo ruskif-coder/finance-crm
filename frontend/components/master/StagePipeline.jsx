@@ -11,8 +11,8 @@ import { MONO } from '@/components/salesTableKit'
 import StepConfirm from '@/components/master/StepConfirm'
 import { lineBtn } from '@/components/master/kit'
 
-const TAIL = { 'ждём сканы': 'оплачено, без сканов в архив не уехать', 'ждём оплату': 'документы у клиента' }
-const WAITING = { 'согласование': 'ДС у юриста и на подтверждении', 'ждём 1С': 'Ждём документы из 1С', 'ждём оплату': 'Ждём оплату' }
+const TAIL = { 'ждём сканы': 'оплачено, без подписанных в архив не уехать', 'ждём оплату': 'документы у клиента' }
+const WAITING = { 'согласование': 'ДС у юриста и на подтверждении', 'ждём закрытия': 'ДС на старте выпущен — ждём итоговой сверки', 'ждём 1С': 'Ждём документы из 1С', 'ждём оплату': 'Ждём оплату' }
 
 export default function StagePipeline({ m, canEdit, onDone, onScans }) {
   const [asking, setAsking] = useState(false)

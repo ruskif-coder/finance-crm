@@ -22,10 +22,14 @@ def issued(db: Session, contract_id: int) -> list:
 
 
 def issued_ds(db: Session, m: MasterDeal) -> Optional[dict]:
-    """Выпущенный ДС этого пакета — раскладка закреплена."""
+    """Выпущенный ДС этого пакета — раскладка закреплена. Стартовый пакет на закрытии: ДС старта раскладку не держит — он
+    пересобирается по факту или остаётся как подписан (02.11.2026)."""
+    from app.master_deal import start as SP
+    skip_primary = bool(getattr(m, "issued_at_start", False)) and SP.closing_started(db, m)
     r = db.execute(text("""
         SELECT no, confirmed_at AS at FROM sales_annexes
-         WHERE master_deal_id = :m AND confirmed_at IS NOT NULL ORDER BY confirmed_at LIMIT 1"""), {"m": m.id}).mappings().first()
+         WHERE master_deal_id = :m AND confirmed_at IS NOT NULL AND NOT (:skip AND issue_kind = 'primary')
+         ORDER BY confirmed_at LIMIT 1"""), {"m": m.id, "skip": skip_primary}).mappings().first()
     return dict(r) if r else None
 
 

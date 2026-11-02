@@ -983,16 +983,16 @@ export default function DealCard() {
   const blobGet = downloadBlob
   const pickAndUpload = (kind) => pickAndUploadDoc(d.id, kind, reload, setDocBusy)
 
-  // Кнопка «Создать» у доп. соглашения: черновик собирается из самой сделки (плательщик
-  // даёт договор, медиаплан — период, сделка — сумму), и человек сразу оказывается на
-  // экране сборки. Спрашивать это формой значило бы просить ввести то, что уже известно.
+  // Кнопка «Создать» у ДС (02.11.2026): ДС на старте — через конструктор закрытия. Сервер заводит мастер-сделку этой
+  // сделки (доходный договор, раскладка по МП, без объединения) или находит уже заведённую — и человек оказывается в ней.
+  // Нельзя (до «Сборки», нет доходного договора, сделка уже на итоговой сверке) — сервер говорит почему.
   const createAnnex = async () => {
     setDocBusy('ds')
     try {
-      const r = await api.post(`/annexes/from-deal/${d.id}`, {}, auth())
-      router.push(`/directory/annexes/${r.data.id}`)
+      const r = await api.post(`/master-deals/deal/${d.id}/start`, {}, auth())
+      router.push(`/accounts/master/${r.data.code}`)
     } catch (e) {
-      alert(e.response?.data?.detail || 'Не удалось создать доп. соглашение')
+      alert(e.response?.data?.detail || 'Не удалось завести ДС на старте')
     } finally { setDocBusy('') }
   }
   const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy)

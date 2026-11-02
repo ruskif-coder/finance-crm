@@ -82,13 +82,14 @@ def templates(db: Session, c) -> list:
 
 def masters(db: Session, c, user) -> list:
     """Пакеты закрытия по договору — в области «свои», как в реестре мастер-сделок (свои ВСЕ сделки пакета)."""
+    from app.master_deal import issue as MIS
     from app.master_deal import scope as MSC
     from app.master_deal import status as MST
     from app.master_deal.models import MasterDeal
     own = MSC.own_reps(db, user)
     rows = db.query(MasterDeal).filter(MasterDeal.contract_id == c.id).order_by(MasterDeal.period.desc(), MasterDeal.id.desc()).all()
     return [{"code": m.code, "period": m.period, "status": m.status, "status_label": MST.label(db, m),
-             "sent_at": m.sent_at, "docs_closed_at": m.docs_closed_at}
+             "sent_at": MIS.last_sent_at(db, m), "docs_closed_at": MIS.closed_at(db, m)}
             for m in rows if MSC.all_in_scope(db, m, own)]
 
 

@@ -118,24 +118,26 @@ def recon_overdue_hits(db: Session, Hit, fact_days) -> list:
 
 
 def scans_overdue_hits(db: Session, Hit, fact_days) -> list:
-    """Бумажный пакет: отправлен клиенту больше срока назад (`master_scans_due_days`, 30), а сканов нет — собирающему, красным."""
+    """Документы пакета ушли клиенту больше срока назад (`master_scans_due_days`, 30), а подписаны не все — собирающему,
+    красным. С 02.11.2026 по документам: и бумага (нет скана), и ЭДО (клиент не подписал), и отказ."""
     from app.master_deal import issue as IS
     from app.master_deal import status as ST
     from app.master_deal.models import MasterDeal
     due = IS.due_days(db)
     edge = datetime.utcnow() - timedelta(days=due)
     hits = []
-    for m in db.query(MasterDeal).filter(MasterDeal.status.in_((ST.WAIT_PAY, ST.WAIT_SCANS)), MasterDeal.sent_at < edge).all():
-        if not ST.is_paper(db, m):
+    for m in db.query(MasterDeal).filter(MasterDeal.status.in_((ST.WAIT_PAY, ST.WAIT_SCANS))).all():
+        sent = IS.last_sent_at(db, m)
+        if not sent or sent >= edge:
             continue
-        miss = IS.missing_scans(db, m)
+        miss = IS.unsigned(db, m)
         if not miss:
             continue
-        days = (datetime.utcnow() - m.sent_at).days
+        days = (datetime.utcnow() - sent).days
         hits.append(Hit(entity_type="master_deal", entity_id=m.id, stage="overdue",
-                        title=f"Мастер-сделка {m.code} — {days} дн. без сканов", link=f"/accounts/master/{m.code}",
-                        body="Нет сканов: " + ", ".join(x["label"] for x in miss), ctx={"master": m}, code=m.code,
+                        title=f"Мастер-сделка {m.code} — {days} дн. без подписанных", link=f"/accounts/master/{m.code}",
+                        body="Не подписаны: " + ", ".join(miss), ctx={"master": m}, code=m.code,
                         payload={"days": days, "missing": len(miss)},
-                        facts=[{"k": "без сканов", "v": fact_days(days), "fg": "danger", "hot": True},
+                        facts=[{"k": "без подписи", "v": fact_days(days), "fg": "danger", "hot": True},
                                {"k": "документов", "v": str(len(miss))}]))
     return hits

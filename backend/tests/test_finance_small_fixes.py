@@ -99,6 +99,9 @@ def _confirm_with(monkeypatch, exc):
         def refresh(self, o):
             pass
 
+        def add(self, o):          # подтверждение пишет строку истории подписи ДС (02.11.2026)
+            pass
+
     try:
         an.confirm_annex(1, an.ConfirmIn(no=5), _Db(), SimpleNamespace(id=1))
     finally:

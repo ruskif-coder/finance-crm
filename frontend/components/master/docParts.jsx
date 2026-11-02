@@ -1,17 +1,20 @@
 /**
- * Общие части документов пакета (хендофф «реестр + карточка», 19.10.2026): плашка подписания, кнопка «электронный | скан»,
- * панель сканов. Ими пользуются карточка ДС (`DsCard`) и расхлоп реестра (`registry/PackDocs`) — разметка одна.
+ * Общие части документов пакета (хендофф «реестр + карточка», 19.10.2026): плашка подписания, кнопки отметок подписи,
+ * кнопка «электронный | скан», панель сканов. Ими пользуются карточка ДС (`DsCard`) и расхлоп реестра (`registry/PackDocs`) —
+ * разметка одна. С 02.11.2026 подпись — у каждого документа (`sign` с сервера), не у пакета.
  */
 import { useRef, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
-import { SIGNED } from '@/lib/masterSteps'
+import { SIGN, signAction } from '@/lib/masterSteps'
 import { MONO, UI } from '@/components/salesTableKit'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ICON = {
-  none: '', issued: '', ours: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', sent: 'M4 12l16-8-6 16-3-7z', both: 'M5 12.5l4.5 4.5L19 7.5',
+  'подписан у нас': 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'выставлен': 'M4 12l16-8-6 16-3-7z', 'подписан': 'M5 12.5l4.5 4.5L19 7.5',
+  'отклонён': 'M6 6l12 12M18 6L6 18',
 }
+const OK = ICON['подписан']
 const Svg = ({ d, size = 11, w = 2.2 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
 )
@@ -35,11 +38,14 @@ export function KitDocs({ kit, upd_no, paper, code, onPick, setErr }) {
   )
 }
 
-export const signFrame = (s, upd = false) => ({ ours: 'var(--warning-border)', sent: 'var(--warning-border)', both: 'var(--income)' }[s] || (upd ? 'var(--accent-border)' : 'var(--border-card)'))
+export const signFrame = (s, upd = false) => ({ 'подписан у нас': 'var(--warning-border)', 'выставлен': 'var(--warning-border)', 'подписан': 'var(--income)',
+  'отклонён': 'var(--danger-border)' }[s] || (upd ? 'var(--accent-border)' : 'var(--border-card)'))
+/** Половина «скан» у кнопки документа — только у бумаги, ушедшей клиенту (ждём скан или он уже приложен). */
+export const scanOpen = (doc) => doc?.sign?.channel === 'бумага' && ['выставлен', 'подписан'].includes(doc?.sign?.state)
 export const scanKey = (t) => (t.annex_id != null ? `a${t.annex_id}` : `u${t.upd_no}`)
 
 export function SignBadge({ s, small = false }) {
-  const [label, bg, bd, fg] = SIGNED[s] || SIGNED.none
+  const [label, bg, bd, fg] = SIGN[s] || SIGN.none
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: bg, color: fg, border: `1px solid ${bd}`, borderRadius: small ? 6 : 7,
       padding: small ? '2px 7px' : '3px 9px', fontSize: small ? 10 : 11, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'center' }}>
@@ -62,7 +68,7 @@ export function DocButton({ label, off, offText = 'ждём 1С', onDoc, paper, 
       {hasScan && (scan ? (
         <span title={`Скан: ${scan.filename} — скачать`} onClick={onScan}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 8px', borderLeft: '1px solid var(--income-border)', background: 'var(--income-tint)', color: 'var(--income-fg)', fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap', cursor: 'pointer' }}>
-          <Svg d={ICON.both} size={10} />скан</span>
+          <Svg d={OK} size={10} />скан</span>
       ) : (
         <span title="Скана нет — выбрать этот документ в панели сканов" onClick={onPick}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 8px', borderLeft: '1px dashed var(--warning-border)', background: 'var(--warning-bg)', color: 'var(--warning-fg)', fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap', cursor: 'pointer' }}>
@@ -72,13 +78,56 @@ export function DocButton({ label, off, offText = 'ждём 1С', onDoc, paper, 
   )
 }
 
-/** Панель сканов: что не хватает, выбор документа радиочипами, загрузка одного файла к выбранному. */
+/** Кнопки следующей отметки подписи документа (ДС — `annex_id`, УПД — `upd_no`). Отказ — с причиной; отправка бумаги — трек
+ * по желанию; подпись бумаги ставит скан, а не кнопка. Правила и запреты — на сервере (`doc_sign.py`). */
+export function SignActions({ code, url, target, sign, onDone, setErr, small = false }) {
+  const [busy, setBusy] = useState(false)
+  const next = sign?.next || []
+  if (!next.length) return null
+  const run = async (state) => {
+    let reason = null
+    if (state === 'отклонён') {
+      reason = window.prompt('Почему клиент отклонил документ? Причина нужна, чтобы его переделать.')
+      if (!reason || !reason.trim()) return
+    } else if (state === 'выставлен' && sign?.channel === 'бумага') {
+      reason = window.prompt('Трек-номер отправки (можно оставить пустым)')
+      if (reason === null) return
+    }
+    setBusy(true); setErr?.('')
+    try { onDone((await api.post(url || `/master-deals/${code}/doc-sign`, { ...target, state, reason: reason || null }, auth())).data) }
+    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+  }
+  return (
+    <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center' }}>
+      {next.map(n => (
+        <button key={n} type="button" disabled={busy} onClick={() => run(n)}
+          style={{ height: small ? 22 : 24, padding: '0 9px', borderRadius: 7, border: `1px solid ${n === 'отклонён' ? 'var(--danger-border)' : 'var(--accent-border)'}`,
+            background: 'var(--bg-card)', color: n === 'отклонён' ? 'var(--danger-fg)' : 'var(--accent-fg)', fontFamily: UI, fontSize: small ? 10.5 : 11,
+            fontWeight: 700, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          {signAction(n, sign)}</button>
+      ))}
+    </span>
+  )
+}
+
+/** Документы пакета, к которым сейчас ждут скан подписанного: бумага, отправленная клиенту. */
+export function scanTargets(m) {
+  const out = []
+  for (const d of m.docs?.ds || []) {
+    if (d.sign?.needs_scan) out.push({ annex_id: d.annex_id, upd_no: null, label: d.number })
+    for (const k of d.kits || []) if (k.sign?.needs_scan) out.push({ annex_id: null, upd_no: k.upd_no, label: `УПД № ${k.upd_no}` })
+  }
+  return out
+}
+
+/** Панель сканов: бумажные документы у клиента без скана, выбор документа радиочипами, загрузка одного файла к выбранному.
+ * Скан подписанного — это и есть отметка «подписан» у бумаги. Ждать нечего — панели нет. */
 export function ScansPanel({ m, picked, setPicked, canEdit, onChanged }) {
-  const s = m.docs.scans
+  const targets = scanTargets(m)
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const target = s.targets.find(t => scanKey(t) === picked) || s.targets[0]
+  const target = targets.find(t => scanKey(t) === picked) || targets[0]
   const upload = async (f) => {
     if (!f || !target) return
     setBusy(true); setErr('')
@@ -88,19 +137,16 @@ export function ScansPanel({ m, picked, setPicked, canEdit, onChanged }) {
     try { onChanged((await api.post(`/master-deals/${m.code}/files`, fd, auth())).data); setPicked(null) }
     catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить скан') } finally { setBusy(false) }
   }
+  if (!targets.length) return null
   const dot = (c) => <span aria-hidden style={{ width: 6, height: 6, borderRadius: 2, background: c, flex: '0 0 6px' }} />
-  if (!s.missing.length) {
-    return <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', background: 'var(--income-tint)', border: '1px solid var(--income-border)', borderRadius: 11, fontSize: 12, color: 'var(--income-fg)' }}>
-      {dot('var(--income)')}Все сканы на месте: ДС {s.ds[1]} из {s.ds[0]} · УПД {s.upd[1]} из {s.upd[0]} — пакет можно закрывать</span>
-  }
   return (
     <div data-scans style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 14px', background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 12 }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--warning-fg)' }}>
-        {dot('var(--warning)')}Обязательные сканы подписанных: ДС {s.ds[1]} из {s.ds[0]} · УПД {s.upd[1]} из {s.upd[0]} — без них пакет не уходит в архив</span>
+        {dot('var(--warning)')}Ждём скан подписанного: {targets.map(t => t.label).join(', ')} — скан и есть отметка «подписан»</span>
       {canEdit && (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ ...CAPS, paddingRight: 2 }}>что загружаем</span>
-          {s.targets.map(t => {
+          {targets.map(t => {
             const on = target && scanKey(t) === scanKey(target)
             return (
               <span key={scanKey(t)} onClick={() => setPicked(scanKey(t))}

@@ -690,6 +690,9 @@ class SalesAnnex(Base):
     rows = Column(JSONB)
     # Вид ДС (п. 11 миграции): primary — выпущен на старте на план; fact — после итоговой сверки. Подпись — app/sales/annex_signed.py.
     issue_kind = Column(String(8))
+    # Где документ у клиента и каким каналом ушёл (2026-11-02_start_pack_and_doc_sign.sql). Правит только app/master_deal/doc_sign.py.
+    sign_state = Column(String(20))
+    sign_channel = Column(String(10))
     items = relationship("SalesAnnexItem", back_populates="annex",
                          cascade="all, delete-orphan")
 

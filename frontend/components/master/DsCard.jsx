@@ -10,7 +10,7 @@ import { MONO } from '@/components/salesTableKit'
 import { downloadFile } from '@/lib/download'
 import { grpDash, rub2 } from '@/lib/salesFormat'
 import { Dot, groupLabel, lineBtn } from '@/components/master/kit'
-import { DocButton, KitDocs, SignBadge, downloadScan, signFrame } from '@/components/master/docParts'
+import { DocButton, KitDocs, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
 import { BasisRow } from '@/components/master/UpdBasis'
 import { SVC_DOT } from '@/lib/masterStatus'
 
@@ -20,9 +20,9 @@ const KIND = { main: ['основные услуги', 'var(--accent-tint)', 'va
 // §6: маркер услуги по её названию
 const HEAD = { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 
-function Kit({ k, rows, rate, doc, paper, code, onPick, setErr, basis, busy, onBasis }) {
+function Kit({ k, rows, rate, doc, code, onPick, setErr, basis, busy, onBasis, canEdit, onDone }) {
   const [open, setOpen] = useState(false)
-  const sign = doc?.signed || 'none'
+  const sign = doc?.sign?.state || 'upd'
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-tint)', border: `1px solid ${signFrame(sign, true)}`, borderRadius: 12, minWidth: 0, transition: 'border-color 300ms ease' }}>
     <div onClick={() => setOpen(o => !o)} style={{ flex: '0 1 420px', minWidth: 'min(360px,100%)', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', columnGap: 14, rowGap: 5, padding: '11px 13px',
@@ -30,6 +30,7 @@ function Kit({ k, rows, rate, doc, paper, code, onPick, setErr, basis, busy, onB
       <span style={{ gridColumn: 1, display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ ...HEAD, fontWeight: 700, color: 'var(--accent-fg)' }}>УПД № {k.upd_no}</span>
         {!!doc && <SignBadge s={sign} small />}
+        {canEdit && !!doc && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={doc.sign} onDone={onDone} setErr={setErr} small />}
         <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{open ? '▴' : '▾'}</span>
       </span>
       <span style={{ gridColumn: 1, fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupLabel(k)}</span>
@@ -39,7 +40,7 @@ function Kit({ k, rows, rate, doc, paper, code, onPick, setErr, basis, busy, onB
       </span>
       <span style={{ gridColumn: 1, fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>сделки: {k.deals.join(', ')}</span>
       <span style={{ gridColumn: 2, gridRow: '1 / span 4', alignSelf: 'start' }}>
-        <KitDocs kit={doc} upd_no={k.upd_no} paper={paper} code={code} onPick={onPick} setErr={setErr} />
+        <KitDocs kit={doc} upd_no={k.upd_no} paper={scanOpen(doc)} code={code} onPick={onPick} setErr={setErr} />
       </span>
       {open && (
         <div onClick={e => e.stopPropagation()} style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, paddingTop: 8, borderTop: '1px solid var(--accent-border)', cursor: 'default' }}>
@@ -71,13 +72,13 @@ function Kit({ k, rows, rate, doc, paper, code, onPick, setErr, basis, busy, onB
   )
 }
 
-export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove, doc, paper, code, onPick, basis, busy, onBasis }) {
+export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove, doc, code, onPick, basis, busy, onBasis, canEdit, onDone, atStart = false }) {
   const [err, setErr] = useState('')
   const rate = (vat || 0) / 100
   const all = ds.groups.flatMap(g => g.rows)
   const showHead = ds.groups.length > 1 || ds.groups.some(g => g.brand || g.service)
   const [label, bg, fg] = KIND[ds.kind] || KIND.main
-  const sign = doc?.signed
+  const sign = doc?.sign?.state
   const kitDoc = (n) => doc?.kits?.find(x => x.upd_no === n)
   return (
     <div style={{ background: 'var(--bg-card)', border: `1px solid ${doc ? signFrame(sign) : 'var(--border-card)'}`, boxShadow: 'var(--shadow-card)', borderRadius: 18,
@@ -85,7 +86,8 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
       outline: flash ? '2px solid var(--accent)' : 'none', transition: 'outline .2s, border-color 300ms ease' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{doc?.number || `ДС № ${ds.no}`}</span>
-        {!!doc && <SignBadge s={sign} />}
+        {!!doc && <SignBadge s={sign || 'none'} />}
+        {canEdit && !!doc && <SignActions code={code} target={{ annex_id: doc.annex_id }} sign={doc.sign} onDone={onDone} setErr={setErr} />}
         <span style={{ display: 'inline-flex', alignItems: 'center', background: bg, color: fg, borderRadius: 7, padding: '3px 9px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'center' }}>{label}</span>
         {!!doc?.services?.length && (
           <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center' }}>
@@ -97,7 +99,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
         )}
         {!!doc && (
           <span style={{ alignSelf: 'center' }}>
-            <DocButton label="ДС pdf" off={false} paper={paper} scan={doc.scan} onDoc={() => downloadFile(doc.doc_url, null, setErr)}
+            <DocButton label="ДС pdf" off={false} paper={scanOpen(doc)} scan={doc.scan} onDoc={() => downloadFile(doc.doc_url, null, setErr)}
               onScan={() => downloadScan(code, doc.scan, setErr)} onPick={() => onPick(`a${doc.annex_id}`)} />
           </span>
         )}
@@ -162,13 +164,15 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
-        <span style={{ ...HEAD, fontWeight: 700, letterSpacing: '.1em' }}>Закрывающие · комплектов {ds.upds.length}</span>
-        {ds.no_kits ? (
+        <span style={{ ...HEAD, fontWeight: 700, letterSpacing: '.1em' }}>Закрывающие{atStart ? '' : ` · комплектов ${ds.upds.length}`}</span>
+        {atStart ? (
+          <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>ДС на старте — закрывающие выпускаются на закрытии, по факту.</span>
+        ) : ds.no_kits ? (
           <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>Нет позиций со стоимостью — закрывающие не формируются.</span>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {ds.upds.map(k => <Kit key={k.upd_no} k={k} rows={all} rate={rate} doc={kitDoc(k.upd_no)} paper={paper} code={code} onPick={onPick} setErr={setErr}
-              basis={(basis || []).find(u => u.upd_no === k.upd_no)} busy={busy} onBasis={onBasis} />)}
+            {ds.upds.map(k => <Kit key={k.upd_no} k={k} rows={all} rate={rate} doc={kitDoc(k.upd_no)} code={code} onPick={onPick} setErr={setErr}
+              basis={(basis || []).find(u => u.upd_no === k.upd_no)} busy={busy} onBasis={onBasis} canEdit={canEdit} onDone={onDone} />)}
           </div>
         )}
       </div>
