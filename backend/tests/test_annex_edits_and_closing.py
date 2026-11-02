@@ -61,15 +61,16 @@ def test_closing_basis_follows_the_owners_sample(db, stub_plan, monkeypatch):  #
     # Слово в основании — ТО ЖЕ, что в заголовке документа (владелец 31.10.2026: «синхронизировать
     # надо»). В образце 14.10 они расходились: заголовок «Приложение № 68», основание «согласно
     # Доп.соглашению», — это был дефект, а не правило. Проверяем оба положения тумблера.
-    assert "бренда «Магне В6», в сети SIMB-AD, согласно Приложению 7 от " in cb["text"]
+    # С 02.11.2026 тег номера печатает знак (владелец: «нужно “№24”»): образец 14.10 был без «№».
+    assert "бренда «Магне В6», в сети SIMB-AD, согласно Приложению №7 от " in cb["text"]
     assert m["number"] == "Приложение № 7"
     ds = _assemble(db, kind="дс")
-    assert "в сети SIMB-AD, согласно Доп. соглашению 7 от " in ds["closing_basis"]["text"]
+    assert "в сети SIMB-AD, согласно Доп. соглашению №7 от " in ds["closing_basis"]["text"]
     assert ds["number"] == "Доп. соглашение № 7", "в документе — полная форма, не «ДС»"
     assert cb["text"].endswith("г., с 01.11.2026 по 30.11.2026г.")
     assert m["values"]["сеть"] == "SIMB-AD" and len(m["values"]["дата_дс_кратко"]) == 8          # ДД.ММ.ГГ
     mine = _assemble(db, edits={CLOSING_KEY: "Услуги по {бренд_название}, ДС {номер_дс}."})["closing_basis"]
-    assert mine["edited"] is True and mine["text"].startswith("Услуги по Магне В6, ДС 7")
+    assert mine["edited"] is True and mine["text"].startswith("Услуги по Магне В6, ДС №7")
 
 
 def test_validate_edit_rules():
@@ -180,7 +181,7 @@ def test_assembly_applies_inherited_text_by_template_block_id_and_marks_it(db, s
     assert p1["edited"] is False and p1["inherited_from"] == "Приложение № 2" and p1["text"].startswith("Унаследованный пункт для ")
     cost = next(b for b in m["blocks"] if b["id"] == "p11")
     assert cost["inherited_from"] is None and "Подмена" not in cost["text"]
-    assert m["closing_basis"]["inherited_from"] == "Приложение № 2" and m["closing_basis"]["text"] == "Основание из прошлого ДС 7."
+    assert m["closing_basis"]["inherited_from"] == "Приложение № 2" and m["closing_basis"]["text"] == "Основание из прошлого ДС №7."
     assert m["edits"] == {"p1": "Унаследованный пункт для {бренд}.", "closing_basis": "Основание из прошлого ДС {номер_дс}."}   # эффективные — их заморозит подтверждение
     own = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
                       edits={"p1": "Свой текст."}, defaults=defaults)

@@ -155,7 +155,7 @@ def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, ad
         "период_с": _date(period_from), "период_по": _date(period_to),
         "сумма": _num(gross), "сумма_прописью": rub_phrase(gross),
         "ндс_ставка": f"{rate:g}", "ндс_сумма": _num(vat), "ндс_сумма_прописью": rub_phrase(vat),
-        "номер_дс": str(no), "договор_номер": contract.contract_number or "", "договор_дата": _date(contract.contract_date),
+        "номер_дс": number_value(no), "договор_номер": contract.contract_number or "", "договор_дата": _date(contract.contract_date),
         "дата_дс": _date(doc_date),
         # Первый рекламодатель — без номера, второй и далее — `юр_название_2`, `_3` …
         # Объявить их списком в SUBS нельзя (у одного плательщика 116 рекламодателей),
@@ -164,6 +164,15 @@ def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, ad
            for i, v in enumerate(legal_names or [])},
         **DK.values(kind),
     }
+
+
+def number_value(no) -> str:
+    """Тег `{номер_дс}` — номер со знаком: «№24» (владелец 02.11.2026). Номера нет — пусто."""
+    return f"№{no}" if no not in (None, "") else ""
+
+
+# Во всех шаблонах на 02.11.2026 текст уже «№ {номер_дс}»: знак перед тегом убирается, иначе вышло бы «№ №24».
+_SIGN_BEFORE_NUMBER = re.compile(r"№\s*(?=\{номер_дс\})")
 
 
 def _parts(text: str, values: dict) -> list:
@@ -177,6 +186,7 @@ def _parts(text: str, values: dict) -> list:
     конструктора, документа и ручки приложений), а без вида — ничего не меняет.
     """
     kind = next((k for k, f in DK.KINDS.items() if f["nom"] == values.get("вид_документа")), None)
+    text = _SIGN_BEFORE_NUMBER.sub("", text or "")
     out, last = [], 0
     for m in _KEY.finditer(text or ""):
         if m.start() > last:

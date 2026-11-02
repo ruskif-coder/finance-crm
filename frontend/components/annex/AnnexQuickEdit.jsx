@@ -6,12 +6,13 @@
 import { useEffect, useState } from 'react'
 import { MONO } from '@/components/salesTableKit'
 import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
+import { noDoubleSign } from '@/lib/annexTemplate.mjs'
 
 const CAP = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 
 /** Значения подставляются на клиенте только для предпросмотра; настоящий текст собирает сервер. */
 function resolveLocal(text, values) {
-  return String(text || '').split(/(\{[^{}]+\})/g).filter(Boolean).map(p => {
+  return noDoubleSign(text).split(/(\{[^{}]+\})/g).filter(Boolean).map(p => {
     const m = /^\{([^{}]+)\}$/.exec(p)
     if (!m) return { t: p }
     const v = values[m[1]]
@@ -45,7 +46,13 @@ export default function AnnexQuickEdit({ title, hint, source, defaultText, edite
     return () => { alive = false }
   }, [])
 
-  const keys = (subs && subs.length ? subs.map(s => s.key) : Object.keys(values || {})).filter(k => values && k in values)
+  // Теги — по блокам, как в редакторе шаблонов (владелец 02.11.2026): блок и порядок приходят с сервера (`subs.listing`).
+  const groups = []
+  for (const x of (subs && subs.length ? subs : Object.keys(values || {}).map(key => ({ key, group: '' })))) {
+    if (!values || !(x.key in values)) continue
+    const g = groups.find(([name]) => name === x.group)
+    if (g) g[1].push(x.key); else groups.push([x.group, [x.key]])
+  }
   const dirty = text !== (source || '')
 
   const save = async (value) => {
@@ -70,12 +77,19 @@ export default function AnnexQuickEdit({ title, hint, source, defaultText, edite
       <textarea value={text} rows={3} disabled={!canEdit} onChange={e => setText(e.target.value)}
                 style={{ boxSizing: 'border-box', width: '100%', padding: '10px 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, lineHeight: 1.5, resize: 'vertical', outline: 'none', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
       {canEdit && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {keys.map(k => (
-            <span key={k} onClick={() => setText(t => `${t.replace(/\s*$/, '')} {${k}}`)} title={`вставить {${k}} · сейчас: ${values[k] || '—'}`}
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 8px', borderRadius: 7, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
-              {`{${k}}`}
-            </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {groups.map(([group, keys]) => (
+            <div key={group || '-'} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              {!!group && <span style={{ ...CAP, flex: '0 0 130px' }}>{group}</span>}
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {keys.map(k => (
+                  <span key={k} onClick={() => setText(t => `${t.replace(/\s*$/, '')} {${k}}`)} title={`вставить {${k}} · сейчас: ${values[k] || '—'}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 8px', borderRadius: 7, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                    {`{${k}}`}
+                  </span>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

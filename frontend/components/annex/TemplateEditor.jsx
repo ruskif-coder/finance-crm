@@ -4,7 +4,7 @@
  */
 import { MONO } from '@/components/salesTableKit'
 import {
-  SUBS, SUB_INFO, PROTECTED_GROUPS, numbering, zoneAt, canMove,
+  SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, isKnownSub, numbering, zoneAt, canMove,
 } from '@/lib/annexTemplate.mjs'
 import { Segs } from '@/components/annex/TemplateSheet'
 
@@ -95,7 +95,7 @@ function warningsOf(sel) {
     const miss = PROTECTED_GROUPS.filter(g => !g.some(k => t.indexOf(`{${k}}`) >= 0))
     if (miss.length) out.push({ ...WARN.warn, text: `Убрана защищённая подстановка ${miss.map(g => g.map(k => `{${k}}`).join(' или ')).join(', ')} — сумма в тексте перестанет сходиться с таблицей медиаплана.` })
   }
-  const bad = (t.match(/\{([^{}]+)\}/g) || []).filter(x => !SUBS[x.slice(1, -1)])
+  const bad = (t.match(/\{([^{}]+)\}/g) || []).filter(x => !isKnownSub(x.slice(1, -1)))
   if (bad.length) out.push({ ...WARN.bad, text: `Неизвестная подстановка ${bad.join(', ')} — при сборке ДС останется как есть.` })
   return out
 }
@@ -132,17 +132,22 @@ export function PointEditor({ blocks, sel, onPatch, onRemove }) {
       </label>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={CAP}>Вставить подстановку · добавится в конец текста</span>
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {Object.keys(SUBS).map(k => {
-            const prot = SUBS[k][1]
-            return (
-              <span key={k} onClick={() => addSub(k)} title={`${SUB_INFO[k]} · образец: ${SUBS[k][0]}`}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', borderRadius: 7, background: prot ? 'var(--warning-tint)' : 'var(--bg-subtle)', border: `1px solid ${prot ? 'var(--warning-border)' : 'var(--border-card)'}`, color: prot ? 'var(--warning-fg)' : 'var(--text-secondary)', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
-                {prot ? '🔒 ' : ''}{`{${k}}`}
-              </span>
-            )
-          })}
-        </div>
+        {SUB_GROUPS.map(([group, keys]) => (
+          <div key={group} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ ...CAP, flex: '0 0 130px' }}>{group}</span>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {keys.map(k => {
+                const prot = SUBS[k][1]
+                return (
+                  <span key={k} onClick={() => addSub(k)} title={`${SUB_INFO[k]} · образец: ${SUBS[k][0]}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', borderRadius: 7, background: prot ? 'var(--warning-tint)' : 'var(--bg-subtle)', border: `1px solid ${prot ? 'var(--warning-border)' : 'var(--border-card)'}`, color: prot ? 'var(--warning-fg)' : 'var(--text-secondary)', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                    {prot ? '🔒 ' : ''}{`{${k}}`}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
       {warningsOf(b).map(w => <Warn key={w.text} w={w} />)}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
