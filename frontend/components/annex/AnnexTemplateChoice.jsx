@@ -29,7 +29,7 @@ export default function AnnexTemplateChoice({ choice, version, canEdit, onChoose
                       options={choice.options.map(o => ({ value: o.id, label: optionLabel(o) }))}
                       clearLabel={def ? `— по умолчанию: ${def.title} —` : '— по умолчанию —'}
                       onPick={v => { setPop(null); onChoose(v) }} onClose={() => setPop(null)}
-                      onAddNew={name => { setPop(null); onSaveAs(name) }}
+                      onAddNew={onSaveAs ? name => { setPop(null); onSaveAs(name) } : undefined}
                       addLabel={name => (name ? `+ Сохранить документ как шаблон «${name}»` : '+ Сохранить как шаблон — введите имя в поиске')} />
       )}
     </>

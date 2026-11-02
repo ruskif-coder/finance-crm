@@ -185,7 +185,8 @@ def _parts(text: str, values: dict) -> list:
     `values`: так правило действует во ВСЕХ местах сборки текста (пункты, основание УПД из
     конструктора, документа и ручки приложений), а без вида — ничего не меняет.
     """
-    kind = next((k for k, f in DK.KINDS.items() if f["nom"] == values.get("вид_документа")), None)
+    kind = next((k for k, f in DK.KINDS.items() if f["nom"] == values.get("вид_документа")),
+                DK.LEGACY_NOM.get(values.get("вид_документа")))
     text = _SIGN_BEFORE_NUMBER.sub("", text or "")
     out, last = [], 0
     for m in _KEY.finditer(text or ""):

@@ -62,7 +62,7 @@ def test_to_annex_creates_ds_matching_layout(env, settings):
         assert a.master_deal_id == m.id and a.kind == ds["kind"] and a.rows
         # Мастер-сделка по умолчанию — доп. соглашение (решение 15.10.2026), и с 31.10.2026 номер
         # печатается полной формой: он стоит в документе, а «ДС» — только на экранах.
-        assert x["number"] == (f"Доп. соглашение № {base}-01" if ds["kind"] == "addons" else f"Доп. соглашение № {base}")
+        assert x["number"] == (f"Дополнительное соглашение № {base}-01" if ds["kind"] == "addons" else f"Дополнительное соглашение № {base}")
         deal_ids = [al.deal_id for al in db.query(SalesDealAnnexAllocation).filter_by(annex_id=a.id)]
         model = tpl_doc.live(db, c, tpl_doc.resolve(db, c)[0], a, deal_ids)
         assert model["number"] == x["number"], "номер в документе — из раскладки"
@@ -96,9 +96,9 @@ def test_to_annex_refusals(env):
 
 
 def test_master_ds_file_prints_snapshot_groups_ds_words_and_upd_basis(env):
-    """Выгрузка ДС пакета (DOCX): строки — снимок раскладки, заголовки групп, «Доп. соглашение № N», слово документа —
-    «Доп. соглашение» вместо «Приложения» во всех падежах, основания по УПД. До 31.10.2026 здесь было сокращение «ДС»
-    в тексте; владелец: «в тексте — Доп. соглашение»."""
+    """Выгрузка ДС пакета (DOCX): строки — снимок раскладки, заголовки групп, «Дополнительное соглашение № N», слово документа —
+    «Дополнительное соглашение» вместо «Приложения» во всех падежах, основания по УПД. До 31.10.2026 здесь было сокращение «ДС»
+    в тексте; владелец: «в тексте — Дополнительное соглашение»."""
     import io
     from docx import Document
     from app.models import Contract
@@ -116,7 +116,7 @@ def test_master_ds_file_prints_snapshot_groups_ds_words_and_upd_basis(env):
     net = sum(float(r.get("amount") or 0) for r in d["rows"] if not r.get("group_title"))
     assert net == pytest.approx(LY.layout(db, m)["ds"][0]["net"], abs=0.02), "строки файла — снимок раскладки"
     text = "\n".join(p.text for p in Document(io.BytesIO(build_docx(d, with_basis=True))).paragraphs)
-    assert made[0]["number"] in text and "настоящему Доп. соглашению" in text
+    assert made[0]["number"] in text and "настоящему Дополнительному соглашению" in text
     # Сокращения «ДС» в ТЕКСТЕ документа больше нет — только в интерфейсе. Прибор на возврат к таблице замен.
     for abbr in ("настоящему ДС", "настоящим ДС", "Настоящее ДС", "отдельными ДС", "ДС составлено"):
         assert abbr not in text, abbr
@@ -230,7 +230,7 @@ def test_confirm_all_ds_of_package_in_one_action(env, monkeypatch):
     out = R.master_confirm_ds(m.code, db, admin)
     nums = sorted(db.get(SalesAnnex, x["id"]).number for x in made)
     base = m.start_no + 1
-    assert nums == sorted([f"Доп. соглашение № {base}"] + ([f"Доп. соглашение № {base}-01"] if len(made) > 1 else []))
+    assert nums == sorted([f"Дополнительное соглашение № {base}"] + ([f"Дополнительное соглашение № {base}-01"] if len(made) > 1 else []))
     assert len(out["confirmed"]) == len(made)
 
 
@@ -244,7 +244,7 @@ def test_upd_basis_is_the_constructor_closing_basis(env):
     m = _package(db, deals, u, {"addons_separate": False, "upd_by_brand": True})
     TA.create(db, m, u)
     ups = TA.upds_of(db, m)
-    assert ups and all("согласно Доп. соглашению" in x["basis"] and not x["basis_custom"] for x in ups), ups[0]["basis"]
+    assert ups and all("согласно Дополнительному соглашению" in x["basis"] and not x["basis_custom"] for x in ups), ups[0]["basis"]
     assert all("{" in x["basis_template"] and x["values"] for x in ups), "на экран — шаблон и значения, как в конструкторе"
     for x in ups:
         if x["brand"]:

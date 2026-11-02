@@ -249,13 +249,17 @@ export default function AnnexAssembly() {
     finally { setBusy('') }
   }
 
-  /** Пересоздать подтверждённое приложение на актуальном шаблоне (до отправки в 1С). */
-  const rebuild = async () => {
-    if (!window.confirm('Пересоздать документ по актуальной версии шаблона договора? Номер и дата сохранятся, прежний текст документа будет заменён.')) return
+  /** Пересоздать подтверждённое приложение на актуальном шаблоне (до отправки в 1С). С аргументом — по выбранному шаблону
+   *  (владелец 02.11.2026: выбор шаблона у подтверждённого ДС); `null` — по шаблону по умолчанию. */
+  const rebuild = async (pick) => {
+    const chosen = pick !== undefined
+    const title = chosen && pick != null ? (a.template_choice?.options || []).find(o => o.id === pick)?.title : null
+    const what = chosen ? `по шаблону «${title || 'по умолчанию'}»` : 'по актуальной версии шаблона договора'
+    if (!window.confirm(`Пересоздать документ ${what}? Номер и дата сохранятся, прежний текст документа будет заменён.`)) return
     setBusy('rebuild')
     setErr('')
     try {
-      await api.post(`/annexes/${id}/rebuild`, {}, auth())
+      await api.post(`/annexes/${id}/rebuild`, chosen ? { choose: true, template_id: pick } : {}, auth())
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось пересоздать документ') }
     finally { setBusy('') }

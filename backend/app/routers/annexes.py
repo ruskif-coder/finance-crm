@@ -471,8 +471,24 @@ def rebuild_frozen(db: Session, a: SalesAnnex, c: Contract) -> None:
     a.blocks = frozen
 
 
+class RebuildIn(BaseModel):
+    """Пересоздать с выбором шаблона (владелец 02.11.2026): `choose` — применить `template_id` (пусто — по умолчанию)."""
+    choose: bool = False
+    template_id: Optional[int] = None
+
+
+def _check_template(db: Session, c: Contract, template_id: int) -> None:
+    """Шаблон должен относиться к договору — та же проверка, что у выбора шаблона черновика."""
+    from app.annex_tpl import service as TS
+    try:
+        TS.resolve_for_contract(db, c, chosen_id=template_id)
+    except TS.AnnexTplError as e:
+        raise HTTPException(e.status, e.message)
+
+
 @router.post("/{annex_id}/rebuild")
-def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT),
+                  payload: Optional[RebuildIn] = None):
     """Пересоздать подтверждённое приложение на АКТУАЛЬНОЙ версии шаблона договора (владелец 14.10.2026): для ДС, собранных до конструктора,
     и для тех, что собраны по старой версии шаблона, пока они не ушли в 1С. Номер и дата сохраняются, документ собирается заново и замораживается
     (полнота и сверка чисел те же, что при подтверждении). Прежний замороженный текст заменяется; что было и что стало — в журнале."""
@@ -483,6 +499,10 @@ def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Dep
         raise HTTPException(409, "Приложение уже ушло в 1С — пересоздать его нельзя")
     c = _contract(db, a.contract_id)
     was = tpl_doc.version_row(db, a.template_version_id)
+    if payload is not None and payload.choose:
+        if payload.template_id is not None:
+            _check_template(db, c, payload.template_id)
+        a.tpl_template_id = payload.template_id
     rebuild_frozen(db, a, c)
     db.commit()
     now = tpl_doc.version_row(db, a.template_version_id)

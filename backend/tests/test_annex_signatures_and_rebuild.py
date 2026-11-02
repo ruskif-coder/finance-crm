@@ -54,16 +54,16 @@ def test_word_file_uses_abbreviated_names_and_a_nominative_signature():
 
 # ── пересоздание на актуальном шаблоне ───────────────────────────────────────────────────────
 
-def _rebuild_with(monkeypatch, annex_row, *, frozen=None, sent=False):
+def _rebuild_with(monkeypatch, annex_row, *, frozen=None, sent=False, payload=None, freeze=None):
     monkeypatch.setattr(A, "_annex", lambda db, i, *a: annex_row)
     monkeypatch.setattr(A, "_contract", lambda db, i: SimpleNamespace(id=2))
-    monkeypatch.setattr(A, "_freeze_for_confirm", lambda db, a, c, no: frozen or {"template": {"version_id": 9}, "amount": 1.0})
+    monkeypatch.setattr(A, "_freeze_for_confirm", freeze or (lambda db, a, c, no: frozen or {"template": {"version_id": 9}, "amount": 1.0}))
     monkeypatch.setattr(A, "_sent_to_onec", lambda a: sent)
     monkeypatch.setattr(A, "log_action", lambda *a, **k: None)
     monkeypatch.setattr(A, "_out", lambda a: {"id": a.id})
     monkeypatch.setattr(A.tpl_doc, "version_row", lambda db, vid: SimpleNamespace(version=vid) if vid else None)
     db = SimpleNamespace(commit=lambda: None)
-    return A.rebuild_annex(1, db, SimpleNamespace(id=1))
+    return A.rebuild_annex(1, db, SimpleNamespace(id=1), payload)
 
 
 def test_rebuild_replaces_the_frozen_document_and_the_version(monkeypatch):
@@ -141,3 +141,36 @@ def test_date_cannot_change_after_onec_or_on_pre_constructor_doc(monkeypatch):
     with pytest.raises(HTTPException) as e2:
         _set_date_with(monkeypatch, old, date(2026, 10, 3))
     assert e2.value.status_code == 409
+
+
+# ── пересоздание с выбором шаблона (владелец 02.11.2026: «вот тут бы выбор шаблона сделать») ──────────────
+
+def _rebuild_choosing(monkeypatch, payload, checked):
+    a = SimpleNamespace(id=1, no=30, number="Дополнительное соглашение № 30", contract_id=2, template_version_id=38,
+                        tpl_template_id=3, blocks={"blocks": []})
+    seen = {}
+
+    def freeze(db, an, c, no):
+        seen["tpl_at_freeze"] = an.tpl_template_id
+        return {"template": {"version_id": 40, "template_id": an.tpl_template_id}, "amount": 1.0}
+
+    monkeypatch.setattr(A, "_check_template", lambda db, c, tid: checked.append(tid))
+    _rebuild_with(monkeypatch, a, payload=payload, freeze=freeze)
+    return a, seen
+
+
+def test_rebuild_with_a_chosen_template_freezes_by_that_template(monkeypatch):
+    checked = []
+    a, seen = _rebuild_choosing(monkeypatch, A.RebuildIn(choose=True, template_id=7), checked)
+    assert checked == [7], "шаблон не проверен на принадлежность договору"
+    assert seen["tpl_at_freeze"] == 7 and a.tpl_template_id == 7 and a.no == 30
+
+
+def test_rebuild_back_to_the_default_template(monkeypatch):
+    a, seen = _rebuild_choosing(monkeypatch, A.RebuildIn(choose=True, template_id=None), [])
+    assert seen["tpl_at_freeze"] is None
+
+
+def test_plain_rebuild_keeps_the_template(monkeypatch):
+    a, seen = _rebuild_choosing(monkeypatch, None, [])
+    assert seen["tpl_at_freeze"] == 3

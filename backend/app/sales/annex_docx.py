@@ -227,23 +227,51 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
               f"от {_long_date(contract.get('date'))} (далее по тексту – «Договор») "
               f"о нижеследующем:")
 
+    if d.get("clauses"):
+        _constructor_body(doc, d, ex, cust)
+    else:
+        _legacy_body(doc, d, ex, cust)
+    if with_basis and d.get("closing_basis"):
+        _basis_page(doc, d)
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def _sign_block(doc, ex: dict, cust: dict) -> None:
+    sign = doc.add_paragraph()
+    sign.paragraph_format.space_before = Pt(14)
+    sign.paragraph_format.space_after = Pt(8)
+    _run(sign, "Подписи Сторон:", bold=True)
+    _signatures(doc, ex, cust)
+
+
+def _constructor_body(doc, d: dict, ex: dict, cust: dict) -> None:
+    """Пункты — ровно блоки конструктора, в его порядке (владелец 02.11.2026). Шапку, место и преамбулу файл уже напечатал;
+    таблица и подписи встают туда, где их поставил шаблон. Подписи, которых шаблон не поставил, — в конце: без них документ
+    не подписать."""
+    signed = False
+    for c in d["clauses"]:
+        if c.get("sys") == "table":
+            _table(doc, d)
+        elif c.get("sys") == "sign":
+            _sign_block(doc, ex, cust)
+            signed = True
+        elif not c.get("sys"):
+            _clause(doc, c.get("num") or "", c.get("text") or "", indent=0.8 if c.get("sub") else 0.0)
+    if not signed:
+        _sign_block(doc, ex, cust)
+
+
+def _legacy_body(doc, d: dict, ex: dict, cust: dict) -> None:
+    """ДС, собранный до конструктора (модели нет): прежний текст, зашитый в код."""
     _clause(doc, "1.", d.get("body") or "")
     _table(doc, d)
     _clause(doc, "1.1.", _clause_11(d), indent=0.8)
     _clause(doc, "1.2.", _w(d, CLAUSE_12), indent=0.8)
     _clause(doc, "2.", CLAUSE_2)
     _clause(doc, "3.", _clause_3(d))
-
-    sign = doc.add_paragraph()
-    sign.paragraph_format.space_before = Pt(14)
-    sign.paragraph_format.space_after = Pt(8)
-    _run(sign, "Подписи Сторон:", bold=True)
-    _signatures(doc, ex, cust)
-    if with_basis and d.get("closing_basis"):
-        _basis_page(doc, d)
-    out = BytesIO()
-    doc.save(out)
-    return out.getvalue()
+    _sign_block(doc, ex, cust)
 
 
 CLAUSE_12 = ("Услуги оказываются в соответствии с требованиями Заказчика. Стороны вправе "

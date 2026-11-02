@@ -13,7 +13,7 @@
  * Вёрстка — A4 с типографикой договора: Times, 12 пт, чёрным по белому. Тёмной темы тут
  * нет и быть не может: документ печатают на бумаге.
  */
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import api, { auth } from '@/lib/api'
@@ -92,6 +92,94 @@ export default function AnnexPrint() {
   const cust = d.customer || {}
   const exec = d.executor || {}
 
+  const clauses = d.clauses || []
+  const tableEl = (
+    <>
+      {/* Медиаплан НАСТОЯЩЕЙ таблицей, а не картинкой из экселя, как в образце:
+          суммы совпадают с базой по построению, и документ ищется текстом. Колонки —
+          один в один с подписанным документом, включая «Место размещения» и «Тип
+          ротации»; последняя пока пустая — такого поля у нас нет. */}
+      {!!rows.length && (
+        <table>
+          <thead>
+            <tr>
+              <th>Место<br />размещения</th>
+              <th style={{ width: '22%' }}>Позиция</th>
+              <th>Гео</th><th>Формат</th><th>Девайс</th>
+              <th>Тип ротации<br />(для медийных<br />форматов)</th>
+              <th>Модель<br />закупки</th>
+              <th>Объем размещения</th>
+              <th>Период</th>
+              <th>Стоимость<br />за единицу<br />закупки</th>
+              <th>Стоимость<br />размещения</th>
+              <th>НДС {d.vat_rate}%</th>
+              <th>Стоимость<br />размещения<br />с учетом НДС</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (r.group_title ? (
+              /* ДС мастер-сделки: заголовок группы (бренд · услуга) строкой на всю ширину — как в DOCX */
+              <tr key={i}><td colSpan={13} style={{ fontWeight: 'bold', textAlign: 'left' }}>{r.group_title}</td></tr>
+            ) : (
+              <tr key={i}>
+                <td style={{ fontWeight: 'bold' }}>{r.network || '—'}</td>
+                <td className="pos">
+                  {r.doc_position || r.position || '—'}
+                </td>
+                <td>{r.geo || '—'}</td>
+                <td>{r.format || '—'}</td>
+                <td>{r.device || '—'}</td>
+                <td>{r.rotation || '—'}</td>
+                <td>{r.model || '—'}</td>
+                <td className="num">
+                  {r.volume == null ? '—' : Number(r.volume).toLocaleString('ru-RU')}
+                </td>
+                <td>
+                  {dm(r.date_from || d.period_from)} –<br />{dm(r.date_to || d.period_to)}
+                </td>
+                <td className="num">{r.bonus ? '—' : fix2(r.unit_price)}</td>
+                <td className="num net">{r.bonus ? '—' : fix2(r.amount)}</td>
+                <td className="num">{r.bonus ? '—' : fix2(r.vat)}</td>
+                <td className="num net">{r.bonus ? '—' : fix2(r.gross)}</td>
+              </tr>
+            )))}
+            <tr className="total">
+              <td colSpan={7}>ИТОГО:</td>
+              <td className="num">{Number(totals.volume).toLocaleString('ru-RU')}</td>
+              <td />
+              <td />
+              <td className="num">{fix2(totals.net)}</td>
+              <td className="num">{fix2(totals.vat)}</td>
+              <td className="num">{fix2(totals.gross)}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </>
+  )
+  const signsEl = (
+    <>
+      <p className="flat"><b>Подписи Сторон:</b></p>
+
+      <div className="signs">
+        <div>
+          <b>Исполнитель:</b>
+          {exec.legal_name || exec.name}<br />
+          {exec.position_nom || exec.position || '____________'}
+          <div className="line">____________________ /{exec.short_fio || '_________'}/</div>
+          <div>М.П.</div>
+        </div>
+        <div>
+          <b>Заказчик:</b>
+          {cust.legal_name || cust.name}<br />
+          {cust.position_nom || cust.position || '____________'}
+          <div className="line">____________________ /{cust.short_fio || '_________'}/</div>
+          <div>М.П.</div>
+        </div>
+      </div>
+    </>
+  )
+
   return (
     <>
       <Head><title>{d.number || w.nom}</title></Head>
@@ -168,6 +256,20 @@ export default function AnnexPrint() {
           от {longDate(d.contract?.date)} (далее по тексту – «Договор») о нижеследующем:
         </p>
 
+        {/* Пункты — ровно блоки конструктора, в его порядке (владелец 02.11.2026): номера и тексты шаблона, таблица и
+            подписи там, где их поставил шаблон. Без модели (ДС до конструктора) — прежний текст ниже. */}
+        {clauses.length ? (<>
+          {clauses.map((c, i) => (c.sys === 'table' ? <Fragment key={i}>{tableEl}</Fragment>
+            : c.sys === 'sign' ? <Fragment key={i}>{signsEl}</Fragment>
+            : c.sys ? null
+            : (
+              <div key={i} className={c.sub ? 'item lvl2' : 'item'}>
+                <span className="n">{c.num}</span>
+                <span style={{ whiteSpace: 'pre-line' }}>{c.text}</span>
+              </div>
+            )))}
+          {!clauses.some(c => c.sys === 'sign') && signsEl}
+        </>) : (<>
         {/* Нумерация пунктов повторяет подписанный образец: 1 — предмет со ссылкой на
             медиаплан, 1.1 — стоимость, 1.2 — порядок оказания, 2 — доработки,
             3 — заключительные положения. В исходном docx часть номеров автоматические
@@ -178,67 +280,7 @@ export default function AnnexPrint() {
           <span>{d.body}</span>
         </div>
 
-        {/* Медиаплан НАСТОЯЩЕЙ таблицей, а не картинкой из экселя, как в образце:
-            суммы совпадают с базой по построению, и документ ищется текстом. Колонки —
-            один в один с подписанным документом, включая «Место размещения» и «Тип
-            ротации»; последняя пока пустая — такого поля у нас нет. */}
-        {!!rows.length && (
-          <table>
-            <thead>
-              <tr>
-                <th>Место<br />размещения</th>
-                <th style={{ width: '22%' }}>Позиция</th>
-                <th>Гео</th><th>Формат</th><th>Девайс</th>
-                <th>Тип ротации<br />(для медийных<br />форматов)</th>
-                <th>Модель<br />закупки</th>
-                <th>Объем размещения</th>
-                <th>Период</th>
-                <th>Стоимость<br />за единицу<br />закупки</th>
-                <th>Стоимость<br />размещения</th>
-                <th>НДС {d.vat_rate}%</th>
-                <th>Стоимость<br />размещения<br />с учетом НДС</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (r.group_title ? (
-                /* ДС мастер-сделки: заголовок группы (бренд · услуга) строкой на всю ширину — как в DOCX */
-                <tr key={i}><td colSpan={13} style={{ fontWeight: 'bold', textAlign: 'left' }}>{r.group_title}</td></tr>
-              ) : (
-                <tr key={i}>
-                  <td style={{ fontWeight: 'bold' }}>{r.network || '—'}</td>
-                  <td className="pos">
-                    {r.doc_position || r.position || '—'}
-                  </td>
-                  <td>{r.geo || '—'}</td>
-                  <td>{r.format || '—'}</td>
-                  <td>{r.device || '—'}</td>
-                  <td>{r.rotation || '—'}</td>
-                  <td>{r.model || '—'}</td>
-                  <td className="num">
-                    {r.volume == null ? '—' : Number(r.volume).toLocaleString('ru-RU')}
-                  </td>
-                  <td>
-                    {dm(r.date_from || d.period_from)} –<br />{dm(r.date_to || d.period_to)}
-                  </td>
-                  <td className="num">{r.bonus ? '—' : fix2(r.unit_price)}</td>
-                  <td className="num net">{r.bonus ? '—' : fix2(r.amount)}</td>
-                  <td className="num">{r.bonus ? '—' : fix2(r.vat)}</td>
-                  <td className="num net">{r.bonus ? '—' : fix2(r.gross)}</td>
-                </tr>
-              )))}
-              <tr className="total">
-                <td colSpan={7}>ИТОГО:</td>
-                <td className="num">{Number(totals.volume).toLocaleString('ru-RU')}</td>
-                <td />
-                <td />
-                <td className="num">{fix2(totals.net)}</td>
-                <td className="num">{fix2(totals.vat)}</td>
-                <td className="num">{fix2(totals.gross)}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-
+        {tableEl}
         <div className="item lvl2">
           <span className="n">1.1.</span>
           <span>
@@ -281,24 +323,8 @@ export default function AnnexPrint() {
           </span>
         </div>
 
-        <p className="flat"><b>Подписи Сторон:</b></p>
-
-        <div className="signs">
-          <div>
-            <b>Исполнитель:</b>
-            {exec.legal_name || exec.name}<br />
-            {exec.position_nom || exec.position || '____________'}
-            <div className="line">____________________ /{exec.short_fio || '_________'}/</div>
-            <div>М.П.</div>
-          </div>
-          <div>
-            <b>Заказчик:</b>
-            {cust.legal_name || cust.name}<br />
-            {cust.position_nom || cust.position || '____________'}
-            <div className="line">____________________ /{cust.short_fio || '_________'}/</div>
-            <div>М.П.</div>
-          </div>
-        </div>
+        {signsEl}
+        </>)}
 
         {/* Файл «для клиента»: после ДС — основание для закрывающих документов (УПД и счёт) на согласование, одним документом. */}
         {d.with_basis && !!d.closing_basis && (

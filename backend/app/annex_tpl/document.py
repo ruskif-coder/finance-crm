@@ -160,10 +160,16 @@ def upgrade_frozen(db: Session, annex, contract, deal_ids) -> dict:
 
 
 def model_of(db: Session, annex, contract, deal_ids) -> dict:
-    """Что показать на экране: {model, frozen, legacy, reason, template_state, choice}. `choice` — выбор шаблона, только у черновика."""
+    """Что показать на экране: {model, frozen, legacy, reason, template_state, choice}. `choice` у черновика — выбор шаблона сборки, у
+    замороженного — шаблон для «Пересоздать» (владелец 02.11.2026), текущим — тот, по которому документ заморожен."""
     if is_frozen(annex):
-        return {"model": jsonable_encoder(upgrade_frozen(db, annex, contract, deal_ids)), "frozen": True, "legacy": False, "reason": None,
-                "template_state": None, "choice": None}
+        model = jsonable_encoder(upgrade_frozen(db, annex, contract, deal_ids))
+        model = rebrand_model(model, DK.resolve(model.get("kind") or getattr(annex, "doc_kind", None), None,
+                                                is_master=bool(getattr(annex, "master_deal_id", None))))
+        frozen_choice = {**choice(db, contract, annex), "current_id": (model.get("template") or {}).get("template_id"),
+                         "why": "в документе"}
+        return {"model": model, "frozen": True, "legacy": False, "reason": None,
+                "template_state": None, "choice": frozen_choice}
     if annex.no is not None:                                   # подтверждено до конструктора
         return {"model": None, "frozen": False, "legacy": True, "reason": LEGACY_REASON, "template_state": None, "choice": None}
     pick_ = choice(db, contract, annex)
@@ -188,6 +194,42 @@ def template_labels(db: Session, version_ids) -> dict:
                  .filter(AnnexTplVersion.id.in_(ids)).all()):
         base = db.query(AnnexTplTemplate).filter_by(id=t.base_template_id).first() if t.base_template_id else None
         out[v.id] = {"title": t.title or (base.title if base else None), "version": v.version, "scope": t.scope}
+    return out
+
+
+def rebrand_model(model: dict, kind) -> dict:
+    """Замороженная модель для ЭКРАНА — со словом документа в полной форме, как в файле (владелец 02.11.2026). Подписанные до
+    этого дня модели хранят «Доп. соглашение» и «Соглашение»; подставленные значения (название бренда и т. п.) не трогаются.
+    Возвращает копию: модель в базе остаётся, какой её заморозили."""
+    def part(g):
+        return g if g.get("key") else {**g, "t": DK.rebrand(g.get("t"), kind)}
+
+    def block(b):
+        if b.get("sys"):
+            return b
+        return {**b, "text": DK.rebrand(b.get("text"), kind), **({"parts": [part(g) for g in b["parts"]]} if b.get("parts") else {})}
+
+    out = {**model, "number": DK.renumber(model.get("number"), kind), "blocks": [block(b) for b in model.get("blocks") or []]}
+    cb = model.get("closing_basis")
+    if isinstance(cb, dict):
+        out["closing_basis"] = {**cb, "text": DK.rebrand(cb.get("text"), kind),
+                                **({"parts": [part(g) for g in cb["parts"]]} if cb.get("parts") else {})}
+    return out
+
+
+def clauses_of(model: dict, kind) -> list:
+    """Блоки конструктора — файлу, по порядку (владелец 02.11.2026: файл печатает ровно то, что собрано в конструкторе).
+
+    Системные блоки (шапка, место и дата, преамбула, таблица, подписи) рисует генератор файла — у них нет текста; текстовые
+    идут с номером и текстом шаблона. Слово документа приводится к виду и здесь: замороженные до 02.11.2026 тексты хранят
+    «Доп. соглашение» и «Соглашение», а печататься они обязаны полной формой."""
+    out = []
+    for b in model.get("blocks") or []:
+        if b.get("sys"):
+            out.append({"sys": "table" if b["sys"] == "table" else b["sys"]})
+        else:
+            out.append({"num": b.get("num") or "", "sub": bool(b.get("sub")),
+                        "text": DK.rebrand((b.get("text") or "").strip(), kind)})
     return out
 
 
@@ -216,6 +258,9 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     doc["missing"] = [m for m in (doc.get("missing") or []) if m != OLD_NO_TEMPLATE]
     if live_model:
         doc["missing"] += [m["text"] for m in model.get("missing", []) if m["text"] not in doc["missing"]]
+    kind = DK.resolve(doc.get("kind"), None, is_master=bool(doc.get("is_master")))
+    doc["clauses"] = clauses_of(model, kind)
+    doc["closing_basis"] = DK.rebrand(doc.get("closing_basis") or "", kind)
     return with_words(doc)
 
 

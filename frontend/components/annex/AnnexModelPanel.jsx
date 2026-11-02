@@ -134,7 +134,7 @@ function Box({ tone, children }) {
 
 function RebuildBtn({ onClick, busy, small }) {
   return (
-    <span onClick={busy ? undefined : onClick}
+    <span onClick={busy ? undefined : () => onClick()}
           title="Собрать документ заново по актуальной версии шаблона договора. Номер и дата сохранятся; пока приложение не ушло в 1С"
           style={{ display: 'inline-flex', alignItems: 'center', height: small ? 26 : 32, padding: small ? '0 10px' : '0 14px', borderRadius: 9, border: '1px solid var(--accent-border)', background: 'var(--accent-tint)', color: 'var(--accent-fg)', fontSize: small ? 11.5 : 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: busy ? 'wait' : 'pointer' }}>
       {busy ? 'Пересоздаю…' : 'Пересоздать на новом шаблоне'}
@@ -169,8 +169,10 @@ export default function AnnexModelPanel({ state, onRebuild, rebuildBusy, actions
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={LBL}>Документ по шаблону</span>
+        {/* У замороженного выбор шаблона = «Пересоздать» по нему (владелец 02.11.2026): тот же номер и дата, другой шаблон. */}
         {choice
-          ? <AnnexTemplateChoice choice={choice} version={t.version} canEdit={canEdit} onChoose={onChoose} onSaveAs={onSaveAs} />
+          ? <AnnexTemplateChoice choice={choice} version={t.version} canEdit={canEdit && (!frozen || !!onRebuild)}
+                                 onChoose={frozen ? onRebuild : onChoose} onSaveAs={frozen ? undefined : onSaveAs} />
           : <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 9px', borderRadius: 7, background: 'var(--violet-tint)', color: 'var(--violet-fg)', fontSize: 11, fontWeight: 700 }}>
               {t.scope === 'custom' ? `шаблон договора · ${t.title} · v${t.version}` : `${t.title} · v${t.version}`}
             </span>}

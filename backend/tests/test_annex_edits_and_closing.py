@@ -65,8 +65,8 @@ def test_closing_basis_follows_the_owners_sample(db, stub_plan, monkeypatch):  #
     assert "бренда «Магне В6», в сети SIMB-AD, согласно Приложению №7 от " in cb["text"]
     assert m["number"] == "Приложение № 7"
     ds = _assemble(db, kind="дс")
-    assert "в сети SIMB-AD, согласно Доп. соглашению №7 от " in ds["closing_basis"]["text"]
-    assert ds["number"] == "Доп. соглашение № 7", "в документе — полная форма, не «ДС»"
+    assert "в сети SIMB-AD, согласно Дополнительному соглашению №7 от " in ds["closing_basis"]["text"]
+    assert ds["number"] == "Дополнительное соглашение № 7", "в документе — полная форма, не «ДС»"
     assert cb["text"].endswith("г., с 01.11.2026 по 30.11.2026г.")
     assert m["values"]["сеть"] == "SIMB-AD" and len(m["values"]["дата_дс_кратко"]) == 8          # ДД.ММ.ГГ
     mine = _assemble(db, edits={CLOSING_KEY: "Услуги по {бренд_название}, ДС {номер_дс}."})["closing_basis"]
