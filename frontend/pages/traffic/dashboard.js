@@ -716,8 +716,12 @@ export default function TrafficDashboard() {
     setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = '' }, 1800)
   }
   const needsAttention = (r) => !r.plan_show || !r.placements || (r.under || 0) > 0
+  // «Ожидает старта» (владелец 02.11.2026): новые РК от сборки до фактического старта — расчётные статусы до
+  // «запущена» (`CAMPAIGN_DERIVED` в app/ad/flight.py). Стартовала — уходит в «Запущенные».
+  const waitingStart = (r) => r.status === 'ожидает сборки' || r.status === 'готова'
   const TABS = [
     ['all', 'Все', all.length],
+    ['waiting', 'Ожидает старта', all.filter(waitingStart).length],
     ['running', 'Запущенные', all.filter(r => r.status === 'запущена').length],
     ['action', 'Нужно действие', all.filter(r => sumOf(r)?.worst === 'red').length],
     ['attention', 'Требует внимания', all.filter(needsAttention).length],
@@ -735,6 +739,7 @@ export default function TrafficDashboard() {
 
   const rows = all.filter(r => {
     if (tab === 'running' && r.status !== 'запущена') return false
+    if (tab === 'waiting' && !waitingStart(r)) return false
     if (tab === 'action' && sumOf(r)?.worst !== 'red') return false
     if (tab === 'attention' && !needsAttention(r)) return false
     if (tab === 'noplan' && r.plan_show) return false
@@ -837,7 +842,7 @@ export default function TrafficDashboard() {
               ))}
             </select>
             <button style={btn(archive)} onClick={() => setArchive(v => !v)}
-              title={archive ? 'Показаны РК закрытых сделок — скрыть' : 'РК сделок в «Архиве успешных», «не случилась», «сорвалась» скрыты — показать'}>
+              title={archive ? 'Показаны архивные РК — скрыть' : 'РК сделок на «Итоговой сверке» и дальше, а также «не случилась» и «сорвалась» скрыты — показать'}>
               {archive ? 'Скрыть архив' : `Архив${data?.archived ? ` (${data.archived})` : ''}`}
             </button>
             {/* Импорт суточного отчёта Adfox — площадки вне нашей DSP (владелец 02.10.2026):

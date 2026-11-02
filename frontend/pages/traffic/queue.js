@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Head from 'next/head'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
 import RuleBadges from '@/components/traffic/RuleBadges'
-import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
+import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal, ProlongTag }
   from '@/components/salesTableKit'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки: сетка типовых размеров,
 // песочница для архива, изолированная рамка для html. Своя, «простая» версия у трафика
@@ -593,6 +593,8 @@ export default function TrafficQueue() {
                   <Chevron open={!!open[g.set.id]} />
                   <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700,
                                  color: 'var(--accent)' }}><CopyCode text={g.deal.code} /></span>
+                  {/* Пролонгация идёт через трафик, как любой комплект (02.11.2026) — трафик отличает её этой плашкой. */}
+                  {g.deal.prolonged_from != null && <ProlongTag code={g.deal.prolonged_from} />}
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1,
                     alignItems: 'flex-start', minWidth: 0, maxWidth: 300 }}>
                     <span title={g.set.title || ''}

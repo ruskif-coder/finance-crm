@@ -213,6 +213,10 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     reps = dict(db.query(SalesRep.id, SalesRep.name).filter(
         SalesRep.id.in_({d.account_manager_id for d in deals.values()
                          if d.account_manager_id} or {0})).all())
+    # Пролонгация (02.11.2026): продление идёт через трафик, как любой комплект, и трафик отличает его плашкой
+    # `ProlongTag` — для неё код исходной сделки. Тем же запросом по множеству, что имена выше.
+    origins = dict(db.query(SalesDeal.id, SalesDeal.code).filter(
+        SalesDeal.id.in_({d.prolonged_from_id for d in deals.values() if d.prolonged_from_id} or {0})).all())
 
     pair_ids = [p.id for _r, p, _s, _t, _pub, _d in rows]
     shots = {}
@@ -258,7 +262,10 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                      "advertiser": (adv.get(deal.advertiser_id)
                                     or adv_full.get(deal.advertiser_id)),
                      "brand": brands.get(deal.brand_id),
-                     "account": reps.get(deal.account_manager_id)},
+                     "account": reps.get(deal.account_manager_id),
+                     # None — не пролонгация; строка (код или пусто) — пролонгация. Так читает `ProlongTag`.
+                     "prolonged_from": (origins.get(deal.prolonged_from_id) or "")
+                     if deal.prolonged_from_id else None},
             "set": {"id": s.id, "no": s.no, "title": s.title, "form": s.form,
                     "test_targeting_url": s.test_targeting_url,
                     "targeting_blind": s.id in blind,

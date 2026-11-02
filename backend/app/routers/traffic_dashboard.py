@@ -48,7 +48,7 @@ from app.models import User
 from app.permissions import require_permission
 from app.routers.traffic import _apply_scope, _is_master
 from app.dsp import refresh as dsp_refresh
-from app.sales.models import SalesDeal, SalesRep, SalesStage
+from app.sales.models import SalesDeal, SalesRep, SalesStage, SalesStagePhase
 from app.sales.reps import staff_users
 from app.sales.row_context import load_row_context
 from app.traffic.delivery_facts import _facts, _creatives_all, _placements_of  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
@@ -661,6 +661,17 @@ def _scope_for(db: Session, user: User, scope: Optional[str]):
 
 # ── реестр ────────────────────────────────────────────────────────────────
 
+def _traffic_archive_stage_ids(db: Session) -> list:
+    """Стадии, РК сделок на которых — архив трафика: терминальные и всё начиная с «Итоговой сверки» (RECON_STAGE)
+    в порядке этап → стадия. Нет такой стадии в справочнике — остаются только терминальные."""
+    rows = (db.query(SalesStage.id, SalesStage.name, SalesStage.sort_order, SalesStage.is_terminal,
+                     SalesStage.is_lost, SalesStagePhase.sort_order)
+            .join(SalesStagePhase, SalesStagePhase.id == SalesStage.phase_id).all())
+    recon = next(((ph, so) for _i, n, so, _t, _l, ph in rows if n == RECON_STAGE), None)
+    return [i for i, _n, so, term, lost, ph in rows
+            if term or lost or (recon is not None and (ph, so) >= recon)]
+
+
 @router.get("/dashboard")
 def dashboard(scope: Optional[str] = None, archive: bool = False,
               db: Session = Depends(get_db), user: User = Depends(VIEW)):
@@ -669,11 +680,11 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
     q = (db.query(AdCampaign, SalesDeal)
          .join(SalesDeal, SalesDeal.id == AdCampaign.deal_id))
     q = _apply_scope(q, db, user, rep_id)
-    # РК закрытых сделок — архив (владелец 22.10.2026): «Архив успешных», «не случилась», «сорвалась» не
-    # показываются, пока не включён показ архива. То же правило, что «скрыть архив» в продажах. Исключений
-    # по статусу РК нет: стадии последовательны, закрытая сделка живой РК не имеет.
-    closed = db.query(SalesStage.id).filter(or_(SalesStage.is_terminal.is_(True), SalesStage.is_lost.is_(True)))
-    is_closed = SalesDeal.our_stage_id.in_(closed)
+    # Архив трафика (владелец 22.10.2026, расширено 02.11.2026): РК не показываются, пока не включён показ
+    # архива, если сделка закрыта («Архив успешных», «не случилась», «сорвалась») ИЛИ ушла на «Итоговую
+    # сверку» и дальше — «трафик контролит сделку от сборки до завершения, уход на итоговую сверку является
+    # архивом рекламной кампании». Исключений по статусу РК нет: стадии последовательны.
+    is_closed = SalesDeal.our_stage_id.in_(_traffic_archive_stage_ids(db))
     archived = q.filter(is_closed).count()
     if not archive:
         q = q.filter(or_(SalesDeal.our_stage_id.is_(None), ~is_closed))

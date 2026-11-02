@@ -249,11 +249,11 @@ def test_prolonged_copy_starts_on_the_assembly_stage(prolonged):
         LaunchPrepTarget.deal_id == new.id).count() == out["targets"]
 
 
-def test_prolonged_set_skips_the_traffic_step(prolonged):
-    """У продления цепочка короче на ступень: трафик уже смотрел этот материал.
-
-    Отметка идёт источником «продление», а не «авто» — разница между «никто не смотрел»
-    и «смотрели в прошлом периоде» должна оставаться видимой.
+def test_prolonged_set_goes_through_traffic_like_any_other(prolonged, monkeypatch):
+    """Продление идёт через трафик, как обычный комплект (владелец 02.11.2026: «да, мы для этого и делали плашку
+    пролонгация»). До этого продление пропускало трафик (отметка «ок» с источником «продление» с 29.08.2026), и вместе
+    с ним пропадало письмо площадке «новый креатив»: его шлёт вердикт трафика. Трафик отличает продление по плашке
+    `ProlongTag` в очереди (`prolonged_from` строки).
     """
     stand, made = prolonged
     db = stand.db
@@ -263,7 +263,7 @@ def test_prolonged_set_skips_the_traffic_step(prolonged):
     cset = (db.query(LaunchPrepCreativeSet)
             .filter(LaunchPrepCreativeSet.deal_id == out["id"])
             .order_by(LaunchPrepCreativeSet.id).first())
-    # Первичная проверка перенесена вместе с материалом.
+    # Первичная проверка перенесена вместе с материалом — её аккаунт уже делал.
     assert _state(db, out["id"], cset.id) == 'готов к отправке'
 
     # Посадочные продление ПЕРЕНОСИТ (владелец 15.10.2026, отменяет 25.09): у кого в исходной ссылки не было — дозаполняем.
@@ -272,15 +272,26 @@ def test_prolonged_set_skips_the_traffic_step(prolonged):
         if not m.advertiser_url:
             lp.set_member_url(cset.id, m.target_id, lp.TargetUrlIn(url='https://lp.test/new'), db, _ADMIN)
 
+    told = []
+    monkeypatch.setattr(traffic, "_tell_publisher", lambda db, pair, s, target, pub, deal: told.append(pair.id))
     lp.send_set(cset.id, lp.SendIn(), db, _ADMIN)
     rows = db.query(LaunchPrepReview).filter(LaunchPrepReview.set_id == cset.id).all()
     tr = [r for r in rows if r.kind == 'трафики']
-    pl = [r for r in rows if r.kind == 'площадка']
-    assert tr and all(r.verdict == 'ок' and r.source == 'продление' for r in tr)
-    assert pl and all(r.verdict is None for r in pl), (
-        "площадку спрашиваем заново: согласие давалось на прошлый период")
-    assert _state(db, out["id"], cset.id) == 'отправлен', (
-        "у продления комплект не задерживается у трафика")
+    assert tr and all(r.verdict is None and r.source == 'трафики' for r in tr), "продление не встало к трафику"
+    assert not [r for r in rows if r.kind == 'площадка'], "площадке до вердикта трафика"
+    assert _state(db, out["id"], cset.id) == 'у трафика'
+    assert told == [], "письмо площадке — только после вердикта трафика"
+
+    # В очереди трафика строка продления несёт код исходной сделки — по нему экран рисует плашку «пролонгация».
+    got = [r for r in traffic.queue(status="waiting", db=db, current_user=_ADMIN)["rows"] if r["set"]["id"] == cset.id]
+    assert got and all(r["deal"]["prolonged_from"] == stand.deal.code for r in got)
+
+    # Трафик ответил — площадка спрошена, и письмо ушло тем же путём, что у любого комплекта.
+    pairs = db.query(LaunchPrepPair).filter(LaunchPrepPair.set_id == cset.id).all()
+    for p in pairs:
+        traffic.pair_verdict(p.id, traffic.VerdictIn(verdict='ок'), db, _ADMIN)
+    assert sorted(told) == sorted(p.id for p in pairs)
+    assert _state(db, out["id"], cset.id) == 'отправлен'
 
 
 def test_prolonged_plan_is_a_new_calculation(prolonged):
