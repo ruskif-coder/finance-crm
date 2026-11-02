@@ -746,6 +746,14 @@ class PayPlanIds(BaseModel):
 PAY_PLAN_STATUS = "ПЛАН ОПЛАТ"
 
 
+@router.get("/pay-plan/summary")
+def pay_plan_summary(db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("operations", "view"))):
+    """Сводка над вкладкой «План оплат» (хендофф 02.11.2026). Расчёт и права — `app/pay_plan_summary.py`."""
+    from app import pay_plan_summary as pps
+    return pps.load(db, current_user)
+
+
 @router.post("/pay-plan")
 def add_to_pay_plan(payload: PayPlanIds, db: Session = Depends(get_db),
                     current_user: User = Depends(require_permission("operations", "edit"))):

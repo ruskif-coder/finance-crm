@@ -16,6 +16,7 @@ import { nowTime, fileStamp, todayMsk, monthEnd } from '@/lib/dates'
 import { sanMoney, moneyNum } from '@/lib/money'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
+import PayPlanSummary, { DupTag, FilterChip } from '@/components/operations/PayPlanSummary'
 import { downloadFile } from '@/lib/download'
 import useLatest from '@/lib/useLatest'
 
@@ -345,8 +346,12 @@ export default function Operations2() {
   const [createForm, setCreateForm] = useState(emptyForm())
   const [editing, setEditing] = useState(null)        // { id, ...form }
   const [sel, setSel] = useState({})                  // { id: true }
+  // Сводка плана оплат и выбранный в ней блок (хендофф 02.11.2026): блок несёт ids своих строк — таблица
+  // показывает ровно их. Один активный фильтр; смена вкладки его снимает.
+  const [planSum, setPlanSum] = useState(null)
+  const [planF, setPlanF] = useState(null)
   const setTab = (t) => {
-    setSel({}); setPage(0)
+    setSel({}); setPage(0); setPlanF(null)
     router.replace({ pathname: router.pathname, query: t === 'plan' ? { tab: t } : {} }, undefined, { shallow: true })
   }
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
@@ -424,6 +429,8 @@ export default function Operations2() {
       // Пока она в адресе, остальные фильтры не важны: показывается ровно эта строка.
       if (focusOp) params.append('ids', focusOp)
       if (payPlan) params.append('pay_plan', 'true')
+      if (payPlan && planF) planF.ids.forEach(id => params.append('ids', id))
+      if (payPlan) api(tok()).get('/operations/pay-plan/summary').then(r => { if (fresh()) setPlanSum(r.data) }).catch(() => {})
       const res = await api(tok()).get(`/operations/?${params}`)
       if (!fresh()) return
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
@@ -441,7 +448,7 @@ export default function Operations2() {
   // делал только фильтр «Незаполненные»: на третьей странице выбранный статус с сорока
   // строками запрашивал skip=600 и показывал пустую таблицу при «40 записей», а
   // выделение переживало фильтр и «Удалить» задевало невидимые строки (6.M1, 6.M2).
-  const filtersKey = JSON.stringify([fStatus, fBank, fArticle, fCp, fPeriod, fOpType, fGaps, dateFrom, dateTo])
+  const filtersKey = JSON.stringify([fStatus, fBank, fArticle, fCp, fPeriod, fOpType, fGaps, dateFrom, dateTo, planF && [planF.kind, planF.value]])
   const lastFilters = useRef(filtersKey)
   useEffect(() => {
     if (!tok()) return
@@ -668,7 +675,7 @@ export default function Operations2() {
         // (тот же приём, что у иконки документа ниже).
         const cpn = cpName[o.counterparty_id] || o.counterparty || '—'
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, fontWeight: 700 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%', fontWeight: 700 }}>
             {o.counterparty_id ? (
               <a href={`/directory/counterparties/${o.counterparty_id}`} target="_blank" rel="noreferrer"
                  onClick={e => e.stopPropagation()} title="Карточка контрагента — в новой вкладке"
@@ -676,7 +683,8 @@ export default function Operations2() {
                 <svg width="12" height="12" viewBox="0 0 24 24" style={IcoStroke}><path d="M7 17 17 7" /><path d="M9 7h8v8" /></svg>
               </a>
             ) : null}
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpn}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: payPlan && planSum?.stub_ids?.includes(o.id) ? 'var(--danger-fg)' : undefined }}>{cpn}</span>
+            {payPlan && <DupTag tag={planSum?.tags?.[o.id]} />}
           </span>
         )
       }
@@ -777,6 +785,7 @@ export default function Operations2() {
         </div>
         <UnderlineTabs value={payPlan ? 'plan' : 'all'} onChange={setTab}
           tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }]} />
+        {payPlan && <PayPlanSummary data={planSum} filter={planF} onFilter={setPlanF} />}
 
         {/* Форма создания */}
         {createOpen && canCreate && (
@@ -874,7 +883,8 @@ export default function Operations2() {
 
           {/* показано + пагинация */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-            <span>Показано <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, total)}</b> из <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{new Intl.NumberFormat('ru-RU').format(total)}</b></span>
+            <span>Показано <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, total)}</b> из <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{new Intl.NumberFormat('ru-RU').format(total)}</b>{payPlan && planF && planSum ? <> · в плане <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{planSum.count}</b></> : null}</span>
+            {payPlan && <FilterChip filter={planF} onClear={() => setPlanF(null)} />}
             <span style={{ display: 'inline-flex', gap: 14 }}>
               {[['оплачено', 'var(--income)'], ['план оплат', 'var(--dot-expense)'], ['ожидает', 'var(--dot-current-dz)']].map(([l, c]) => <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>)}
             </span>

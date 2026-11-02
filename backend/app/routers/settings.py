@@ -3,11 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.audit import log_action
 from app.database import get_db
-from app.models import User, Operation
+from app.models import CreditLine, User, Operation
 from app.permissions import require_permission
 from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
+from datetime import date, datetime
 
 router = APIRouter()
 
@@ -179,3 +180,67 @@ def update_bank_own_company(
     ), {'own_company_id': data.own_company_id, 'bank': data.bank})
     db.commit()
     return {"message": "Юрлицо для банка обновлено"}
+
+
+# ── кредитные линии (02.11.2026) ─────────────────────────────────────────────────────────────────────────────────────
+# Для «Денег на сегодня» в сводке плана оплат: свободно = лимит − выбрано. «Выбрано» — руками (тело кредита в статьях не
+# выделено). Удаления нет: закрытую линию выключают, история остаётся. Право — то же, что у стартовых остатков.
+
+class CreditLineIn(BaseModel):
+    bank: str
+    limit_amount: float
+    used_amount: float = 0
+    as_of: Optional[date] = None
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+def _credit_line_out(c: CreditLine) -> dict:
+    return {"id": c.id, "bank": c.bank, "limit_amount": c.limit_amount, "used_amount": c.used_amount,
+            "free": (c.limit_amount or 0) - (c.used_amount or 0), "as_of": c.as_of, "note": c.note,
+            "is_active": c.is_active, "updated_at": c.updated_at}
+
+
+def _check_credit_line(data: CreditLineIn):
+    if data.bank not in BANKS or data.bank == "Наличные":
+        raise HTTPException(status_code=400, detail=f"Кредитная линия — только у банка: {data.bank}")
+    if data.limit_amount <= 0:
+        raise HTTPException(status_code=400, detail="Лимит должен быть больше нуля")
+    if data.used_amount < 0 or data.used_amount > data.limit_amount:
+        raise HTTPException(status_code=400, detail="«Выбрано» — от нуля до лимита")
+
+
+@router.get("/credit-lines")
+def list_credit_lines(db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("settings_balances", "view"))):
+    rows = db.query(CreditLine).order_by(CreditLine.is_active.desc(), CreditLine.id).all()
+    return [_credit_line_out(c) for c in rows]
+
+
+@router.post("/credit-lines")
+def create_credit_line(data: CreditLineIn, db: Session = Depends(get_db),
+                       current_user: User = Depends(require_permission("settings_balances", "edit"))):
+    _check_credit_line(data)
+    c = CreditLine(**data.model_dump(), updated_at=datetime.utcnow(), updated_by=current_user.id)
+    db.add(c)
+    db.commit()
+    log_action(db, current_user, "credit_line_create", "credit_line", c.id,
+               f"{c.bank}: лимит {c.limit_amount}, выбрано {c.used_amount}")
+    return _credit_line_out(c)
+
+
+@router.put("/credit-lines/{line_id}")
+def update_credit_line(line_id: int, data: CreditLineIn, db: Session = Depends(get_db),
+                       current_user: User = Depends(require_permission("settings_balances", "edit"))):
+    _check_credit_line(data)
+    c = db.query(CreditLine).get(line_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Кредитная линия не найдена")
+    was = f"лимит {c.limit_amount}, выбрано {c.used_amount}, {'вкл' if c.is_active else 'выкл'}"
+    for k, v in data.model_dump().items():
+        setattr(c, k, v)
+    c.updated_at, c.updated_by = datetime.utcnow(), current_user.id
+    db.commit()
+    log_action(db, current_user, "credit_line_update", "credit_line", c.id,
+               f"{c.bank}: {was} → лимит {c.limit_amount}, выбрано {c.used_amount}, {'вкл' if c.is_active else 'выкл'}")
+    return _credit_line_out(c)

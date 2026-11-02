@@ -8,6 +8,7 @@ import { MONO, UI, card, inp, sel, primaryBtn } from '../../components/salesTabl
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import CreditLines from '@/components/settings/CreditLines'
 
 // ── Остатки по банкам — отдельная страница раздела «Настройки» ──
 // Стартовый остаток по счёту + обороты (из /settings/bank-balances), привязка юрлица
@@ -284,6 +285,7 @@ export default function SettingsBalances() {
             ))}
           </div>
         )}
+        <CreditLines banks={banks.map(b => b.bank).filter(b => b !== 'Наличные')} />
       </div>
     </>
   )

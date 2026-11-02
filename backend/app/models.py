@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
@@ -281,6 +281,21 @@ class Operation(Base):
         правка, массовая правка и импорт (решение владельца 07.10.2026, см. `app/periods.py`)."""
         from app.periods import normalize_period
         return normalize_period(value)
+
+
+class CreditLine(Base):
+    """Кредитная линия (миграция 2026-11-02_credit_lines.sql). Свободно = лимит − выбрано; «выбрано» вводится руками —
+    тело кредита в статьях не выделено. Закрытую линию выключают (`is_active`), а не удаляют."""
+    __tablename__ = "credit_lines"
+    id = Column(Integer, primary_key=True)
+    bank = Column(String, nullable=False)
+    limit_amount = Column(Numeric(15, 2, asdecimal=False), nullable=False)
+    used_amount = Column(Numeric(15, 2, asdecimal=False), nullable=False, default=0)
+    as_of = Column(Date)
+    note = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class OperationFile(Base):
