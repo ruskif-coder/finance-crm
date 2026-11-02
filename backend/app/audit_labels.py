@@ -293,6 +293,8 @@ ACTION_LABELS = {
     "update_counterparty_note": "Примечание к дебиторке",
     "update_bank_balance": "Стартовый остаток банка изменён",
     "bulk_update_operation": "Массовая правка операций",
+    "pay_plan_add": "Операции поставлены в план оплат",
+    "pay_plan_remove": "Операции убраны из плана оплат",
     "bulk_delete_operation": "Операции удалены",
     "upload_operation_file": "Скан приложен к операции",
     "delete_operation_file": "Скан операции удалён",

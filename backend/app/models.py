@@ -253,6 +253,9 @@ class Operation(Base):
     # на корень цепочки. Миграция 2026-09-23_operation_parent.sql, там же смысл и правила.
     parent_operation_id = Column(Integer, ForeignKey("operations.id", ondelete="SET NULL"),
                                  nullable=True, index=True)
+    # План оплат — отметка «платим в это окно», не статус (2026-11-02_operation_pay_plan.sql).
+    pay_plan_at = Column(DateTime, nullable=True)
+    pay_plan_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
     article = relationship("Article", back_populates="operations")
@@ -261,6 +264,15 @@ class Operation(Base):
     own_company  = relationship("Counterparty", foreign_keys="Operation.own_company_id")
     files = relationship("OperationFile", back_populates="operation",
                          cascade="all, delete-orphan", order_by="OperationFile.id")
+
+    @validates("status")
+    def _paid_leaves_pay_plan(self, key, value):
+        """Оплаченное уходит из плана оплат (решение владельца 02.11.2026). Здесь, а не в ручках:
+        в «ОПЛАЧЕНО» ведут форма, массовая правка, частичная оплата и импорт."""
+        if value == "ОПЛАЧЕНО":
+            self.pay_plan_at = None
+            self.pay_plan_by = None
+        return value
 
     @validates("period")
     def _store_period_in_one_form(self, key, value):

@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import { pageAccess } from '@/lib/pageGuard'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover, Z, UnderlineTabs } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const OperationsMobile = dynamic(() => import('@/components/mobile/OperationsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -307,6 +307,10 @@ export default function Operations2() {
   // документов Диадока, где иначе на операцию сослаться нечем: у реестра нет ни
   // карточки строки, ни собственного адреса у операции.
   const focusOp = router.query.op ? String(router.query.op) : null
+  // Вкладка «План оплат» (`?tab=plan`) — тот же реестр, ограниченный операциями, которые
+  // человек сам отметил «В план» (решение владельца 02.11.2026: вкладка внутри операций,
+  // функционал целиком тот же). В адресе — чтобы обновление страницы не сбрасывало вкладку.
+  const payPlan = router.query.tab === 'plan'
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'operations', 'edit')
   // Кнопки — по тому праву, которое спросит сервер (аудит 23.09.2026, 6.L1): создание и
@@ -341,6 +345,10 @@ export default function Operations2() {
   const [createForm, setCreateForm] = useState(emptyForm())
   const [editing, setEditing] = useState(null)        // { id, ...form }
   const [sel, setSel] = useState({})                  // { id: true }
+  const setTab = (t) => {
+    setSel({}); setPage(0)
+    router.replace({ pathname: router.pathname, query: t === 'plan' ? { tab: t } : {} }, undefined, { shallow: true })
+  }
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
   const [editFiles, setEditFiles] = useState([])   // сканы открытой на правку операции
   const [newFiles, setNewFiles] = useState([])     // выбранные в форме создания, ещё не отправленные
@@ -415,6 +423,7 @@ export default function Operations2() {
       // ?op=<id> — точечная ссылка на операцию (из импорта документов Диадока).
       // Пока она в адресе, остальные фильтры не важны: показывается ровно эта строка.
       if (focusOp) params.append('ids', focusOp)
+      if (payPlan) params.append('pay_plan', 'true')
       const res = await api(tok()).get(`/operations/?${params}`)
       if (!fresh()) return
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
@@ -442,7 +451,7 @@ export default function Operations2() {
       if (page !== 0) { setPage(0); return }      // загрузку сделает прогон с page = 0
     }
     loadOps()
-  }, [page, pageSize, sortCol, sortDir, filtersKey, focusOp])
+  }, [page, pageSize, sortCol, sortDir, filtersKey, focusOp, payPlan])
 
   // Тип операции фильтрует сервер (op_type), строки приходят уже отобранными.
   const rows = ops
@@ -493,10 +502,11 @@ export default function Operations2() {
       fPeriod.forEach(p => params.append('period', p)); fGaps.forEach(g => params.append('gaps', g))
       fOpType.forEach(t => params.append('op_type', t))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
+      if (payPlan) params.append('pay_plan', 'true')
       const res = await api(tok()).get(`/operations/export?${params}`, { responseType: 'blob' })
       const url = URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
-      a.download = `operacii_${fileStamp()}.xlsx`
+      a.download = `${payPlan ? 'plan_oplat' : 'operacii'}_${fileStamp()}.xlsx`
       a.click(); URL.revokeObjectURL(url)
     } catch (e) { alert('Не удалось выгрузить') }
   }
@@ -612,6 +622,22 @@ export default function Operations2() {
     } finally { setSaving(false) }
   }
 
+  // План оплат: встают только неоплаченные списания — что пропущено, говорим вслух.
+  const toPlan = async () => {
+    setSaving(true)
+    try {
+      const { data } = await api(tok()).post('/operations/pay-plan', { ids: selIds })
+      if (data.skipped) alert(`В план: ${data.added}. Пропущено: ${data.skipped} — в план встают только неоплаченные списания (статус «ПЛАН ОПЛАТ»).`)
+      setSel({}); loadOps()
+    } catch (e) { alert(e.response?.data?.detail || 'Не удалось поставить в план') } finally { setSaving(false) }
+  }
+  const outOfPlan = async () => {
+    setSaving(true)
+    try { await api(tok()).delete('/operations/pay-plan', { data: { ids: selIds } }); setSel({}); loadOps() }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось убрать из плана') } finally { setSaving(false) }
+  }
+  const title = `${payPlan ? 'План оплат' : 'Операции'} · Финансы | SIMB-AD ERP`
+
   const pageIncome = rows.reduce((s, o) => s + (o.income || 0), 0)
   const pageExpense = rows.reduce((s, o) => s + (o.expense || 0), 0)
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -628,7 +654,7 @@ export default function Operations2() {
     switch (key) {
       case 'sel': return <input type="checkbox" checked={!!sel[o.id]} onClick={e => toggleSel(o, e.shiftKey)} onChange={() => {}} title="Shift — выбрать диапазон" style={{ width: 14, height: 14, cursor: 'pointer' }} />
       case 'date': return <span style={{ fontFamily: MONO }}>{fmtDate(o.date) || '—'}</span>
-      case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}</span> }
+      case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}{!payPlan && o.pay_plan && <span title="В плане оплат" style={{ marginLeft: 4, color: 'var(--accent)' }}>· в плане</span>}</span> }
       case 'dz': { const rs = o.receivable_status; const meta = { overdue: ['Просрочка', 'var(--dot-overdue)'], current: ['Текущая', 'var(--dot-current-dz)'], future: ['План', 'var(--accent)'] }[rs]; return meta ? <span title={meta[0]} style={{ width: 10, height: 10, borderRadius: '50%', background: meta[1], display: 'inline-block' }} /> : <span style={{ color: '#C3C9D8' }}>—</span> }
       case 'income': return o.income ? <span title={fmt2(o.income) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--income)' }}>{fmt(o.income)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'expense': return o.expense ? <span title={fmt2(o.expense) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(o.expense)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
@@ -690,14 +716,14 @@ export default function Operations2() {
   // ровно то ложное утверждение, которое убирали с десктопа (найдено 11.09.2026).
   if (access === 'denied') return (
     <NoAccessScreen title="Операции: нет доступа" what="Операции"
-      nav={<><Head><title>Операции · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
+      nav={<><Head><title>{title}</title></Head><Navbar /></>} />
   )
 
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Операции · Финансы | SIMB-AD ERP</title></Head>
+        <Head><title>{title}</title></Head>
         <Navbar active="operations" />
         <OperationsMobile
           total={total} rows={rows} loading={loading} articles={articles} counterparties={counterparties} canEdit={canEdit} canCreate={canCreate} canDelete={canDelete}
@@ -716,7 +742,7 @@ export default function Operations2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Операции · Финансы | SIMB-AD ERP</title>
+        <title>{title}</title>
       </Head>
       <Navbar active="operations" />
       {forceDel && <ForceDeleteDialog opId={forceDel.id} message={forceDel.message}
@@ -749,6 +775,8 @@ export default function Operations2() {
             <IconBtn title="Выгрузить в Excel (с учётом фильтров)" onClick={downloadExport}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg></IconBtn>
           </div>
         </div>
+        <UnderlineTabs value={payPlan ? 'plan' : 'all'} onChange={setTab}
+          tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }]} />
 
         {/* Форма создания */}
         {createOpen && canCreate && (
@@ -834,6 +862,9 @@ export default function Operations2() {
                   </div>
                 ))}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  {payPlan
+                    ? <button onClick={outOfPlan} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 10, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Убрать из плана</button>
+                    : <button onClick={toPlan} disabled={saving} title="Поставить в план оплат" style={{ height: 38, boxSizing: 'border-box', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 10, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>В план</button>}
                   <button onClick={applyBulk} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Применить к {selIds.length}</button>
                   {canDelete && <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
                   <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>

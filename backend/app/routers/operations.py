@@ -349,6 +349,14 @@ def _apply_dates(query, date_from, date_to):
     return query.filter(or_(and_(*dated), and_(*undated)))
 
 
+def _apply_pay_plan(query, pay_plan: bool):
+    """Вкладка «План оплат»: отмеченные и ещё не оплаченные. Статус проверяется и здесь —
+    на случай строки, где отметку не сняли (правка мимо модели)."""
+    if not pay_plan:
+        return query
+    return query.filter(Operation.pay_plan_at.isnot(None), Operation.status != operation_chains.PAID)
+
+
 @router.get("/")
 def get_operations(
     skip: int = 0,
@@ -368,6 +376,7 @@ def get_operations(
     ids: Optional[List[int]] = Query(None),
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
+    pay_plan: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "view"))
 ):
@@ -376,6 +385,7 @@ def get_operations(
 
     if ids:
         query = query.filter(Operation.id.in_(ids))
+    query = _apply_pay_plan(query, pay_plan)
     if status:
         query = query.filter(Operation.status.in_(status))
     if bank:
@@ -453,6 +463,7 @@ def get_operations(
                 "parent_operation_id": op.parent_operation_id,
                 "parts_count": parts_by_op.get(op.id, 0),
                 "receivable_status": _receivable_status(op),
+                "pay_plan": op.pay_plan_at is not None,
             }
             for op in operations
         ]
@@ -494,6 +505,7 @@ def export_operations(
     gaps: Optional[List[str]] = Query(None),
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
+    pay_plan: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "view"))
 ):
@@ -504,6 +516,7 @@ def export_operations(
     на фронтенде выгружала ровно то, что выбрано текущими фильтрами."""
     query = db.query(Operation)
     query = _apply_op_type(query, op_type)
+    query = _apply_pay_plan(query, pay_plan)
 
     if status:
         query = query.filter(Operation.status.in_(status))
@@ -721,6 +734,45 @@ def update_operation(
                details=f"{operation.status}, доход {operation.income}, "
                        f"расход {operation.expense}, банк {operation.bank}")
     return {"message": "Операция обновлена"}
+
+class PayPlanIds(BaseModel):
+    ids: List[int]
+
+
+# План оплат — отметка «платим в это окно» (решение владельца 02.11.2026). Встаёт только
+# то, что ещё платить: «ПЛАН ОПЛАТ» со списанием. Снимает отметку при оплате модель
+# (`Operation._paid_leaves_pay_plan`), а не эти ручки: путей в «ОПЛАЧЕНО» четыре.
+# Объявлены ДО `/{op_id}`, по той же причине, что и `/bulk`.
+PAY_PLAN_STATUS = "ПЛАН ОПЛАТ"
+
+
+@router.post("/pay-plan")
+def add_to_pay_plan(payload: PayPlanIds, db: Session = Depends(get_db),
+                    current_user: User = Depends(require_permission("operations", "edit"))):
+    rows = db.query(Operation).filter(Operation.id.in_(payload.ids or [])).all()
+    fit = [o for o in rows if o.status == PAY_PLAN_STATUS and (o.expense or 0) > 0]
+    now = datetime.utcnow()
+    for o in fit:
+        if o.pay_plan_at is None:
+            o.pay_plan_at, o.pay_plan_by = now, current_user.id
+    db.commit()
+    log_action(db, current_user, "pay_plan_add", entity_type="operation", entity_id=None,
+               details=f"ids={[o.id for o in fit]}")
+    return {"added": len(fit), "skipped": len(payload.ids or []) - len(fit)}
+
+
+@router.delete("/pay-plan")
+def remove_from_pay_plan(payload: PayPlanIds, db: Session = Depends(get_db),
+                         current_user: User = Depends(require_permission("operations", "edit"))):
+    rows = (db.query(Operation)
+            .filter(Operation.id.in_(payload.ids or []), Operation.pay_plan_at.isnot(None)).all())
+    for o in rows:
+        o.pay_plan_at, o.pay_plan_by = None, None
+    db.commit()
+    log_action(db, current_user, "pay_plan_remove", entity_type="operation", entity_id=None,
+               details=f"ids={[o.id for o in rows]}")
+    return {"removed": len(rows)}
+
 
 class OperationBulkUpdate(BaseModel):
     # Поле "date" типизировано через алиас _Date (а не голым "date"), иначе оно
