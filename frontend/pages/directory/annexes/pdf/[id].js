@@ -157,9 +157,10 @@ export default function AnnexPrint() {
       )}
     </>
   )
-  const signsEl = (
+  // `heading === false` — заголовок подписей уже стоит пунктом шаблона («6. Подписи Сторон:»), второй не печатаем (02.11.2026).
+  const signsOf = (heading = true) => (
     <>
-      <p className="flat"><b>Подписи Сторон:</b></p>
+      {heading && <p className="flat"><b>Подписи Сторон:</b></p>}
 
       <div className="signs">
         <div>
@@ -249,18 +250,19 @@ export default function AnnexPrint() {
           <span>{longDate(d.date)}</span>
         </div>
 
-        <p className="flat">
+        {/* Преамбула — текст шаблона (02.11.2026); без него — стандартная формула. */}
+        {d.preamble ? <p className="flat">{d.preamble}</p> : <p className="flat">
           {partyLine(cust, 'Заказчик')}, с одной стороны, и {partyLine(exec, 'Исполнитель')},
           с другой стороны, заключили настоящее {d.number} к Договору{' '}
           <span className="nb">№ {d.contract?.number || '________'}</span> об оказании услуг
           от {longDate(d.contract?.date)} (далее по тексту – «Договор») о нижеследующем:
-        </p>
+        </p>}
 
         {/* Пункты — ровно блоки конструктора, в его порядке (владелец 02.11.2026): номера и тексты шаблона, таблица и
             подписи там, где их поставил шаблон. Без модели (ДС до конструктора) — прежний текст ниже. */}
         {clauses.length ? (<>
           {clauses.map((c, i) => (c.sys === 'table' ? <Fragment key={i}>{tableEl}</Fragment>
-            : c.sys === 'sign' ? <Fragment key={i}>{signsEl}</Fragment>
+            : c.sys === 'sign' ? <Fragment key={i}>{signsOf(c.heading !== false)}</Fragment>
             : c.sys ? null
             : (
               <div key={i} className={c.sub ? 'item lvl2' : 'item'}>
@@ -268,7 +270,7 @@ export default function AnnexPrint() {
                 <span style={{ whiteSpace: 'pre-line' }}>{c.text}</span>
               </div>
             )))}
-          {!clauses.some(c => c.sys === 'sign') && signsEl}
+          {!clauses.some(c => c.sys === 'sign') && signsOf()}
         </>) : (<>
         {/* Нумерация пунктов повторяет подписанный образец: 1 — предмет со ссылкой на
             медиаплан, 1.1 — стоимость, 1.2 — порядок оказания, 2 — доработки,
@@ -323,7 +325,7 @@ export default function AnnexPrint() {
           </span>
         </div>
 
-        {signsEl}
+        {signsOf()}
         </>)}
 
         {/* Файл «для клиента»: после ДС — основание для закрывающих документов (УПД и счёт) на согласование, одним документом. */}

@@ -13,7 +13,6 @@
 с белыми рамками, строка ИТОГО заливкой, пункты 1 / 1.1 / 1.2 / 2 / 3 с висячим номером.
 """
 from io import BytesIO
-from typing import Optional
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -24,6 +23,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from app.annex_tpl import doc_kind as DK
+from app.annex_tpl.party import party_line as _party_line
 
 FONT = "Times New Roman"
 HEADER_FILL = "4472C4"      # синяя шапка — как в образце и в наших выгрузках медиаплана
@@ -152,17 +152,6 @@ def _clause(doc, number: str, text: str, *, indent=0.0):
     return p
 
 
-def _party_line(p: Optional[dict], role: str) -> str:
-    if not p or not p.get("name"):
-        return f"___________, именуемое в дальнейшем «{role}»"
-    pos = p.get("position_gen") or p.get("position") or "___________"
-    fio = p.get("director_gen") or p.get("director") or "___________"
-    basis = p.get("basis_gen") or p.get("basis") or "___________"
-    acting = p.get("acting") or "действующего"
-    return (f"{p.get('legal_name') or p['name']}, именуемое в дальнейшем «{role}», в лице {pos} {fio}, "
-            f"{acting} на основании {basis}")
-
-
 def _basis_page(doc, d: dict) -> None:
     """Страница «Основание для закрывающих документов» — после ДС, одним файлом: клиент видит, что будет написано в УПД и счёте, и подтверждает."""
     doc.add_page_break()
@@ -220,12 +209,15 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
     pre = doc.add_paragraph()
     pre.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     pre.paragraph_format.space_after = Pt(10)
-    _run(pre, f"{_party_line(cust, 'Заказчик')}, с одной стороны, и "
-              f"{_party_line(ex, 'Исполнитель')}, с другой стороны, заключили настоящее "
-              f"{d.get('number') or DK.forms(_kind(d))['nom']} к Договору "
-              f"{_nb('№ ' + (contract.get('number') or '________'))} об оказании услуг "
-              f"от {_long_date(contract.get('date'))} (далее по тексту – «Договор») "
-              f"о нижеследующем:")
+    if d.get("preamble"):                    # преамбула — текст шаблона (02.11.2026); без него — прежняя формула
+        _run(pre, d["preamble"])
+    else:
+        _run(pre, f"{_party_line(cust, 'Заказчик')}, с одной стороны, и "
+                  f"{_party_line(ex, 'Исполнитель')}, с другой стороны, заключили настоящее "
+                  f"{d.get('number') or DK.forms(_kind(d))['nom']} к Договору "
+                  f"{_nb('№ ' + (contract.get('number') or '________'))} об оказании услуг "
+                  f"от {_long_date(contract.get('date'))} (далее по тексту – «Договор») "
+                  f"о нижеследующем:")
 
     if d.get("clauses"):
         _constructor_body(doc, d, ex, cust)
@@ -238,11 +230,13 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
     return out.getvalue()
 
 
-def _sign_block(doc, ex: dict, cust: dict) -> None:
+def _sign_block(doc, ex: dict, cust: dict, heading: bool = True) -> None:
+    """`heading=False` — заголовок уже стоит пунктом шаблона (`document.clauses_of`), второй не печатаем."""
     sign = doc.add_paragraph()
     sign.paragraph_format.space_before = Pt(14)
     sign.paragraph_format.space_after = Pt(8)
-    _run(sign, "Подписи Сторон:", bold=True)
+    if heading:
+        _run(sign, "Подписи Сторон:", bold=True)
     _signatures(doc, ex, cust)
 
 
@@ -255,7 +249,7 @@ def _constructor_body(doc, d: dict, ex: dict, cust: dict) -> None:
         if c.get("sys") == "table":
             _table(doc, d)
         elif c.get("sys") == "sign":
-            _sign_block(doc, ex, cust)
+            _sign_block(doc, ex, cust, heading=c.get("heading", True))
             signed = True
         elif not c.get("sys"):
             _clause(doc, c.get("num") or "", c.get("text") or "", indent=0.8 if c.get("sub") else 0.0)

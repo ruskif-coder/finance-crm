@@ -64,7 +64,7 @@ def sync_kit(db: Session, m, k):
     c = db.get(Contract, m.contract_id)
     model = (tpl_doc.model_of(db, a, c, [r[0] for r in db.execute(
         text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})]) or {}).get("model") or {}
-    basis = tpl_doc.upd_closing(model, k, a.rows)["text"] if model else None
+    basis = tpl_doc.upd_closing(model, k, a.rows, db)["text"] if model else None
     vat = float(a.vat_rate or 0)
     income = round(float(k.gross or 0), 2)
     fields = {"date": k.onec_invoice_date or date.today(), "status": PLANNED, "income": income, "expense": 0.0, "period": m.period,

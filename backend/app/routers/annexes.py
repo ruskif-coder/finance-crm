@@ -24,7 +24,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -36,6 +36,7 @@ from app.annex_tpl import document as tpl_doc
 from app.annex_tpl import doc_kind as DK
 from app.master_deal import doc_sign as DSG
 from app.sales import annex_signed
+from app.sales import annex_external as X
 from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
 from app.annex_tpl.service import AnnexTplError
@@ -114,7 +115,17 @@ def _out(a: SalesAnnex) -> dict:
         # Черновик отличается от выпущенного ровно наличием номера — отдельного флага
         # заводить не стали: два признака одного состояния разъезжаются.
         "is_draft": a.no is None,
+        # Подписан вне системы (03.11.2026): документ — файл или ссылка ЭДО, конструктора у него нет.
+        "origin": getattr(a, "origin", None) or "система", "edo_link": getattr(a, "edo_link", None),
     }
+
+
+def _assert_not_external(a) -> None:
+    """Выгрузка, пересоздание и правки текста — только у ДС, собранного конструктором (`annex_external.assert_not_external`)."""
+    try:
+        X.assert_not_external(a)
+    except X.ExternalError as e:
+        raise HTTPException(e.status, e.message)
 
 
 # ── сборка ───────────────────────────────────────────────────────────────────
@@ -385,6 +396,7 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     значения подставляются при сборке и остаются живыми. Черновик: правки в `blocks.edits`. Подтверждённое, пока не ушло в 1С: пункт зоны
     аккаунта пересобирает документ на той же версии шаблона (номер и дата прежние), основание закрывающих правится внутри замороженного документа."""
     a = _annex(db, annex_id, user)
+    _assert_not_external(a)
     c = _contract(db, a.contract_id)
     frozen = tpl_doc.is_frozen(a)
     if a.no is not None and not frozen:
@@ -437,6 +449,7 @@ def set_annex_date(annex_id: int, payload: DateIn, db: Session = Depends(get_db)
     Черновик — просто дата. Подтверждённое, пока не ушло в 1С, — документ пересобирается на той же версии шаблона с новой датой
     (номер прежний). Было и стало — в журнал."""
     a = _annex(db, annex_id, user)
+    _assert_not_external(a)
     c = _contract(db, a.contract_id)
     frozen = tpl_doc.is_frozen(a)
     if a.no is not None and not frozen:
@@ -493,6 +506,7 @@ def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Dep
     и для тех, что собраны по старой версии шаблона, пока они не ушли в 1С. Номер и дата сохраняются, документ собирается заново и замораживается
     (полнота и сверка чисел те же, что при подтверждении). Прежний замороженный текст заменяется; что было и что стало — в журнале."""
     a = _annex(db, annex_id, user)
+    _assert_not_external(a)
     if a.no is None:
         raise HTTPException(400, "Черновик собирается по текущему шаблону сам — пересоздавать нечего")
     if _sent_to_onec(a):
@@ -512,6 +526,19 @@ def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Dep
     return _out(a)
 
 
+def master_no(db: Session, a) -> Optional[int]:
+    """Номер, который займёт ДС пакета (одна точка для подтверждения и для карточки — 03.11.2026: в поле «Номер» черновика стоял
+    счётчик договора «1», а подтверждение брало номер раскладки). Уже занятый основной ДС пакета (первичный, пересобранный по
+    факту, или подтверждённый) — его номер, у допов с суффиксом; иначе — из раскладки: последний актуальный + 1; None — не задан."""
+    from app.master_deal.models import MasterDeal
+    taken_main = (db.query(SalesAnnex.no).filter(SalesAnnex.master_deal_id == a.master_deal_id, SalesAnnex.no.isnot(None),
+                                                 SalesAnnex.sub_no.is_(None), SalesAnnex.id != a.id).scalar())
+    if taken_main is not None:
+        return taken_main
+    m = db.get(MasterDeal, a.master_deal_id)
+    return m.start_no + 1 if m and m.start_no is not None else None
+
+
 def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple:
     """Подтверждение одного приложения БЕЗ сохранения: номер, заморозка документа, отметка. Сохраняет вызывающий —
     кнопка конструктора сразу, «Подтвердить ДС пакета» — одним разом за весь пакет (атомарно, 21.10.2026). Возвращает (договор, номер)."""
@@ -526,17 +553,8 @@ def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple
     no = payload.no if payload.no is not None else annex_build.next_no(db, c)
     master_id, sub_no = getattr(a, "master_deal_id", None), getattr(a, "sub_no", None)
     if master_id:                          # ДС пакета: номер — из раскладки (последний актуальный + 1), у допов — суффикс «01»
-        from app.master_deal.models import MasterDeal
-        m = db.get(MasterDeal, master_id)
-        # Номер основного ДС пакета: уже занятый (первичный ДС, пересобранный по факту, или подтверждённый основной) — его же
-        # (у ДС допов — с суффиксом «01»); иначе — из раскладки: последний актуальный + 1.
-        taken_main = (db.query(SalesAnnex.no).filter(SalesAnnex.master_deal_id == master_id, SalesAnnex.no.isnot(None),
-                                                     SalesAnnex.sub_no.is_(None), SalesAnnex.id != a.id).scalar())
-        if taken_main is not None:
-            no = taken_main
-        elif m and m.start_no is not None:
-            no = m.start_no + 1
-        else:
+        no = master_no(db, a)
+        if no is None:
             raise HTTPException(409, "У мастер-сделки не задан номер ДС — задайте его на раскладке")
     _check_no(db, c, no, sub_no) if sub_no else _check_no(db, c, no)
     if payload.doc_date:
@@ -758,14 +776,94 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
             # Границу нумерации экран показывает рядом с полем: без неё отказ «номер не
             # больше стартового» выглядит как придирка непонятно к чему.
             "annex_start_no": c.annex_start_no,
-            "next_no": annex_build.next_no(db, c),
+            # ДС пакета — номер раскладки, тот, что займёт подтверждение; остальные — следующий по счётчику договора.
+            "next_no": (master_no(db, a) if getattr(a, "master_deal_id", None) else None) or annex_build.next_no(db, c),
             # ДС мастер-сделки: ссылка «← Раскладка M-…» и номер, который займёт подтверждение (из раскладки).
             "master": _master_ref(db, a),
             # Вид ДС и подпись (16.10.2026): первичный на план или по факту; подпись — из источников (отметка на ДС, позже ЭДО).
             "issue_kind": getattr(a, "issue_kind", None),
             "signed": annex_signed.signed_state(db, a),
             # Где ДС у клиента и куда его отметить дальше (02.11.2026). ДС пакета отмечают в карточке мастер-сделки.
-            "sign": DSG.view(db, a)}
+            "sign": DSG.view(db, a),
+            # Подписан вне системы (03.11.2026): документ, сумма и услуги, указанные аккаунтом.
+            "external": _external_view(db, a) if X.is_external(a) else None}
+
+
+def _external_view(db: Session, a) -> dict:
+    from app.master_deal.models import MasterDealFile
+    from app.sales.models import SalesAddonService, SalesAnnexItem, SalesService
+    f = (db.query(MasterDealFile).filter(MasterDealFile.annex_id == a.id).order_by(MasterDealFile.id.desc()).first())
+    items = (db.query(SalesAnnexItem, SalesService.name, SalesAddonService.name)
+             .outerjoin(SalesService, SalesService.id == SalesAnnexItem.service_id)
+             .outerjoin(SalesAddonService, SalesAddonService.id == SalesAnnexItem.addon_id)
+             .filter(SalesAnnexItem.annex_id == a.id).order_by(SalesAnnexItem.id).all())
+    return {"edo_link": a.edo_link, "file": {"id": f.id, "name": f.filename} if f else None,
+            "items": [{"service_id": it.service_id, "addon_id": it.addon_id, "service": sname or aname,
+                       "addon": it.addon_id is not None, "amount": it.amount, "volume": it.volume, "unit": it.unit}
+                      for it, sname, aname in items]}
+
+
+@router.post("/{annex_id}/external")
+async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = Form(...), total: float = Form(...),
+                        items: str = Form("[]"), number: str = Form(""), edo_link: str = Form(""),
+                        file: Optional[UploadFile] = File(None), db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Подписан вне системы» (03.11.2026): черновик ДС пакета становится подтверждённым и подписанным; документ — файл или
+    ссылка ЭДО, сумма и услуги — со слов аккаунта. Номер занимается тем же способом, что при подтверждении, и пакет идёт
+    дальше, если это был последний ДС."""
+    import json
+    a = _annex(db, annex_id, user)
+    try:
+        lines = json.loads(items or "[]")
+    except ValueError:
+        raise HTTPException(400, "Услуги — списком «услуга + сумма»")
+    content = (await file.read(X.MAX_BYTES + 1)) if file is not None and file.filename else None
+    stored, moved = {}, {}
+
+    def work():
+        stored.update(X.sign_external(db, a, user, no=no, number_text=number, doc_date=doc_date, total=total, items=lines,
+                                      edo_link=edo_link, file_name=file.filename if file is not None else None,
+                                      file_bytes=content))
+        from app.master_deal import to_annex as TA
+        from app.master_deal.models import MasterDeal
+        m = db.get(MasterDeal, a.master_deal_id)
+        if TA.after_confirm(db, m):
+            moved["m"] = m
+    try:
+        commit_confirm(db, no, a.id, work)
+    except X.ExternalError as e:
+        db.rollback()
+        if stored.get("path"):
+            _drop_upload(stored["path"])
+        raise HTTPException(e.status, e.message)
+    if stored.get("old_path"):
+        _drop_upload(stored["old_path"])
+    db.refresh(a)
+    if moved.get("m") is not None:
+        from app.notify import closing as CN
+        CN.status_changed(db, moved["m"], "согласование", user)
+    log_action(db, user, "annex_external", "contract", a.contract_id,
+               f"{a.number}: подписан вне системы — " + ("ссылка ЭДО" if a.edo_link else "файл"))
+    return _out(a)
+
+
+def _drop_upload(rel: str) -> None:
+    """Файл внешнего ДС — через общую проверку пути хранилища (`files_safe.remove_upload`)."""
+    from app.files_safe import remove_upload
+    if not remove_upload(rel, subdir=X.SUBDIR):
+        log.warning("не удалён файл внешнего ДС %s", rel)
+
+
+@router.get("/{annex_id}/external-file")
+def external_file(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Документ внешнего ДС — ровно загруженный файл."""
+    from fastapi.responses import FileResponse
+    from app.master_deal.models import MasterDealFile
+    a = _annex(db, annex_id, user)
+    f = (db.query(MasterDealFile).filter(MasterDealFile.annex_id == a.id).order_by(MasterDealFile.id.desc()).first())
+    if not X.is_external(a) or f is None:
+        raise HTTPException(404, "Файла у этого ДС нет")
+    from app.files_safe import existing_upload_path
+    return FileResponse(existing_upload_path(f.path, subdir=X.SUBDIR), filename=f.filename)
 
 
 class SignIn(BaseModel):
@@ -803,8 +901,11 @@ def _master_ref(db: Session, a) -> Optional[dict]:
     from app.master_deal import to_annex as TA
     # Все ДС пакета (основной и допы «-01») — конструктор открывает первый, к остальным переход отсюда (владелец 20.10.2026).
     siblings = [{"id": x["id"], "number": x["number"], "confirmed": x["confirmed"]} for x in TA.annexes_of(db, m)]
+    will = master_no(db, a)
     return {"code": m.code, "kind": a.kind, "siblings": siblings,
-            "will_be": (f"ДС № {m.start_no + 1}" + (f"-{a.sub_no}" if a.sub_no else "")) if m.start_no is not None else None}
+            "will_be": (f"ДС № {will}" + (f"-{a.sub_no}" if a.sub_no else "")) if will is not None else None,
+            # Номер раскладки числом — подсказка формы «Подписан вне системы» (03.11.2026); у клиента он может быть своим.
+            "will_be_no": will}
 
 
 # Символы, запрещённые в именах файлов Windows. Слэш приходит сюда штатно: бренд
@@ -884,6 +985,7 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     не нужен ни токен, ни доступ к API — доступ проверен здесь.
     """
     a = _annex(db, annex_id, user)
+    _assert_not_external(a)
     if not with_basis:
         _assert_no_open_legal(db, a)
     doc = _doc(db, a)
@@ -923,6 +1025,7 @@ def annex_docx(annex_id: int, db: Session = Depends(get_db), user: User = Depend
     на месте подписанта одинаково опасен в любом формате.
     """
     a = _annex(db, annex_id, user)
+    _assert_not_external(a)
     if not with_basis:
         _assert_no_open_legal(db, a)
     doc = _doc(db, a)

@@ -124,6 +124,15 @@ def check(blocks) -> List[dict]:
         return issues
     num = numbering(blocks)
     for b in blocks:
+        if b.get("sys") == "pre" and b.get("text"):
+            # Преамбула с текстом шаблона (02.11.2026): те же правила подстановок и длины, что у пункта; без текста — прежняя формула.
+            bad = unknown_keys(b["text"])
+            if bad:
+                issues.append({"id": b["id"], "where": "Преамбула · ",
+                               "text": "неизвестная подстановка " + ", ".join("{" + k + "}" for k in bad)})
+            if len(b["text"]) > MAX_TEXT:
+                issues.append({"id": b["id"], "where": "Преамбула · ", "text": f"текст длиннее {MAX_TEXT} знаков"})
+            continue
         if b.get("sys"):
             continue
         t = b.get("text")

@@ -22,6 +22,7 @@ import SectionTabs from '@/components/SectionTabs'
 import { MONO, UI, IconBtn, UnderlineTabs, primaryBtn } from '@/components/salesTableKit'
 import TemplatesTab from '@/components/annex/TemplatesTab'
 import NewTemplateModal from '@/components/contractCard/NewTemplateModal'
+import ExternalUploadPick from '@/components/annex/ExternalUploadPick'
 import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
 import { T } from '@/lib/tokens'
@@ -101,9 +102,12 @@ export default function AnnexRegistry() {
   // список «что пересохранить». Права читаем после монтирования: на сервере localStorage нет.
   const [canTpl, setCanTpl] = useState(false)
   const [canTplCreate, setCanTplCreate] = useState(false)
+  // «Загрузить внешний ДС» (03.11.2026) может создать черновик ДС в пакете — кнопка тем, кто правит мастер-сделки.
+  const [canExt, setCanExt] = useState(false)
   useEffect(() => {
     const p = getPermissions()
     setCanTpl(can(p, 'annex_templates', 'view')); setCanTplCreate(can(p, 'annex_templates', 'create'))
+    setCanExt(can(p, 'master_deals', 'edit'))
   }, [])
   const [newTpl, setNewTpl] = useState(false)            // окно «Новый шаблон» из реестра шаблонов
   const tab = canTpl && router.query.tab === 'templates' ? 'templates' : 'annexes'
@@ -246,6 +250,7 @@ export default function AnnexRegistry() {
               {payers.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {canExt && <ExternalUploadPick />}
               <button type="button" onClick={() => setTplOpen(true)} style={{ ...chipSel, backgroundImage: 'none', padding: '7px 14px', color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderColor: 'var(--accent-border)' }}>Базовые шаблоны</button>
               <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
               <IconBtn title="Выгрузить в Excel — в том же порядке, что на экране" onClick={exportXlsx}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></IconBtn>
@@ -290,6 +295,7 @@ export default function AnnexRegistry() {
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.contract_date)}</div>
                     <div style={{ ...cell, fontWeight: 700 }}>
                       {a.number || <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}>черновик</span>}
+                      {a.origin === 'загружен' && <span title="Подписан вне системы: документ — файл или ссылка ЭДО" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 6, background: 'var(--violet-tint)', color: 'var(--violet-fg)', fontSize: 10.5, fontWeight: 700 }}>внешний</span>}
                     </div>
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.date)}</div>
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.period_from)} — {dm(a.period_to)}</div>

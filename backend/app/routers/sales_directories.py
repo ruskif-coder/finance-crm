@@ -244,6 +244,7 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
     # иначе пикер показывал бы один цвет, а маркеры на дашборде другой.
     from app.sales.colors import service_color_map, PALETTE
     cmap = service_color_map(db)
+    from app.sales.units import service_unit
     return {"palette": PALETTE,
             "items": [{"id": s.id, "name": s.name, "group": s.group, "is_active": s.is_active,
                        # color — что выбрано руками (может быть null), color_effective —
@@ -252,7 +253,7 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                        "color": s.color, "color_effective": cmap.get(s.name),
                        "sort_order": s.sort_order, "placement_type": s.placement_type,
                        "default_format": s.placement_type, "formats": fmt_map.get(s.id, []),
-                       "calc_form": s.calc_form, "separate_price": bool(s.separate_price),
+                       "calc_form": s.calc_form, "unit": service_unit(s.calc_form), "separate_price": bool(s.separate_price),
                        "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,
                        "unit_price_app": s.unit_price_app, "constants": s.constants or {},
                        "revenue_article_id": s.revenue_article_id,
@@ -560,7 +561,9 @@ def list_addons(only_active: bool = False, db: Session = Depends(get_db),
     if only_active:
         q = q.filter(SalesAddonService.is_active.is_(True))
     rows = q.order_by(SalesAddonService.sort_order, SalesAddonService.name).all()
+    from app.sales.units import addon_unit
     return {"items": [{"id": a.id, "name": a.name, "unit_price": a.unit_price, "period": a.period,
+                       "unit": addon_unit(a.period),     # единица количества (03.11.2026) — одна функция с сервером ДС
                        "can_be_bonus": bool(a.can_be_bonus), "is_active": a.is_active, "doc_phrase": a.doc_phrase,
                        "sort_order": a.sort_order} for a in rows]}
 

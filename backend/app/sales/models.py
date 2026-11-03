@@ -693,6 +693,10 @@ class SalesAnnex(Base):
     # Где документ у клиента и каким каналом ушёл (2026-11-02_start_pack_and_doc_sign.sql). Правит только app/master_deal/doc_sign.py.
     sign_state = Column(String(20))
     sign_channel = Column(String(10))
+    # Подписан вне системы (2026-11-03_annex_external.sql): «загружен» — документ не собирается конструктором, это файл
+    # (скан ДС мастер-сделки) или ссылка на документ, ранее выгруженный в ЭДО.
+    origin = Column(String(12), nullable=False, default="система", server_default="система")
+    edo_link = Column(Text)
     items = relationship("SalesAnnexItem", back_populates="annex",
                          cascade="all, delete-orphan")
 
@@ -877,9 +881,13 @@ class SalesAnnexItem(Base):
     __tablename__ = "sales_annex_items"
     id = Column(Integer, primary_key=True)
     annex_id = Column(Integer, ForeignKey("sales_annexes.id", ondelete="CASCADE"), nullable=False)
-    service_id = Column(Integer, ForeignKey("sales_services.id"), nullable=False)
+    # Либо основная услуга, либо доп. услуга — ровно одно (2026-11-03_annex_items_volume_addons.sql).
+    service_id = Column(Integer, ForeignKey("sales_services.id"))
+    addon_id = Column(Integer, ForeignKey("sales_addon_services.id"))
     brand_id = Column(Integer, ForeignKey("sales_brands.id"))
     amount = Column(Float, nullable=False)
+    volume = Column(Numeric(18, 2, asdecimal=False))     # количество в единице `unit`
+    unit = Column(String(16))                            # показы | клики | штуки — снимком на момент подписания
     currency = Column(String, nullable=False, default="RUB")
     period_from = Column(Date)
     period_to = Column(Date)

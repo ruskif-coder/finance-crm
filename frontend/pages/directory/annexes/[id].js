@@ -27,6 +27,7 @@ import { annexTemplatesApi, errorOf } from '@/lib/annexTemplatesApi'
 import AnnexQuickEdit from '@/components/annex/AnnexQuickEdit'
 import AnnexDateField from '@/components/annex/AnnexDateField'
 import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
+import { ExternalSignButton, ExternalAnnexView } from '@/components/annex/ExternalAnnex'
 import { SignActions, SignBadge } from '@/components/master/docParts'
 
 const dm = (d) => fmtCalendarDate(d)
@@ -332,11 +333,12 @@ export default function AnnexAssembly() {
 
         {a && (
           <>
-            <div style={{ ...SECTION, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+            <div style={{ ...SECTION, display: 'flex', alignItems: 'stretch', gap: 20, flexWrap: 'wrap',
                           ...(legalOpen.length ? { background: 'var(--warning-bg)', border: '1px solid var(--warning-border)' } : {}) }}>
-              <div>
+              <div style={{ flex: '1 1 320px', minWidth: 0 }}>
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em' }}>
-                  {a.number || 'Черновик — номер не занят'}
+                  {/* Черновик называется так же, как его документ ниже (03.11.2026): номер займётся при подтверждении. */}
+                  {a.number || (a.model?.number ? `${a.model.number} · черновик` : 'Черновик — номер не занят')}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
                   от {dm(a.date)} · договор № {d?.contract?.number || '—'} от {dm(d?.contract?.date)}
@@ -382,7 +384,8 @@ export default function AnnexAssembly() {
                     </span>
                   </div>
                 )}
-                {a.is_draft && mayEdit && (
+                {/* У ДС пакета номер — из раскладки, счётчик договора к нему отношения не имеет (03.11.2026). */}
+                {a.is_draft && mayEdit && !a.master && (
                   <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 6 }}>
                     {a.annex_start_no
                       ? `Нумерация по этому договору начинается с ${a.annex_start_no + 1}: приложения по ${a.annex_start_no} выданы вне системы`
@@ -390,13 +393,14 @@ export default function AnnexAssembly() {
                   </div>
                 )}
               </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+              {/* Правая колонка (владелец 03.11.2026): номер, дата и подтверждение — вверху, напротив заголовка; выгрузка — строкой ниже. */}
+              <div style={{ marginLeft: 'auto', flex: '0 0 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'flex-end', gap: 14 }}>
                 {/* Номер и дата правятся ДО подтверждения и уходят вместе с ним: пока
                     номер не занят, менять его безопасно, после — приложение заморожено.
                     Одно действие вместо «сохранить, потом подтвердить» — иначе появилось
                     бы состояние «дата новая, номер старый», которого нет на бумаге. */}
                 {a.is_draft && (
-                  <>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                     <div>
                       <div style={{ ...LBL, marginBottom: 4 }}>Номер</div>
                       <input type="number" min={(a.annex_start_no || 0) + 1} value={no}
@@ -412,11 +416,13 @@ export default function AnnexAssembly() {
                             style={{ ...btn(false), height: 36, opacity: legalOpen.length ? .45 : 1, cursor: legalOpen.length ? 'not-allowed' : 'pointer' }}>
                       {busy === 'confirm' ? 'Занимаю номер…' : 'Подтвердить номер'}
                     </button>
-                    <span style={{ alignSelf: 'stretch', width: 1, background: 'var(--border-card)', margin: '0 4px' }} />
-                  </>
+                    {/* Клиент подписал свой ДС (03.11.2026) — вместо сборки конструктором загружается его документ. */}
+                    {!!a.master && mayEdit && <ExternalSignButton annex={a} defaultNo={a.master.will_be_no ?? no} defaultDate={docDate} onDone={load} autoOpen={router.query.external === '1'} />}
+                  </div>
                 )}
                 {/* Выгрузка в одну строку (владелец 14.10.2026): «Клиентские на согласование» — ДС и основание закрывающих одним файлом,
                     затем разделитель, затем чистовые — только ДС, на подпись. Подписи групп — сверху, как у номера и даты (владелец 28.10.2026). */}
+                {!a.external && (<div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                 <div>
                   <div style={{ ...LBL, marginBottom: 4 }}>Клиентские на согласование</div>
                   <div style={{ display: 'flex', gap: 10 }}>
@@ -438,7 +444,7 @@ export default function AnnexAssembly() {
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button onClick={() => download('docx')} disabled={!!busy || !!miss.length || !!legalOpen.length}
                             title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС — редактируемый файл'}
-                            style={{ ...btn(false), height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
+                            style={{ ...primaryBtn, height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
                       {busy === 'docx' ? 'Собираю…' : 'DOCX'}
                     </button>
                     <button onClick={() => download('pdf')} disabled={!!busy || !!miss.length || !!legalOpen.length}
@@ -448,12 +454,16 @@ export default function AnnexAssembly() {
                     </button>
                   </div>
                 </div>
+                </div>)}
               </div>
             </div>
 
+            {/* Подписан вне системы (03.11.2026): документ — файл или ссылка ЭДО, конструктора и выгрузки нет. */}
+            {!!a.external && <ExternalAnnexView annex={a} ext={a.external} section={SECTION} />}
+
             {/* Недостающее названо поимённо и до кнопки: отказ выгрузки без списка
                 означал бы «сходи поищи». */}
-            {!!miss.length && (
+            {!!miss.length && !a.external && (
               <div style={{ ...SECTION, background: 'var(--bg-subtle)' }}>
                 <div style={{ ...LBL, marginBottom: 8 }}>Документ ещё нельзя выгрузить</div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
@@ -464,7 +474,7 @@ export default function AnnexAssembly() {
 
             {/* Правка пунктов зоны аккаунта (до таблицы МП) — конструктор над самим документом, такой же, как у основания закрывающих. У черновика
                 и у подтверждённого, пока оно не ушло в 1С (сервер откажет, если ушло). Пункты после таблицы правит юрист. */}
-            {a.model && a.model.blocks && !a.model_legacy && (
+            {a.model && a.model.blocks && !a.model_legacy && !a.external && (
               <div style={SECTION}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                   {a.model.blocks.filter(b => !b.sys && b.zone === 'acc').map((b, i) => (
@@ -479,18 +489,18 @@ export default function AnnexAssembly() {
 
             {/* Документ по шаблону ДС (спринт 2): тексты пунктов, таблица «бренд → услуги → допы», стороны. Собранные до конструктора
                 показываются прежним расчётом ниже. */}
-            <div style={SECTION}>
+            {!a.external && <div style={SECTION}>
               <AnnexModelPanel state={{ model: a.model, frozen: a.model_frozen, legacy: a.model_legacy, reason: a.model_reason, template_state: a.template_state, choice: a.template_choice }}
                                canEdit={mayEdit} onChoose={chooseTemplate} onSaveAs={saveAsTemplate}
                                onRebuild={mayEdit && !a.is_draft ? rebuild : undefined} rebuildBusy={busy === 'rebuild'}
                                actions={a.model && a.model.blocks && !a.model_legacy
                                  ? <AnnexLegalButton annexId={a.id} canEdit={mayEdit} onChange={load} lawBlocks={a.model.blocks.filter(b => !b.sys && b.zone === 'law')} />
                                  : null} />
-            </div>
+            </div>}
 
             {/* Основание для закрывающих документов (УПД и счёт — один текст). Генерируется по образцу и правится здесь; у подтверждённого
                 правится тоже — это не текст подписанного ДС. */}
-            {a.model && a.model.closing_basis && (
+            {a.model && a.model.closing_basis && !a.external && (
               <div style={SECTION}>
                 <AnnexQuickEdit title="Основание для закрывающих документов" hint="попадёт в УПД и счёт; можно скопировать"
                                 source={a.model.closing_basis.template}

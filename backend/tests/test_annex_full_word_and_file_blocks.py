@@ -130,3 +130,31 @@ def test_the_frozen_document_on_screen_says_the_same_as_the_file():
     assert out["blocks"][0]["parts"][1]["t"] == "Соглашение Плюс", "подставленное значение не трогаем"
     assert out["closing_basis"]["text"] == "согласно Дополнительному соглашению №30"
     assert model["number"] == "Доп. соглашение № 30", "исходная модель не меняется"
+
+
+# ── 3. Заголовок подписей не дублируется (владелец 02.11.2026) ───────────────────────────────────────────────────────
+# В шаблоне перед подписями стоит свой пункт «6. Подписи Сторон:» (или «Реквизиты:»), а блок подписей печатал ещё и свой
+# заголовок — в файле выходило «Подписи Сторон» дважды.
+
+@pytest.mark.parametrize("heading", ["Подписи Сторон:", "Реквизиты:", "Реквизиты и подписи Сторон", "подписи сторон"])
+def test_sign_block_drops_its_heading_after_the_template_heading(heading):
+    model = {"blocks": [{"id": "pre", "sys": "pre"}, {"id": "p6", "num": "6.", "text": heading}, {"id": "sign", "sys": "sign"}]}
+    sign = clauses_of(model, "дс")[-1]
+    assert sign == {"sys": "sign", "heading": False}
+    text = _text(annex_docx.build_docx(_doc(clauses=clauses_of(model, "дс"))))
+    assert text.lower().count("подписи сторон") == (1 if "подпис" in heading.lower() else 0)
+
+
+def test_sign_block_keeps_its_heading_after_an_ordinary_clause():
+    model = {"blocks": [{"id": "p5", "num": "5.", "text": "Составлено в форме электронного документа."},
+                        {"id": "sign", "sys": "sign"}]}
+    assert clauses_of(model, "дс")[-1] == {"sys": "sign", "heading": True}
+    assert _text(annex_docx.build_docx(_doc(clauses=clauses_of(model, "дс")))).count("Подписи Сторон") == 1
+
+
+def test_pdf_page_reads_the_heading_flag():
+    import pathlib
+    page = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "pages" / "directory" / "annexes" / "pdf" / "[id].js"
+    if not page.exists():
+        pytest.skip("в контейнере бэкенда фронта нет — проверяется в репозитории")
+    assert "c.heading" in page.read_text(encoding="utf-8")

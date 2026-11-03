@@ -261,12 +261,11 @@ def upds_of(db: Session, m: MasterDeal) -> list:
             deal_ids = [r[0] for r in db.execute(text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})]
             models[k.annex_id] = (a, (tpl_doc.model_of(db, a, c, deal_ids) or {}).get("model") or {})
         a, model = models[k.annex_id]
-        cl = tpl_doc.upd_closing(model, k, a.rows) if model else {"text": "", "template": "", "edited": False, "inherited_from": None}
+        cl = tpl_doc.upd_closing(model, k, a.rows, db) if model else {"text": "", "template": "", "edited": False, "inherited_from": None}
         out.append({"upd_no": k.upd_no, "annex_id": k.annex_id, "annex_number": a.number or model.get("number"),
                     "brand": k.brand, "service": k.service, "gross": k.gross,
                     "basis": cl["text"], "basis_template": cl["template"], "basis_custom": bool(k.basis_text),
-                    "basis_inherited_from": cl.get("inherited_from"), "values": {**(model.get("values") or {}), **(
-                        {"бренд_название": k.brand.split(" / ")[-1].strip()} if k.brand else {})}})
+                    "basis_inherited_from": cl.get("inherited_from"), "values": cl.get("values") or model.get("values") or {}})
     return out
 
 

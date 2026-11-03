@@ -83,7 +83,7 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
   const tag = b.sys === 'table' ? ['граница', 'var(--bg-subtle)', 'var(--text-muted)'] : z
   const dateBad = emptyDemo
   return (
-    <div onClick={() => edit && !b.sys && onPick(b.id)}
+    <div onClick={() => edit && (!b.sys || b.sys === 'pre') && onPick(b.id)}
          style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', margin: '0 -8px', borderRadius: 6, background: active ? 'var(--bg-tint)' : 'transparent', outline: active ? '1px solid var(--accent-border)' : 'none', cursor: edit && !b.sys ? 'pointer' : 'default' }}>
       {b.sys === 'head' && (
         <span style={{ textAlign: 'right', fontSize: '0.93em' }}>
@@ -96,7 +96,10 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
         </span>
       )}
       {b.sys === 'place' && <span style={{ display: 'flex', justifyContent: 'space-between' }}><span>г. Москва</span><span style={GREEN}>«31» октября 2026 г.</span></span>}
-      {b.sys === 'pre' && (
+      {b.sys === 'pre' && !!b.text && (
+        <span style={{ textAlign: 'justify', textIndent: '2em' }}><Segs text={b.text} emptyDemo={emptyDemo} /></span>
+      )}
+      {b.sys === 'pre' && !b.text && (
         <span style={{ textAlign: 'justify', textIndent: '2em' }}>
           ООО «Ромашка», именуемое в дальнейшем «Заказчик», в лице Генерального директора Иванова Ивана Ивановича, действующего на основании Устава, с одной стороны, и Общество с ограниченной ответственностью «Программатик Медиа», именуемое в дальнейшем «Исполнитель», в лице Генерального директора Макарова Дениса Сергеевича, действующего на основании Устава, с другой стороны, заключили настоящее Приложение № 68 к Договору № РМ 30-11-2023 от 30.11.2023 (далее по тексту – «Договор») о нижеследующем:
         </span>

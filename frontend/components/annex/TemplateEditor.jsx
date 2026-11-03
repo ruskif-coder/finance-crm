@@ -4,7 +4,7 @@
  */
 import { MONO } from '@/components/salesTableKit'
 import {
-  SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, isKnownSub, numbering, zoneAt, canMove,
+  SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, PRE_DEFAULT, isKnownSub, numbering, zoneAt, canMove,
 } from '@/lib/annexTemplate.mjs'
 import { Segs } from '@/components/annex/TemplateSheet'
 
@@ -41,13 +41,13 @@ function BlockRow({ b, i, blocks, num, on, onPick, onMove }) {
   const down = canMove(blocks, i, 1)
   const hint = 'через таблицу МП и системные блоки не перескакивает'
   return (
-    <div onClick={() => !b.sys && onPick(b.id)}
-         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys ? 'default' : 'pointer' }}>
+    <div onClick={() => (!b.sys || b.sys === 'pre') && onPick(b.id)}
+         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys && b.sys !== 'pre' ? 'default' : 'pointer' }}>
       <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: b.sys ? 'var(--text-disabled)' : 'var(--accent)', flex: '0 0 28px' }}>{b.sys ? '—' : num[b.id]}</span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' }}>
         <span style={{ fontSize: 12, fontWeight: on ? 700 : 600, color: b.sys ? 'var(--text-faint)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.req ? '🔒 ' : ''}{b.title}</span>
         <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: b.sys ? 'var(--text-faint)' : zone === 'acc' ? 'var(--accent-fg)' : 'var(--violet-fg)' }}>
-          {b.sys ? (b.sys === 'table' ? 'граница зон' : 'системный') : ZN[zone][0]}
+          {b.sys ? (b.sys === 'table' ? 'граница зон' : b.sys === 'pre' ? (b.text ? 'текст шаблона' : 'стандартная · править') : 'системный') : ZN[zone][0]}
         </span>
       </span>
       {!b.sys && (
@@ -100,9 +100,59 @@ function warningsOf(sel) {
   return out
 }
 
+/** Преамбула (02.11.2026): текст шаблона с подстановками сторон. Пусто — печатается стандартная формула; правка начинается с неё. */
+function PreambleEditor({ b, onPatch }) {
+  const text = b.text ?? PRE_DEFAULT
+  const addSub = (k) => onPatch(b.id, { text: `${text.replace(/\s*$/, '')} {${k}}` })
+  return (
+    <div style={{ flex: '1 1 0', minWidth: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>Преамбула</span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{b.text ? 'текст шаблона' : 'стандартная формула — правка сохранится в шаблоне'}</span>
+      </div>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <span style={CAP}>Текст · подстановки в фигурных скобках</span>
+        <textarea value={text} rows={7} onChange={e => onPatch(b.id, { text: e.target.value })}
+                  style={{ boxSizing: 'border-box', padding: '10px 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, lineHeight: 1.55, resize: 'vertical', outline: 'none', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
+      </label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={CAP}>Вставить подстановку · добавится в конец текста</span>
+        {SUB_GROUPS.map(([group, keys]) => (
+          <div key={group} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ ...CAP, flex: '0 0 130px' }}>{group}</span>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {keys.map(k => (
+                <span key={k} onClick={() => addSub(k)} title={`${SUB_INFO[k]} · образец: ${SUBS[k][0]}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 9px', borderRadius: 7, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                  {`{${k}}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={CAP}>Как увидит аккаунт · на образце</span>
+        <div style={{ padding: '12px 14px', background: 'var(--bg-subtle)', borderRadius: 11, fontFamily: "'Times New Roman', Georgia, serif", fontSize: 14, lineHeight: 1.55, textAlign: 'justify', textIndent: '2em' }}>
+          <Segs text={text} />
+        </div>
+      </div>
+      {!!b.text && (
+        <div style={{ display: 'flex', paddingTop: 4, borderTop: '1px solid var(--border-row)' }}>
+          <span onClick={() => onPatch(b.id, { text: undefined })} title="убрать текст из шаблона — печатается стандартная формула"
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border-card)', color: 'var(--text-secondary)', background: 'var(--bg-card)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            Вернуть стандартную
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PointEditor({ blocks, sel, onPatch, onRemove }) {
   const i = blocks.findIndex(b => b.id === sel)
   const b = blocks[i]
+  if (b && b.sys === 'pre') return <PreambleEditor b={b} onPatch={onPatch} />
   if (!b || b.sys) {
     return <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Выберите текстовый пункт слева</div>
   }

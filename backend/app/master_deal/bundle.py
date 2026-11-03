@@ -36,7 +36,16 @@ def build(db: Session, m) -> tuple:
         z.writestr(n, data)
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        from app.sales import annex_external as X
+        from app.sales.models import SalesAnnex
         for a in TA.annexes_of(db, m):
+            row = db.get(SalesAnnex, a["id"])
+            if X.is_external(row):
+                # Подписан вне системы (03.11.2026): документ — файл клиента (он ляжет ниже, сканом) или ссылка ЭДО. Наш DOCX
+                # не собираем: это был бы наш текст под чужим подписанным документом.
+                if row.edo_link:
+                    put(z, f"{a['number']} — ссылка ЭДО.txt", f"{a['number']} подписан вне системы.\nДокумент в ЭДО: {row.edo_link}\n")
+                continue
             try:
                 name, data = _annex_docx(db, a["id"])
                 put(z, name.replace("ДС без номера", a["number"]), data)      # черновик — номером из раскладки

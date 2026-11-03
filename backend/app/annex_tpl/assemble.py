@@ -20,6 +20,7 @@ from app.annex_tpl.contract_check import gaps as contract_gaps
 from app import vat as vat_rules
 from app.annex_tpl.check import MAX_TEXT, NUMBERED, numbering, unknown_keys, zone_at
 from app.annex_tpl.legal_name import legal_name
+from app.annex_tpl.party import party_line
 from app.annex_tpl import doc_kind as DK
 from app.annex_tpl.models import AnnexTplTemplate
 from app.annex_tpl.subs import SUBS
@@ -175,6 +176,12 @@ def number_value(no) -> str:
 _SIGN_BEFORE_NUMBER = re.compile(r"№\s*(?=\{номер_дс\})")
 
 
+# Несколько брендов в подстановке — «брендов «A, B»» (владелец 03.11.2026): слово шаблона стоит ДО подстановки и не знает, сколько
+# брендов в неё придёт. Меняется только «бренда» прямо перед кавычкой значения; один бренд — слово шаблона как есть.
+BRAND_KEYS = ("бренд_название", "бренд")
+_BRAND_WORD = re.compile(r"(бренд)а(\s*:?\s*«)$")
+
+
 def _parts(text: str, values: dict) -> list:
     """Текст пункта кусками: обычный и подставленное значение (с признаком «пусто») — экран подсвечивает подстановки.
 
@@ -195,6 +202,8 @@ def _parts(text: str, values: dict) -> list:
         key = m.group(1)
         if key in values:
             v = values[key]
+            if key in BRAND_KEYS and ", " in (v or "") and out and "key" not in out[-1]:
+                out[-1] = {"t": _BRAND_WORD.sub(r"\1ов\2", out[-1]["t"])}
             out.append({"t": v, "key": key, "empty": v == ""})
         elif NUMBERED.match(key):
             # `{юр_название_2}` при одном рекламодателе: тег законный, значения нет — пусто, а не текст тега
@@ -289,6 +298,15 @@ def _blocks(blocks: list, values: dict, edits: Optional[dict] = None, defaults: 
     num = numbering(blocks)
     out, empties = [], {}
     for i, b in enumerate(blocks):
+        if b.get("sys") == "pre" and (b.get("text") or "").strip():
+            # Преамбула — текст шаблона (02.11.2026); без текста остаётся системным блоком с прежней формулой.
+            parts = _parts(b["text"], values)
+            for p in parts:
+                if p.get("empty"):
+                    empties[p["key"]] = True
+            out.append({"id": b["id"], "sys": "pre", "title": b.get("title"), "template_text": b["text"],
+                        "text": "".join(p["t"] for p in parts), "parts": parts})
+            continue
         if b.get("sys"):
             out.append({"id": b["id"], "sys": b["sys"], "title": b.get("title")})
             continue
@@ -376,12 +394,14 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
             defaults.pop(k, None)
         if P1_KEY not in edits and P1_KEY not in reset:
             defaults[P1_KEY] = {"text": P1_ADDONS, "from": ADDONS_STD}
-    blocks, empties = _blocks(version.blocks, values, edits, defaults)
-    closing_text = edits.get(CLOSING_KEY)
-    closing_default = defaults.get(CLOSING_KEY)
     from app.signers.service import party_of
     ex, cu = party_of(db, us, contract, "исполнитель", doc_date), party_of(db, payer, contract, "заказчик", doc_date)
     ex["legal_name"], cu["legal_name"] = legal_name(ex.get("name")), legal_name(cu.get("name"))
+    # Стороны целиком — для преамбулы из шаблона; та же функция, что у прежней формулы.
+    values["заказчик"], values["исполнитель"] = party_line(cu, "Заказчик"), party_line(ex, "Исполнитель")
+    blocks, empties = _blocks(version.blocks, values, edits, defaults)
+    closing_text = edits.get(CLOSING_KEY)
+    closing_default = defaults.get(CLOSING_KEY)
 
     return {
         # Слово решает ТУМБЛЕР договора, а технический признак (`rows_override`/мастер-сделка) —

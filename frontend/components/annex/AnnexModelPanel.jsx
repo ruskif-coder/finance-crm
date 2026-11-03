@@ -108,6 +108,10 @@ function Sheet({ model }) {
         if (b.sys === 'place') {
           return <span key={b.id} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{model.signed_place}</span><span>{longDate(model.date)}</span></span>
         }
+        if (b.sys === 'pre' && b.parts) {
+          // Преамбула — текст шаблона (02.11.2026); без него — стандартная формула ниже.
+          return <span key={b.id} style={{ textAlign: 'justify', textIndent: '2em' }}><Parts parts={b.parts} /></span>
+        }
         if (b.sys === 'pre') {
           return (
             <span key={b.id} style={{ textAlign: 'justify', textIndent: '2em' }}>

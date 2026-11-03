@@ -7,6 +7,7 @@
     с `template_version_id`: правка шаблона собранные ДС не меняет;
   · собранное до конструктора (подтверждено, снимка нет) — «legacy»: показывается прежним документом, новая сборка к нему не применяется.
 """
+import re
 from datetime import date
 from typing import Optional
 
@@ -217,6 +218,18 @@ def rebrand_model(model: dict, kind) -> dict:
     return out
 
 
+def preamble_of(model: dict, kind) -> Optional[str]:
+    """Текст преамбулы из шаблона (02.11.2026) — словом документа в полной форме; None — шаблон её не задал, печатается
+    прежняя формула."""
+    pre = next((b for b in model.get("blocks") or [] if b.get("sys") == "pre"), None)
+    text = (pre or {}).get("text")
+    return DK.rebrand(text.strip(), kind) if text and text.strip() else None
+
+
+# Пункт шаблона, который сам служит заголовком подписей: «Подписи Сторон:», «Реквизиты:», «Реквизиты и подписи Сторон».
+_SIGN_HEADING = re.compile(r"^\s*(подписи|реквизиты)(\s+и\s+(подписи|реквизиты))?(\s+сторон)?\s*:?\s*$", re.I)
+
+
 def clauses_of(model: dict, kind) -> list:
     """Блоки конструктора — файлу, по порядку (владелец 02.11.2026: файл печатает ровно то, что собрано в конструкторе).
 
@@ -225,7 +238,12 @@ def clauses_of(model: dict, kind) -> list:
     «Доп. соглашение» и «Соглашение», а печататься они обязаны полной формой."""
     out = []
     for b in model.get("blocks") or []:
-        if b.get("sys"):
+        if b.get("sys") == "sign":
+            # Свой заголовок «Подписи Сторон:» блок подписей печатает, только если шаблон не поставил перед ним свой пункт-заголовок
+            # («6. Подписи Сторон:», «Реквизиты:») — иначе в файле он выходил дважды (владелец 02.11.2026).
+            prev = out[-1] if out else {}
+            out.append({"sys": "sign", "heading": not (not prev.get("sys") and _SIGN_HEADING.match(prev.get("text") or ""))})
+        elif b.get("sys"):
             out.append({"sys": "table" if b["sys"] == "table" else b["sys"]})
         else:
             out.append({"num": b.get("num") or "", "sub": bool(b.get("sub")),
@@ -260,6 +278,7 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
         doc["missing"] += [m["text"] for m in model.get("missing", []) if m["text"] not in doc["missing"]]
     kind = DK.resolve(doc.get("kind"), None, is_master=bool(doc.get("is_master")))
     doc["clauses"] = clauses_of(model, kind)
+    doc["preamble"] = preamble_of(model, kind)
     doc["closing_basis"] = DK.rebrand(doc.get("closing_basis") or "", kind)
     return with_words(doc)
 
@@ -291,7 +310,7 @@ def _master_doc(db: Session, annex, contract, doc: dict, model: dict) -> dict:
         sep = chr(10) * 2
         doc["closing_basis"] = sep.join(
             f"УПД № {k.upd_no}" + (f" ({' · '.join(x for x in (k.brand, k.service) if x)})" if (k.brand or k.service) else "")
-            + f": {upd_closing(model, k, annex.rows)['text']}" for k in upds)
+            + f": {upd_closing(model, k, annex.rows, db)['text']}" for k in upds)
     return doc
 
 
@@ -301,20 +320,59 @@ def _closing_template_for(rows) -> str:
     return closing_template_for(rows)
 
 
-def upd_closing(model: dict, k, rows=None) -> dict:
+def upd_rows(rows, brand_of: dict, brand, service, *, by_service: bool) -> list:
+    """Строки снимка ДС, которые закрывает этот комплект УПД, — тем же ключом, что раскладка (`layout._key`): бренд сделки, а при
+    «УПД по услугам» размещение и допы бренда — разные комплекты (у допов услуга не делит). Строка без денег (бонус 0 ₽) комплекта
+    не образует — и в его основание не попадает (владелец 03.11.2026)."""
+    out = []
+    for r in rows or []:
+        if not r.get("amount") or r.get("kind") == "discount":
+            continue
+        if brand and (brand_of.get(r.get("deal_id")) or "без бренда") != brand:
+            continue
+        if by_service and (r.get("kind") == "extra") != (service is None):
+            continue
+        out.append(r)
+    return out
+
+
+def _upd_own(db, k, rows, values: dict) -> list:
+    """Строки своей УПД, её {услуга} и {бренд_название} — названия брендов её сделок из справочника, как у конструктора
+    (`_brands_only`): УПД без деления по брендам называет только свои бренды, а не все бренды ДС, и имя бренда с « / » внутри
+    («Эспумизан (взрослый) / Espumisan (adults)») не режется. Без базы (старые вызовы и тесты) — как раньше, по переданным строкам."""
+    if db is None or not getattr(k, "master_deal_id", None):
+        if getattr(k, "brand", None):
+            values["бренд_название"] = k.brand.split(" / ")[-1].strip()      # «Grindeks / Милдронат» → «Милдронат»
+        return rows
+    from app.annex_tpl.assemble import _brands_only, service_text
+    from app.master_deal.models import MasterDeal
+    from app.sales.annex import deal_brand
+    m = db.get(MasterDeal, k.master_deal_id)
+    brand_of = {i: deal_brand(db, [i]) for i in dict.fromkeys(r.get("deal_id") for r in rows or []) if i}
+    own = upd_rows(rows, brand_of, k.brand, k.service, by_service=bool(getattr(m, "upd_by_service", False)))
+    values["услуга"] = service_text(db, None, own)
+    names = _brands_only(db, list(dict.fromkeys(r.get("deal_id") for r in own)))
+    if names:
+        values["бренд_название"] = names
+    return own
+
+
+def upd_closing(model: dict, k, rows=None, db=None) -> dict:
     """Основание УПД мастер-сделки — то же «основание для закрывающих», что в конструкторе ДС (владелец 19.10.2026): шаблон с подстановками,
     значения — своего ДС, бренд — свой у каждого УПД. Порядок: свой текст УПД → основание, поправленное в конструкторе этого ДС или
-    унаследованное от прошлого ДС договора → шаблон по составу ДС."""
+    унаследованное от прошлого ДС договора → шаблон по составу ДС. С базой состав и {услуга} — по строкам СВОЕЙ УПД (03.11.2026):
+    у УПД размещения не «и оказание дополнительных услуг», у УПД допа — не «размещение рекламных материалов»."""
     from app.annex_tpl.assemble import closing_resolve
     cb = model.get("closing_basis") or {}
     values = dict(model.get("values") or {})
-    if getattr(k, "brand", None):
-        values["бренд_название"] = k.brand.split(" / ")[-1].strip()      # «Grindeks / Милдронат» → «Милдронат», как в конструкторе
+    rows = _upd_own(db, k, rows, values)
     if getattr(k, "basis_text", None):
-        return closing_resolve(k.basis_text, values, True)
-    if cb.get("edited") or cb.get("inherited_from"):
-        return closing_resolve(cb["template"], values, False, cb.get("inherited_from") or "основание этого ДС")
-    return closing_resolve(_closing_template_for(rows), values, False)
+        out = closing_resolve(k.basis_text, values, True)
+    elif cb.get("edited") or cb.get("inherited_from"):
+        out = closing_resolve(cb["template"], values, False, cb.get("inherited_from") or "основание этого ДС")
+    else:
+        out = closing_resolve(_closing_template_for(rows), values, False)
+    return {**out, "values": values}       # подстановки этой УПД — экрану пакета, чтобы подсказка правки совпадала с печатью
 
 
 def fixed_kind(annex, contract, model_kind: Optional[str]) -> Optional[str]:
