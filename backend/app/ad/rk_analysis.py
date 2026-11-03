@@ -84,7 +84,10 @@ def _report_plans(db: Session, campaign_id: int, rows) -> Dict[int, float]:
         return _plans_without_boost(db, campaign_id)
     from app.ad import build as ad_build
     ran = {r["id"] for r in rows if r["first_started_at"]}
-    _pls, out = ad_build.campaign_layout(db, campaign_id, with_boost=False, assume_running=ran)
+    # Факт в раскладку НЕ передаём: она держит «план площадки не меньше её факта», и перекрутившая РК снова показала бы
+    # факт (YRPB7W на проде 02.11.2026: факт 9,1 млн при плане 6 млн). Отчёту нужен план медиаплана по весам.
+    _pls, out = ad_build.campaign_layout(db, campaign_id, with_boost=False, assume_running=ran,
+                                         facts={}, facts_given=True)
     return {r["id"]: r["plan_show"] for r in out["rows"]}
 
 

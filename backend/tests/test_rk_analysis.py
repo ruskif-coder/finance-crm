@@ -210,3 +210,30 @@ def test_finished_campaign_report_plan_is_the_media_plan_not_the_closed_fact():
                 f"{code}: в отчёте план площадок {got:.0f}, план РК {plan:.0f}")
     finally:
         db.close()
+
+
+def test_finished_report_plan_ignores_the_fact_even_when_it_is_known(monkeypatch):
+    """Раскладка держит правило «план площадки не меньше её факта». Перекрутившая РК (YRPB7W на проде 02.11.2026:
+    факт 9,1 млн при плане 6 млн) с известным фактом снова показала бы в отчёте факт вместо плана — на стенде факта
+    нет, и первая правка этого не увидела. Поломка: отчёт завершённой РК передаёт факт в раскладку."""
+    from app.bidder import facts as F
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT c.id, c.plan_show FROM ad_campaign c
+             WHERE c.status = 'окончена' AND c.plan_show > 0
+               AND (SELECT count(*) FROM ad_campaign_placement p WHERE p.campaign_id = c.id
+                     AND p.first_started_at IS NOT NULL) >= 1
+               AND NOT EXISTS (SELECT 1 FROM ad_campaign_placement p WHERE p.campaign_id = c.id
+                                AND p.fixed_plan IS NOT NULL)
+             ORDER BY c.id DESC LIMIT 1""")).first()
+        if row is None:
+            pytest.skip("на стенде нет завершённой РК")
+        cid, plan = row
+        ids = [i for (i,) in db.execute(text("SELECT id FROM ad_campaign_placement WHERE campaign_id = :c"), {"c": cid})]
+        huge = {i: plan * 3 for i in ids}                      # факт втрое больше плана РК
+        monkeypatch.setattr(F, "placement_facts", lambda db, cids: {cid: huge})
+        got = sum(p["plan_show"] for p in A.placements_of(db, cid))
+        assert got <= plan * 1.001 + len(ids), f"план в отчёте {got:.0f} при плане РК {plan:.0f} — взят факт"
+    finally:
+        db.close()
