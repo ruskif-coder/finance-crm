@@ -142,7 +142,7 @@ def gather(db, dsp_db, today: date) -> dict:
                   AND coalesce(cc.ms_creative_xxhash, '') <> '') AS creatives,
                p.plan_show AS pl_plan,
                (SELECT coalesce(sum(s.shows), 0) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS pl_fact
+                 WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS pl_fact
           FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id
           LEFT JOIN ad_campaign_placement p ON p.campaign_id = c.id
          WHERE c.plan_show > 0 AND (c.status IS NULL OR c.status <> ALL(:closed))

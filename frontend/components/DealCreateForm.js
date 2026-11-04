@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import { useState, useEffect, useMemo, useRef } from 'react'
 import api, { auth } from '../lib/api'
 import useIsMobile from './mobile/useIsMobile'
@@ -225,7 +226,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
             </span>
           )}
         </div>
-        <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO, borderColor: reqColor(!!f.period) }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
+        <div><span style={LBL}>Планируется в период</span><MonthInput style={{ ...INP, fontFamily: MONO, borderColor: reqColor(!!f.period) }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
 
         <div><span style={LBL}>Воронка</span><select style={INP} value={f.pipeline} onChange={e => set('pipeline', e.target.value)}>{pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
         <div><span style={LBL}>Стадия</span><select style={INP} value={f.bitrix_stage} onChange={e => set('bitrix_stage', e.target.value)}>{stages.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>

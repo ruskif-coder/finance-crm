@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import Navbar from '@/components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
@@ -175,10 +176,10 @@ export default function PlanFact() {
       <Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>С периода</span>
-          <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          <MonthInput value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
           <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>По период</span>
-          <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          <MonthInput value={dateTo} onChange={e => setDateTo(e.target.value)}
             style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
         </div>
       </Navbar>

@@ -3,6 +3,7 @@
  * завизированный; у запущенной — тот, что на ней), креативами и площадками на новый период (`POST /launch-prep/deal/{id}/prolong`).
  * Копия идёт на сборку по матрице требований; не хватает чего-то — остаётся на «Брони», и окно называет недостающее.
  */
+import MonthInput from '@/components/MonthInput'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
@@ -107,7 +108,7 @@ export default function CopyDealButton({ deal }) {
                 Медиаплан копии нужно будет завизировать заново
               </div>
               <label><div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 3 }}>Финансовый период</div>
-                <input type="month" value={month} onChange={e => pickMonth(e.target.value)} style={{ ...inp, width: 180 }} /></label>
+                <MonthInput value={month} onChange={e => pickMonth(e.target.value)} style={{ ...inp, width: 180 }} /></label>
               <div style={{ display: 'flex', gap: 10 }}>
                 <label style={{ flex: 1 }}><div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 3 }}>Старт размещения</div>
                   <input type="date" value={from} min={mMin} max={mMax} onChange={e => setPeriod([e.target.value, to])} style={{ ...inp, width: '100%' }} /></label>

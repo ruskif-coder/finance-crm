@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import Navbar from '@/components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
@@ -192,9 +193,9 @@ export default function FinReport() {
         { value: 'quarter', label: '+ Итоги кварталов', hint: 'Месяцы остаются, после каждого квартала добавляется колонка с его итогом' },
       ]} />
       <div style={{ flex: '1 1 auto' }} />
-      <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...inp, fontFamily: MONO }} />
+      <MonthInput value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...inp, fontFamily: MONO }} />
       <span style={{ color: 'var(--text-muted)', fontFamily: MONO }}>—</span>
-      <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...inp, fontFamily: MONO }} />
+      <MonthInput value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...inp, fontFamily: MONO }} />
     </div>
   )
 

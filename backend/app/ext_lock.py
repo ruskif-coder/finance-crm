@@ -30,6 +30,7 @@ WEBORAMA_DEMO = 7308       # демо Weborama: создание объекта 
 DSP_TARGETING_COPY = 7309  # копия нацеливания — один проход на комплект (02.10.2026)
 CAMPAIGN_SHARES = 7310     # статусы площадок и доли РК — по одному изменению за раз (07.10.2026)
 PRIO_LAUNCH = 7311         # запуск РК приоритезации — один проход на площадку запроса (аудит 21.10.2026)
+BACKEND_STARTUP = 7312     # старт процесса бэкенда: create_all и засевы — по одному процессу (03.11.2026)
 
 
 class CampaignBusy(RuntimeError):
@@ -97,5 +98,33 @@ def only_one(kind: int, obj_id: int, busy_error, what: str, where: str = "по �
         conn.close()
 
 
+def hold_startup_lock():
+    """Дождаться своей очереди на стартовую работу бэкенда; вернуть соединение, которое держит замок.
+
+    ЗАЧЕМ (03.11.2026). Бэкенд запускается несколькими процессами (`--workers`), и каждый при импорте `app.main`
+    делает `create_all` и засевы справочников. Поодиночке они идемпотентны, вместе — нет: два процесса одновременно
+    не находят строку засева и оба её вставляют, второй падает на уникальном ключе и не стартует. Поэтому по очереди.
+
+    Замок СЕССИОННЫЙ и на отдельном соединении: засевы открывают свои сессии и коммитят, а замок должен пережить их
+    все. Процесс, упавший на старте, отпускает его вместе с соединением — следующий не ждёт вечно.
+    """
+    from app.database import engine
+    conn = engine.connect()
+    conn.execute(text("SELECT pg_advisory_lock(:a, 0)"), {"a": BACKEND_STARTUP})
+    conn.commit()
+    return conn
+
+
+def release_startup_lock(conn) -> None:
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:a, 0)"), {"a": BACKEND_STARTUP})
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.invalidate()          # не снялся — закрыть соединение по-настоящему, замок уйдёт вместе с ним
+    finally:
+        conn.close()
+
+
 __all__ = ["only_one", "DSP_PROVISION", "WEBORAMA_PROVISION", "MAIL_FLUSH",
            "OUTWARD_DIGEST", "STAFF_DISPATCH"]
+__all__ += ["hold_startup_lock", "release_startup_lock"]

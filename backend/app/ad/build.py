@@ -558,7 +558,7 @@ _UNTOUCHED_SQL = """
        AND p.status = :wait AND p.weborama_pixel IS NULL
        AND NOT EXISTS (SELECT 1 FROM ad_campaign_creative c WHERE c.placement_id = p.id)
        AND NOT EXISTS (SELECT 1 FROM ad_campaign_stat s  -- любой source: и факт, и верификатор
-                        WHERE s.placement_id = p.id)
+                        WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id)
        AND NOT EXISTS (SELECT 1 FROM weborama_refs w
                         WHERE w.kind = 'insertion' AND w.local_id = p.id)
 """

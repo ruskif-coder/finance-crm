@@ -3,6 +3,7 @@
  * Зависимость только React. Стили инлайновые, токены — из design_system/ds.jsx.
  * Данные-справочники в CATALOG / EXTRA_CATALOG / STAFF — заменить на API.
  */
+import MonthInput from '@/components/MonthInput'
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI, Z } from '../salesTableKit';
@@ -746,7 +747,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '5px 0', borderTop: `1px solid ${T.row}`, minWidth: 0 }}>
                         <span style={{ fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t3, lineHeight: 1.3 }}>Период размещения</span>
                         {periodEdit
-                          ? <input type="month" autoFocus value={bf.period} onChange={e => onPeriodChange(e.target.value)} onBlur={() => setPeriodEdit(false)} style={{ boxSizing: 'border-box', height: 26, padding: '0 6px', background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.mono, fontSize: 12.5, color: T.t1, outline: 'none' }} />
+                          ? <MonthInput autoFocus value={bf.period} onChange={e => onPeriodChange(e.target.value)} onBlur={() => setPeriodEdit(false)} style={{ boxSizing: 'border-box', height: 26, padding: '0 6px', background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.mono, fontSize: 12.5, color: T.t1, outline: 'none' }} />
                           : <span className="mp-cell" onClick={() => setPeriodEdit(true)} style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600, lineHeight: 1.3, color: bf.period ? T.t1 : T.t4, cursor: 'pointer' }}>{bf.period || '—'}</span>}
                       </span>
                       <BriefField label="Гео" open={isOpen('brief', 0, 'geo')} onToggle={() => toggle('brief', 0, 'geo')} value={bf.geo_id} options={geoList.map(g => ({ value: g.id, label: g.name }))} minWidth={180} onPick={v => { setBf(s => ({ ...s, geo_id: v })); setSel(null); }} onAddNew={async (name) => { const id = onAddGeo ? await onAddGeo(name) : null; setBf(s => ({ ...s, geo_id: id ?? s.geo_id })); setSel(null); }} addPlaceholder="+ гео" />

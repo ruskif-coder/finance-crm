@@ -42,6 +42,10 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
 
     Раскрывать каждую РК ради этого нельзя: виджет «площадки-виновники» отвечает на
     вопрос «кто тянет вниз ВЕСЬ портфель», и по одной РК он не собирается вовсе.
+
+    Факт площадки — с `s.campaign_id = p.campaign_id`: у статистики нет индекса по одной площадке, и без РК подзапрос
+    читал всю таблицу на каждую площадку (03.11.2026: 1,1 с на дашборд аккаунта, дважды за вызов; с РК — индекс
+    `uq_ad_stat`, 13 мс). Тот же приём — у всех подзапросов факта площадки (`tests/test_stat_subquery_index.py`).
     """
     if not campaign_ids:
         return {}
@@ -50,7 +54,7 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
                p.plan_show AS plan_stored, p.share AS share_stored,
                pub.code, pub.domain, pub.name AS publisher,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
+                 WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
                """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
           FROM ad_campaign_placement p
           JOIN sales_publishers pub ON pub.id = p.publisher_id

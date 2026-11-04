@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/router'
@@ -508,9 +509,9 @@ export default function DashboardV2() {
                 <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{rangeLabel(dateFrom, dateTo)}</span>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={selStyle} />
+                <MonthInput value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={selStyle} />
                 <span style={{ color: 'var(--text-faint)' }}>—</span>
-                <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={selStyle} />
+                <MonthInput value={dateTo} onChange={e => setDateTo(e.target.value)} style={selStyle} />
                 <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={selStyle}>
                   <option value="all">Все банки</option>
                   {BANKS.map(b => <option key={b} value={b}>{b}</option>)}

@@ -62,6 +62,10 @@ from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учёт
 from app.ad import models as ad_models  # noqa: F401,E402 — дашборд трафика/РК (миграция 2026-09-01_ad_campaigns.sql)
 from app.weborama import models as weborama_models  # noqa: F401,E402 — контур Weborama (миграция 2026-09-09_weborama.sql)
 
+# Стартовая работа ниже (create_all, засевы) — по одному процессу за раз: процессов несколько (`--workers`).
+from app.ext_lock import hold_startup_lock, release_startup_lock  # noqa: E402
+_startup_lock = hold_startup_lock()
+
 Base.metadata.create_all(bind=engine)
 
 # Схемные ALTER/CREATE INDEX ВЫНЕСЕНЫ В МИГРАЦИЮ 31.08.2026
@@ -401,6 +405,7 @@ def backfill_sales_scope():
 
 
 backfill_sales_scope()
+release_startup_lock(_startup_lock)
 
 
 # Внешние ключи ВЫНЕСЕНЫ В МИГРАЦИЮ 31.08.2026 вместе с остальным стартовым DDL

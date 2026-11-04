@@ -120,9 +120,10 @@ from app import timez
 from app import periods
 from app import import_match  # noqa: E402
 from app import operation_chains  # noqa: E402
+from app.import_sync_store import FileStore  # noqa: E402
 
-# Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
-# Переживает только до перезапуска backend-контейнера — сознательно временное решение.
+# Хранилище для шага preview→apply при синхронизации импорта — файлы внутри контейнера, общие для всех процессов
+# бэкенда (`app/import_sync_store.py`, 03.11.2026: с `--workers` словарь в памяти видел только «свой» процесс).
 #
 # Три ограничителя, добавленные 11.09.2026 (F2-25 внешнего аудита). Каждый закрывает свой
 # случай, и все три раньше отсутствовали:
@@ -134,7 +135,7 @@ from app import operation_chains  # noqa: E402
 #     `import_id` применялся бы как свой, а это запись денег.
 IMPORT_SYNC_TTL_MINUTES = 60
 IMPORT_SYNC_MAX_SESSIONS = 20
-IMPORT_SYNC_CACHE = {}
+IMPORT_SYNC_CACHE = FileStore()
 
 
 def _prune_import_cache() -> None:
@@ -142,11 +143,11 @@ def _prune_import_cache() -> None:
     now = datetime.utcnow()
     for k in [k for k, v in IMPORT_SYNC_CACHE.items()
               if (now - v['created_at']).total_seconds() > IMPORT_SYNC_TTL_MINUTES * 60]:
-        del IMPORT_SYNC_CACHE[k]
+        IMPORT_SYNC_CACHE.pop(k)            # pop, не del: сессию мог убрать соседний процесс
     if len(IMPORT_SYNC_CACHE) > IMPORT_SYNC_MAX_SESSIONS:
         oldest = sorted(IMPORT_SYNC_CACHE.items(), key=lambda kv: kv[1]['created_at'])
         for k, _ in oldest[:len(IMPORT_SYNC_CACHE) - IMPORT_SYNC_MAX_SESSIONS]:
-            del IMPORT_SYNC_CACHE[k]
+            IMPORT_SYNC_CACHE.pop(k)
 
 def _sort_map():
     """Колонки, по которым можно сортировать список операций и выгрузку.

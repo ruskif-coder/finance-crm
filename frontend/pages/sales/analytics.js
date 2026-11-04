@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import { useState, useEffect, useRef } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -141,9 +142,9 @@ export default function Analytics2() {
             <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.sec }}>{periodLabel}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <input type="month" style={selBox} value={f.date_from} onChange={e => { const v = { ...f, date_from: e.target.value }; setF(v); loadWith(v) }} />
+            <MonthInput clearable style={selBox} value={f.date_from} onChange={e => { const v = { ...f, date_from: e.target.value }; setF(v); loadWith(v) }} />
             <span style={{ color: C.faint }}>—</span>
-            <input type="month" style={selBox} value={f.date_to} onChange={e => { const v = { ...f, date_to: e.target.value }; setF(v); loadWith(v) }} />
+            <MonthInput clearable style={selBox} value={f.date_to} onChange={e => { const v = { ...f, date_to: e.target.value }; setF(v); loadWith(v) }} />
             <button onClick={() => { const v = defaultRange(); setF(v); loadWith(v) }} style={{ ...selBox, background: 'var(--bg-subtle)', color: C.sec, cursor: 'pointer' }}>Сбросить к 12 мес</button>
           </div>
         </div>

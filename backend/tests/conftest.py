@@ -191,3 +191,13 @@ def _external_writes_as_on_prod(monkeypatch):
     сеть на уровне httpx, иначе упирался бы в запрет раньше подмены. Наружу тесты всё равно не ходят — сеть подменена;
     сам выключатель проверяет `test_external_writes_guard.py`, выставляя флаг явно."""
     monkeypatch.delenv("EXTERNAL_WRITES", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _import_sessions_in_tmp(monkeypatch, tmp_path):
+    """Сессии импорта операций тестов — во временном каталоге теста, а не в каталоге работающего бэкенда.
+
+    С 03.11.2026 сессии лежат файлами (`app/import_sync_store.py`), и тест превью без «Применить» оставлял файл в
+    контейнере стенда: за один прогон набралось 39 разобранных файлов с суммами и контрагентами."""
+    from app import import_sync_store
+    monkeypatch.setattr(import_sync_store, "DIR", str(tmp_path))

@@ -914,9 +914,9 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
                p.plan_show AS plan_stored, p.share AS share_stored, p.fixed_plan,
                p.ms_source_key, pub.name AS publisher, pub.code, pub.domain,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
+                 WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
                (SELECT sum(s.clicks) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks,
+                 WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks,
                """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
         FROM ad_campaign_placement p
         JOIN sales_publishers pub ON pub.id = p.publisher_id

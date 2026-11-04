@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import { useState, useEffect, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -808,9 +809,9 @@ export default function Operations2() {
           {/* строка фильтров */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 10px', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>
-              <input type="month" value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
+              <MonthInput clearable value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
               <span style={{ color: '#C3C9D8' }}>—</span>
-              <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? monthEnd(e.target.value) : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
+              <MonthInput clearable value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? monthEnd(e.target.value) : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
             </span>
             <MultiDrop label="Статус" options={STATUSES.map(s => ({ value: s, label: s }))} selected={fStatus} onChange={setFStatus} />
             <MultiDrop label="Банк" options={BANKS.map(b => ({ value: b, label: b }))} selected={fBank} onChange={setFBank} />

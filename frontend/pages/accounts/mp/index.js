@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { isAdmin as isAdminFn, canDelete as canDeleteRight } from '@/lib/auth'
 import Head from 'next/head'
@@ -275,9 +276,9 @@ export default function MpRegistry() {
               <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setPeriodOpen(false)} />
               <div style={{ position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: Z.dropdown + 1, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 230 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
+                  <MonthInput clearable value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                   <span style={{ color: 'var(--text-muted)' }}>—</span>
-                  <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
+                  <MonthInput clearable value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                 </div>
                 {(dateFrom || dateTo) && <div onClick={() => { setDateFrom(''); setDateTo('') }} style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer' }}>Сбросить период</div>}
               </div>

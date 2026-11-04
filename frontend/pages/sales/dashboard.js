@@ -1,3 +1,4 @@
+import MonthInput from '@/components/MonthInput'
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -478,7 +479,7 @@ export default function SalesDashboard2() {
         <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
           background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 12, width: 232, fontFamily: UI, animation: 'riseIn .22s cubic-bezier(0.22,1,0.36,1) both' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Период размещения</div>
-          <input type="month" autoFocus defaultValue={periodEdit.month}
+          <MonthInput autoFocus defaultValue={periodEdit.month}
             onChange={e => savePeriod(periodEdit.dealId, e.target.value, periodEdit.current)}
             style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 13, outline: 'none', fontFamily: MONO }} />
           <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>Старт РК станет 1-м числом выбранного месяца.</div>
@@ -638,9 +639,9 @@ export default function SalesDashboard2() {
                         style={{ padding: 12, gap: 8, zIndex: Z.dropdown }}>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Период размещения (месяц старта РК)</div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
+                            <MonthInput clearable value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                             <span style={{ color: 'var(--text-faint)' }}>—</span>
-                            <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
+                            <MonthInput clearable value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Пусто = по выбранному кварталу.</div>
                           {(dateFrom || dateTo) && <div onClick={() => { setDateFrom(''); setDateTo('') }} style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer' }}>Сбросить период</div>}
