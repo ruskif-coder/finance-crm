@@ -108,10 +108,22 @@ def _store(db: Session, a, user, f: tuple) -> dict:
     return {"path": rel, "old_path": old_path, "file_id": row.id}
 
 
+def _main_future_no(db: Session, a) -> Optional[int]:
+    """Номер, который получит неподтверждённый основной ДС пакета (последний актуальный + 1); подтверждён или его нет — None."""
+    from app.master_deal.models import MasterDeal
+    main = (db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == a.master_deal_id, SalesAnnex.id != a.id,
+                                        SalesAnnex.kind != "addons").first())
+    if main is None or main.no is not None:
+        return None
+    m = db.get(MasterDeal, a.master_deal_id)
+    return m.start_no + 1 if m is not None and m.start_no is not None else None
+
+
 def sign_external(db: Session, a: SalesAnnex, user, *, no: Optional[int], number_text: Optional[str], doc_date: Optional[date],
                   total: Optional[float], items: List[dict], edo_link: Optional[str], file_name: Optional[str],
-                  file_bytes: Optional[bytes]) -> dict:
-    """Черновик ДС пакета → подтверждённый и подписанный внешний ДС. Возвращает {path, old_path} — прежний файл удаляет
+                  file_bytes: Optional[bytes], own_number: bool = False) -> dict:
+    """Черновик ДС пакета → подтверждённый и подписанный внешний ДС. `own_number` — ДС допов подписан отдельным документом
+    со своим номером (№ 29), а не суффиксом основного (28-01): владелец 05.11.2026, октябрь АПР Евразии. Возвращает {path, old_path} — прежний файл удаляет
     вызывающий после коммита. Отказ — ExternalError с текстом для человека; до него в базу ничего не пишется."""
     from app.links import validate_link
     if a.no is not None:
@@ -120,6 +132,13 @@ def sign_external(db: Session, a: SalesAnnex, user, *, no: Optional[int], number
         raise ExternalError(409, "Подписать вне системы можно ДС мастер-сделки — черновик из раскладки пакета")
     if no is None or no <= 0:
         raise ExternalError(400, "Номер ДС — целое число больше нуля, как в подписанном документе")
+    if own_number:
+        if a.kind != "addons":
+            raise ExternalError(400, "Свой номер вместо суффикса — только у ДС допов пакета")
+        main_no = _main_future_no(db, a)
+        if main_no is not None and no == main_no:
+            raise ExternalError(409, f"№ {no} займёт основной ДС этого пакета — у ДС допов должен быть другой номер")
+        a.sub_no = None
     if doc_date is None:
         raise ExternalError(400, "Дата ДС — как в подписанном документе")
     if not total or total <= 0:

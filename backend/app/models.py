@@ -127,6 +127,8 @@ class Counterparty(Base):
     # Место подписания. На контрагенте, а не константой в коде: у нашего юрлица это
     # «г. Москва», и когда юрлиц станет несколько, город поедет вместе с ними.
     signed_place = Column(String(200), nullable=True)
+    # Форма организации (2026-11-05_counterparty_legal_form.sql): значения — app/legal_form.FORMS; ОРД берёт её отсюда.
+    legal_form = Column(String(32), nullable=True)
     website = Column(String, nullable=True)
     address_fact = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="действующий")  # действующий / виртуальный — скрытый параметр, пока без отображения в UI

@@ -39,13 +39,42 @@ def _editable(db: Session, m: MasterDeal) -> None:
         raise MS.MasterError(409, f"ДС № {ds['no']} выпущен — раскладка закреплена; изменить — через отзыв ДС у юриста")
 
 
+def _contract_start(db: Session, contract_id: int):
+    """«ДС с» договора — номера по него выданы вне системы (`contracts.annex_start_no`)."""
+    return db.execute(text("SELECT annex_start_no FROM contracts WHERE id = :c"), {"c": contract_id}).scalar()
+
+
+def _packages_on(db: Session, m: MasterDeal, n: int) -> list:
+    """Другие пакеты договора, чей неподтверждённый основной ДС получит тот же № n."""
+    rows = db.execute(text("""
+        SELECT m.code FROM master_deals m
+         WHERE m.contract_id = :c AND m.id <> :me AND m.start_no + 1 = :n
+           AND NOT EXISTS (SELECT 1 FROM sales_annexes a WHERE a.master_deal_id = m.id AND a.no IS NOT NULL
+                                                          AND coalesce(a.kind, '') <> 'addons')"""),
+                      {"c": m.contract_id, "me": m.id, "n": n}).all()
+    return [r[0] for r in rows]
+
+
 def check_start_no(db: Session, m: MasterDeal, no: int) -> dict:
-    """Проверка «последнего актуального» №: ниже выпущенного — нельзя; выше — можно, номера между будут пропущены."""
-    nums = [x["no"] for x in issued(db, m.contract_id)]
+    """Проверка «последнего актуального» №. ДС пакета получит № no + 1 (допы — с суффиксом того же номера).
+
+    Ниже выпущенного — можно (владелец 05.11.2026: внешние ДС за прошлые месяцы подписаны с номерами меньше наших, у АПР
+    Евразии октябрьский № 28 при выпущенных № 30 и № 31), но не на выпущенный нами номер. Выше — можно, номера между
+    будут пропущены."""
+    start = _contract_start(db, m.contract_id)
+    if start and no + 1 <= start:
+        return {"ok": False, "last": start, "text": f"По договору номера по № {start} выданы вне системы («ДС с») — ДС пакета получил бы № {no + 1}."}
+    same = _packages_on(db, m, no + 1)
+    if same:
+        return {"ok": False, "last": None, "text": f"№ {no + 1} уже ждёт пакет {', '.join(same)} этого договора — выберите другой номер."}
+    rows = issued(db, m.contract_id)
+    nums = [x["no"] for x in rows]
     last = max(nums) if nums else None
+    taken = next((x for x in rows if x["no"] == no + 1), None)
+    if taken is not None:
+        return {"ok": False, "last": last, "text": f"ДС № {no + 1} уже выпущен {taken['at']:%d.%m} — ДС пакета получил бы тот же номер."}
     if last is not None and no < last:
-        at = next(x["at"] for x in issued(db, m.contract_id) if x["no"] == last)
-        return {"ok": False, "last": last, "text": f"ДС № {last} уже выпущен {at:%d.%m}. Последний актуальный — № {last}."}
+        return {"ok": True, "last": last, "warn": f"ДС пакета получит № {no + 1} — ниже уже выпущенного № {last}"}
     if last is not None and no > last:
         skip = f"{last + 1}" if no == last + 1 else f"{last + 1}–{no}"
         return {"ok": True, "last": last, "warn": f"Номера {skip} будут пропущены"}

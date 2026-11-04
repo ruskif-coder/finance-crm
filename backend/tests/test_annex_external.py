@@ -181,3 +181,53 @@ def test_draft_of_a_package_shows_the_number_it_will_take(ctx):
     if want is None:
         pytest.skip("у мастер-сделки не задан номер")
     assert got["next_no"] == want and got["master"]["will_be_no"] == want
+
+
+def test_addons_annex_can_take_its_own_number(ctx):
+    """Владелец 05.11.2026: ДС допов пакета, подписанный вне системы, бывает отдельным документом со своим номером (октябрь АПР
+    Евразии — № 28 и № 29), а не суффиксом основного (28-01)."""
+    from app.master_deal.to_annex import SUB_ADDONS
+    db, a, svc, user, _ = ctx
+    a.kind, a.sub_no = "addons", SUB_ADDONS
+    _sign(db, a, svc, user, no=987655, own_number=True)
+    assert a.sub_no is None and a.no == 987655 and a.number.endswith("987655")
+
+
+def test_addons_annex_keeps_the_suffix_by_default(ctx):
+    from app.master_deal.to_annex import SUB_ADDONS
+    db, a, svc, user, _ = ctx
+    a.kind, a.sub_no = "addons", SUB_ADDONS
+    _sign(db, a, svc, user, no=987655)
+    assert a.sub_no == SUB_ADDONS and a.number.endswith(f"987655-{SUB_ADDONS}")
+
+
+def test_own_number_of_addons_is_not_taken_for_the_main_number(ctx):
+    """Основной номер пакета — по виду ДС, а не по отсутствию суффикса: иначе основной ДС получил бы номер допов (№ 29)."""
+    from app.routers import annexes as R
+    db, a, svc, user, _ = ctx
+    extra = SalesAnnex(contract_id=a.contract_id, master_deal_id=a.master_deal_id, kind="addons", no=987656, sub_no=None,
+                       status="подтверждён", period_from=a.period_from, period_to=a.period_to, date=a.date,
+                       total_amount=1.0, template_version_id=a.template_version_id)
+    db.add(extra)
+    db.flush()
+    a.kind = "main"
+    assert R.master_no(db, a) != 987656
+
+
+def test_own_number_of_addons_cannot_take_the_main_annex_future_number(ctx):
+    """Ревью 05.11.2026: ДС допов со своим № 28 при неподтверждённом основном (ему раскладка даёт № 28) — основной потом
+    не подтвердится (409), а раскладка уже закреплена выпущенным ДС допов. Такой номер — отказ сразу."""
+    from app.master_deal.models import MasterDeal
+    from app.master_deal.to_annex import SUB_ADDONS
+    db, a, svc, user, _ = ctx
+    m = db.get(MasterDeal, a.master_deal_id)
+    m.start_no = 987600
+    main = SalesAnnex(contract_id=a.contract_id, master_deal_id=a.master_deal_id, kind="main", no=None, status="черновик",
+                      period_from=a.period_from, period_to=a.period_to, date=a.date, total_amount=1.0,
+                      template_version_id=a.template_version_id)
+    db.add(main)
+    db.flush()
+    a.kind, a.sub_no = "addons", SUB_ADDONS
+    with pytest.raises(X.ExternalError) as e:
+        _sign(db, a, svc, user, no=987601, own_number=True)
+    assert "основн" in e.value.message

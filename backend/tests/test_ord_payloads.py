@@ -70,6 +70,24 @@ def test_twelve_digit_inn_is_refused_instead_of_guessed():
     assert 'ИП или физлицо' in str(e.value)
 
 
+def test_client_legal_form_from_column(schemas):
+    """Форма организации из справочника (04.11.2026): ИП с 12-значным ИНН больше не отказ."""
+    body = client(SimpleNamespace(name='ИП Иванов И. И.', inn='770000000000', legal_form='ИП'))
+    assert body['legalForm'] == 'IndividualEntrepreneur'
+    check(schemas, 'CreateClientRequest', body)
+
+
+def test_twelve_digit_inn_without_form_still_refuses():
+    with pytest.raises(OrdPayloadError) as e:
+        client(SimpleNamespace(name='Иванов', inn='770000000000', legal_form=None))
+    assert 'ИП или физлицо' in str(e.value) and 'Укажите форму организации' in str(e.value)
+
+
+def test_form_wins_over_inn_length():
+    assert legal_form('7700000000', 'иностранная организация') == 'InternationalJuridicalPerson'
+    assert legal_form('7700000000', 'ЗАО') == 'JuridicalPerson', "незнакомая форма — прежнее правило по ИНН"
+
+
 # ── тела запросов ────────────────────────────────────────────────────────────
 def test_client_payload_matches_official_schema(schemas):
     cp = SimpleNamespace(name='ООО «Тест»', inn='7700000000')
@@ -120,3 +138,20 @@ def test_missing_data_is_named_not_guessed():
     with pytest.raises(OrdPayloadError) as e:
         final_contract(contract, 'CTclient')
     assert 'дата договора' in str(e.value)
+
+
+def test_ensure_client_takes_the_form_from_the_registry():
+    """Ревью 05.11.2026: форма из окна контрагента не доходила до регистрации доходного договора — `ensure_client` собирал
+    тело без неё, и ИП с ИНН из 12 цифр по-прежнему получал отказ «укажите форму»."""
+    import app.model_registry  # noqa: F401
+    from app.database import SessionLocal
+    from app.models import Counterparty
+    from app.ord import submit as SB
+    db = SessionLocal()
+    try:
+        db.add(Counterparty(name="ИП Тестов Окно Формы", inn="771234567890", legal_form="ИП"))
+        db.flush()
+        assert SB._client_body(db, "771234567890", "ИП Тестов")["legalForm"] == "IndividualEntrepreneur"
+    finally:
+        db.rollback()
+        db.close()

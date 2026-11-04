@@ -27,6 +27,7 @@ import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
 import { T } from '@/lib/tokens'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
@@ -35,17 +36,20 @@ const dm = (d) => fmtCalendarDate(d)
 // Сетка одна на шапку и строки. Порядок колонок — владелец 05.09.2026: сперва ЧЬЁ и по
 // какому договору, потом сам документ, в конце выгрузка.
 const COLS = [
-  ['payer', 'minmax(230px,1.4fr)', 'Юрлицо', 'counterparty_name'],
-  ['inn', '116px', 'ИНН', 'counterparty_inn'],
+  ['payer', 'minmax(200px,1.4fr)', 'Юрлицо', 'counterparty_name'],
+  ['inn', '120px', 'ИНН', 'counterparty_inn'],
   ['contract', '150px', 'Договор', 'contract_number'],
-  ['cdate', '96px', 'Дата дог.', 'contract_date'],
-  ['number', '132px', 'Приложение', 'no'],
-  ['date', '96px', 'Дата', 'date'],
-  ['period', '176px', 'Период', 'period_from'],
-  ['deals', '132px', 'Сделки'],
-  ['amount', '128px', 'Сумма с НДС', 'total_amount'],
-  ['tpl', '170px', 'Шаблон', 'cooperation_format'],
-  ['files', '92px', ''],
+  ['cdate', '100px', 'Дата дог.', 'contract_date'],
+  // Номер — коротко («ДС № 5-01», `lib/annexNumber`): полным словом колонка обрезала сам номер (04.11.2026).
+  ['number', '150px', 'Приложение', 'no'],
+  ['date', '100px', 'Дата', 'date'],
+  ['period', '200px', 'Период', 'period_from'],
+  // Мастер-сделка ДС пакета (владелец 04.11.2026) — перед сделками, ссылкой на её карточку.
+  ['master', '110px', 'Мастер', 'master_code'],
+  ['deals', '140px', 'Сделки'],
+  ['amount', '130px', 'Сумма с НДС', 'total_amount'],
+  ['tpl', '200px', 'Шаблон', 'cooperation_format'],
+  ['files', '96px', ''],
 ]
 const RIGHT = new Set(['amount'])
 
@@ -154,7 +158,7 @@ export default function AnnexRegistry() {
       if (stateFilter === 'issued' && a.is_draft) return false
       if (payerFilter && a.counterparty_name !== payerFilter) return false
       if (q) {
-        const hay = [a.number, a.counterparty_name, a.counterparty_inn, a.contract_number,
+        const hay = [a.number, a.master_code, a.counterparty_name, a.counterparty_inn, a.contract_number,
                      ...(a.deals || []).map(d => d.code)]
         if (!hay.some(v => (v || '').toLowerCase().includes(q))) return false
       }
@@ -274,8 +278,8 @@ export default function AnnexRegistry() {
 
           {loading ? <div style={{ padding: 30, color: 'var(--text-muted)' }}>Загрузка…</div> : (
             <div style={{ overflowX: 'auto' }}>
-              <div style={{ minWidth: 1460 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
+              <div style={{ minWidth: 1860 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 16, padding: '0 8px', borderBottom: '1px solid var(--border-card)' }}>
                   {COLS.map(([k, w, label, sortKey]) => (
                     <HeadCell key={k} k={k} label={label} sortKey={sortKey}
                               sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
@@ -283,7 +287,7 @@ export default function AnnexRegistry() {
                 </div>
                 {filtered.map(a => (
                   <div key={a.id} onClick={() => router.push(`/directory/annexes/${a.id}`)}
-                       style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10, cursor: 'pointer' }}
+                       style={{ display: 'grid', gridTemplateColumns: GRID, gap: 16, alignItems: 'center', padding: '14px 8px', borderBottom: '1px solid var(--border-row)', borderRadius: 10, cursor: 'pointer' }}
                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }}
                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
                     <div style={{ ...cell, fontWeight: 600 }} title={a.counterparty_name || ''}>
@@ -294,11 +298,17 @@ export default function AnnexRegistry() {
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }} title={a.contract_number || ''}>{a.contract_number || '—'}</div>
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.contract_date)}</div>
                     <div style={{ ...cell, fontWeight: 700 }}>
-                      {a.number || <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}>черновик</span>}
+                      {a.number ? <span title={a.number}>{shortAnnexNumber(a.number)}</span> : <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}>черновик</span>}
                       {a.origin === 'загружен' && <span title="Подписан вне системы: документ — файл или ссылка ЭДО" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 6, background: 'var(--violet-tint)', color: 'var(--violet-fg)', fontSize: 10.5, fontWeight: 700 }}>внешний</span>}
                     </div>
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.date)}</div>
                     <div style={{ ...cell, fontFamily: MONO, fontSize: 12 }}>{dm(a.period_from)} — {dm(a.period_to)}</div>
+                    <div style={cell}>
+                      {a.master_code
+                        ? <a href={`/accounts/master/${a.master_code}`} onClick={e => e.stopPropagation()}
+                             style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{a.master_code}</a>
+                        : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                    </div>
                     <div style={cell}>
                       {(a.deals || []).length
                         ? a.deals.map(d => (

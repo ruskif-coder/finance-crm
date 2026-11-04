@@ -54,6 +54,13 @@ class PrioPlacement(Base):
     reminded_at = Column(DateTime)
     rejected_at = Column(DateTime)
     goal_reached_at = Column(DateTime)      # автостоп по плану — app/prio/autostop.py
+    # ЕРИД выпускает наш ОРД после «ок» площадки (`app/prio/erid.py`, миграция 2026-11-04_prio_erid.sql). Поля — те же,
+    # что у комплекта креативов, чтобы ord/submit и ord/readiness работали с площадкой так же, как с комплектом.
+    ord_creative_id = Column(String(64))
+    ord_status = Column(String(40))         # Creating..Active | RegistrationError
+    ord_error = Column(Text)                # erirValidationError
+    ord_env = Column(String(8))             # demo | prod — контур рядом с идентификатором
+    ord_synced_at = Column(DateTime)
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
@@ -68,3 +75,20 @@ class PrioStatRaw(Base):
     delta_shows = Column(BigInteger)
     delta_clicks = Column(BigInteger)
     pulled_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class PrioMessage(Base):
+    """Ход в переписке по площадке запроса (миграция 2026-11-04_prio_messages.sql) — как переписка сверки.
+
+    Замечание площадки и ответ аккаунта раньше жили в одном `PrioPlacement.comment`, и ответ затирал замечание. Теперь
+    каждый ход — строка; `comment` остаётся последним сообщением для уведомлений и кабинетного `prio_task_v1`.
+    Пишет только `app/prio/service.say`."""
+    __tablename__ = "prio_placement_messages"
+    id = Column(Integer, primary_key=True)
+    placement_id = Column(Integer, ForeignKey("prio_placements.id", ondelete="CASCADE"), nullable=False)
+    side = Column(Text, nullable=False)          # площадка | мы | система
+    kind = Column(Text, nullable=False)          # отправка | замечание | ответ | отказ | напоминание | согласование
+    body = Column(Text)
+    author_name = Column(Text)                   # снимок: смена учётки не переписывает историю
+    author_email = Column(Text)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -78,9 +78,9 @@ def _assemble_and_approve(db, d, pubs, indexes):
     for pub in pubs:
         p = S.add_placement(db, d, pub, _U())
         miss = S.view(db, d)["placements"][-1]["missing"]
-        S.edit_placement(db, d, p.id, {"erid": f"2SDtest{pub}", "product_url": f"https://apteka{pub}.example/p/1"})
+        S.edit_placement(db, d, p.id, {"product_url": f"https://apteka{pub}.example/p/1"})
         pls.append(p)
-        _step(1, f"сборка · площадка {pub}", f"до посадочной и ЕРИД не хватало: {', '.join(miss)}")
+        _step(1, f"сборка · площадка {pub}", f"до посадочной не хватало: {', '.join(miss)}")
     v = S.view(db, d)
     _step(1, "раскладка цели по индексу", f"объём {v['plan_volume']}: " + ", ".join(
         f"{x['publisher_id']} — индекс {x['index']}, вес {x['weight_pct']} %, цель {x['goal_imp']}" for x in v["placements"])
@@ -109,7 +109,9 @@ def _assemble_and_approve(db, d, pubs, indexes):
 
 
 def _launch_and_collect(db, d, live, api, days, per_day):
+    from tests.test_prio import with_erid
     for p in live:
+        with_erid(p, f"2SDtest{p.publisher_id}")         # ЕРИД после «ок» выпускает ОРД — здесь как его ответ
         L.launch(db, d, p.id, client=api)
     _step(4, "запуск", " / ".join(f"{p.publisher_id}: camp {p.camp_id} {p.status}, autostart {api.camps[p.camp_id]['autostart']}" for p in live))
     L.toggle(db, d, live[0].id, False, client=api)

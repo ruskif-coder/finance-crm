@@ -19,7 +19,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ BLOCK_SECTIONS = {
     "publisher": "dir_publishers",
     "cp": "counterparties",
     "contract": "contracts",
+    "sk": "sk_terms",          # правило СК при заведении (окно контрагента, 05.11.2026)
 }
 
 
@@ -142,3 +143,38 @@ def lookup_counterparties(
         "has_bank": bool(db.query(CounterpartyBankAccount.id)
                          .filter(CounterpartyBankAccount.counterparty_id == c.id).first()),
     } for c in rows]}
+
+
+# ── Окно контрагента: вкладка «Проверка» и дубли при «Заведении» (план 2026-11-05) ─────────────────────────────────
+# Только чтение: проверки считает `app/readiness`, правка идёт через существующие ручки разделов.
+
+@router.get("/readiness/{cp_id}")
+def readiness(cp_id: int, db: Session = Depends(get_db),
+              user: User = Depends(require_permission("directory_add", "view"))):
+    from app.readiness import service
+    out = service.build(db, cp_id, user)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+    return out
+
+
+@router.get("/readiness/{cp_id}/history")
+def readiness_history(cp_id: int, block: str = Query(..., pattern="^(cp|sg|ct|tpl|ag|ad|sk|ord)$"),
+                      db: Session = Depends(get_db),
+                      user: User = Depends(require_permission("directory_add", "view"))):
+    from app.readiness import history, service
+    if db.get(Counterparty, cp_id) is None:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+    # Журнал блока — по тому же праву, что и сам блок: без него и история не видна.
+    perms = service.get_permissions_for_user(db, user)
+    if not (perms.get(service.SECTIONS[block]) or {}).get("view"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для этого действия")
+    return {"items": history.of_block(db, cp_id, block)}
+
+
+@router.get("/lookup")
+def lookup_by_inn(inn: str, kpp: Optional[str] = None, db: Session = Depends(get_db),
+                  user: User = Depends(require_permission("directory_add", "view"))):
+    from app.readiness import service
+    perms = service.get_permissions_for_user(db, user)
+    return service.lookup(db, inn, kpp, see_advertisers=bool((perms.get("dir_advertisers") or {}).get("view")))

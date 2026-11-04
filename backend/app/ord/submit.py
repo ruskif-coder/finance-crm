@@ -282,6 +282,15 @@ def refresh_final_status(db: Session, contract: Contract) -> dict:
 # тот же журнал: своя строка, свой контур, тот же запрет повтора.
 
 
+def _client_body(db: Session, digits: str, name: str) -> dict:
+    """Тело заведения юрлица в ОРД. Форма — из справочника контрагентов по ИНН (окно контрагента, 05.11.2026): без неё ИП с
+    ИНН из 12 цифр получал отказ, даже когда форма в справочнике уже стоит. Несколько карточек с одним ИНН и разной формой —
+    формы нет (угадывать нельзя), решает длина ИНН, как раньше."""
+    from app.models import Counterparty
+    forms = {f for (f,) in db.query(Counterparty.legal_form).filter(Counterparty.inn == digits, Counterparty.legal_form.isnot(None))}
+    return payloads.client(SimpleNamespace(inn=digits, name=name, legal_form=forms.pop() if len(forms) == 1 else None))
+
+
 def ensure_client(db: Session, inn: str, name: str, user,
                   legal_form: Optional[str] = None) -> str:
     """Найти юрлицо в ОРД по ИНН или завести. Возвращает идентификатор ОРД.
@@ -307,7 +316,7 @@ def ensure_client(db: Session, inn: str, name: str, user,
             f"По ИНН {digits} в ОРД несколько юрлиц ({len(found)}). Выберите нужное "
             f"в кабинете и проставьте идентификатор — угадывать нельзя.")
 
-    body = payloads.client(SimpleNamespace(inn=digits, name=name))
+    body = _client_body(db, digits, name)
     if legal_form:
         body['legalForm'] = legal_form
 
@@ -474,9 +483,15 @@ def register_creative(db: Session, cset, files, deal, brand, final_ord_id,
 
     body = payloads.creative(cset, files, deal, brand, final_ord_id, initial_ord_id,
                              campaign_type, advertiser_urls)
+    return _register(db, cset, CREATIVE, body, user, env)
 
-    _assert_no_pending(db, 'creative', cset.id, env)
-    row = _start(db, 'creative', cset.id, env, body, user)
+
+def _register(db: Session, obj, kind: str, body: dict, user, env: str) -> dict:
+    """Регистрация креатива и запись ответа в колонки записи — общая для комплекта креативов (`kind='creative'`) и
+    площадки приоритезации (`kind='prio_creative'`, 04.11.2026). У обеих одинаковые колонки (`ord_creative_id`, `erid`,
+    `ord_status`, `ord_error`, `ord_env`, `ord_synced_at`), различаются только тело запроса и вид в журнале."""
+    _assert_no_pending(db, kind, obj.id, env)
+    row = _start(db, kind, obj.id, env, body, user)
 
     try:
         status, answer = client.post('/webapi/v3/creatives', body)
@@ -498,13 +513,13 @@ def register_creative(db: Session, cset, files, deal, brand, final_ord_id,
         _no_id(db, row, status, "креатива")
     _finish(db, row, http_status=status, ord_id=ord_id, ord_status=ord_status)
 
-    if registry.own_contour(cset.ord_creative_id, cset.ord_env, env):
-        cset.ord_creative_id = ord_id
-        cset.erid = erid
-        cset.ord_status = ord_status
-        cset.ord_error = answer.get('erirValidationError')
-        cset.ord_env = env
-        cset.ord_synced_at = datetime.utcnow()
+    if registry.own_contour(obj.ord_creative_id, obj.ord_env, env):
+        obj.ord_creative_id = ord_id
+        obj.erid = erid
+        obj.ord_status = ord_status
+        obj.ord_error = answer.get('erirValidationError')
+        obj.ord_env = env
+        obj.ord_synced_at = datetime.utcnow()
     db.commit()
     return {'ord_id': ord_id, 'erid': erid, 'status': ord_status, 'env': env}
 
@@ -516,8 +531,12 @@ def _assert_no_marker(cset, env: str) -> None:
             f"Повторный выпуск дал бы там второй креатив, который не отозвать.")
 
 
-def _native_id(cset) -> str:
-    return f"set-{cset.id}"          # то же, что `payloads.creative` кладёт в nativeCustomerId
+CREATIVE, PRIO_CREATIVE = 'creative', 'prio_creative'      # вид записи в журнале отправок
+
+
+def _native_id(cset, kind: str = CREATIVE) -> str:
+    # то же, что кладут в nativeCustomerId `payloads.creative` и `payloads.prio_creative`
+    return f"prio-{cset.id}" if kind == PRIO_CREATIVE else f"set-{cset.id}"
 
 
 def find_creative_by_native(native_id: str) -> Optional[dict]:
@@ -528,17 +547,17 @@ def find_creative_by_native(native_id: str) -> Optional[dict]:
     return next((c for c in items if isinstance(c, dict) and str(c.get('nativeCustomerId') or '') == native_id), None)
 
 
-def resolve_pending_creative(db: Session, cset, env: str) -> Optional[str]:
+def resolve_pending_creative(db: Session, cset, env: str, kind: str = CREATIVE) -> Optional[str]:
     """Незакрытая попытка регистрации (ответ ОРД потерян: таймаут, обрыв) — сначала СВЕРИТЬСЯ с ОРД, потом решать (владелец
     15.10.2026: «сначала проверить наличие ЕРИДа, который не прошёл в ОРД, потом повторять»). Нашёлся креатив с нашим
     `nativeCustomerId` — попытка закрывается с его id (дальше обычный опрос статуса и маркера, второй регистрации нет). Не нашёлся —
     попытка закрывается «проверено: не создан», повтор разрешён. ОРД не ответил и сейчас — всё остаётся как было (блокировка).
     Возвращает найденный id или None."""
-    stuck = pending(db, 'creative', cset.id, env)
+    stuck = pending(db, kind, cset.id, env)
     if stuck is None:
         return None
     try:
-        found = find_creative_by_native(_native_id(cset))
+        found = find_creative_by_native(_native_id(cset, kind))
     except Exception as e:  # noqa: BLE001 — проверка не удалась: неизвестность сохраняется, блокировка тоже
         log.warning("ОРД: проверка незакрытой попытки комплекта %s не удалась: %s", cset.id, e)
         return None
@@ -571,7 +590,21 @@ def issue_marker(db: Session, cset, files, deal, brand, final_ord_id, initial_or
                              advertiser_urls=advertiser_urls)
 
 
-def refresh_creative_status(db: Session, cset) -> dict:
+def issue_prio_marker(db: Session, p, body: dict, user) -> dict:
+    """Выпуск ЕРИД площадки приоритезации (владелец 04.11.2026) — порядок `issue_marker`: запрет боевой записи без
+    разрешения, маркер уже есть — отказ, потерянный ответ — сначала свериться с ОРД, зарегистрирован без маркера — опрос,
+    а не второй креатив. Тело собирает `payloads.prio_creative` (форма Text, без файла)."""
+    env = _assert_write_allowed()
+    _assert_no_marker(p, env)
+    resolve_pending_creative(db, p, env, kind=PRIO_CREATIVE)
+    if registry.known_id(db, PRIO_CREATIVE, p.id, env, p.ord_creative_id, p.ord_env):
+        got = refresh_creative_status(db, p, kind=PRIO_CREATIVE)
+        return {'ord_id': got['ord_id'], 'erid': got['erid'], 'status': got['status'],
+                'env': env, 'refreshed': True}
+    return _register(db, p, PRIO_CREATIVE, body, user, env)
+
+
+def refresh_creative_status(db: Session, cset, kind: str = CREATIVE) -> dict:
     """Опросить статус креатива. Маркер мог прийти позже — забираем и его.
 
     Читать прод безопасно, поэтому отдельного разрешения на запись здесь не спрашиваем.
@@ -579,10 +612,11 @@ def refresh_creative_status(db: Session, cset) -> dict:
     не общие, и комплект, проверенный на демо, на проде зовётся иначе.
     """
     env = client.env()
-    cid = registry.known_id(db, 'creative', cset.id, env,
+    cid = registry.known_id(db, kind, cset.id, env,
                             cset.ord_creative_id, cset.ord_env)
     if not cid:
-        raise OrdSubmitRefused(f"Комплект ещё не зарегистрирован в ОРД на контуре {env}")
+        what = "Площадка приоритезации" if kind == PRIO_CREATIVE else "Комплект"
+        raise OrdSubmitRefused(f"{what} ещё не зарегистрирован в ОРД на контуре {env}")
 
     answer = client.get(f"/webapi/v3/creatives/{cid}/status") or {}
     if isinstance(answer, list):

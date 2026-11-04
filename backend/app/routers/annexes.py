@@ -532,7 +532,8 @@ def master_no(db: Session, a) -> Optional[int]:
     факту, или подтверждённый) — его номер, у допов с суффиксом; иначе — из раскладки: последний актуальный + 1; None — не задан."""
     from app.master_deal.models import MasterDeal
     taken_main = (db.query(SalesAnnex.no).filter(SalesAnnex.master_deal_id == a.master_deal_id, SalesAnnex.no.isnot(None),
-                                                 SalesAnnex.sub_no.is_(None), SalesAnnex.id != a.id).scalar())
+                                                 SalesAnnex.sub_no.is_(None), SalesAnnex.kind != "addons",   # ДС допов со своим номером — не основной
+                                                 SalesAnnex.id != a.id).scalar())
     if taken_main is not None:
         return taken_main
     m = db.get(MasterDeal, a.master_deal_id)
@@ -667,6 +668,10 @@ def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW), cont
                            .all()):
         deals.setdefault(aid, []).append({"id": did, "code": code})
     tpls = tpl_doc.template_labels(db, [a.template_version_id for a, _, _ in rows])
+    # Мастер-сделка ДС пакета (владелец 04.11.2026: «помимо сделок выводить Id мастер-сделки») — тоже одним запросом.
+    from app.master_deal.models import MasterDeal
+    mids = {a.master_deal_id for a, _, _ in rows if a.master_deal_id}
+    masters = dict(db.query(MasterDeal.id, MasterDeal.code).filter(MasterDeal.id.in_(mids)).all()) if mids else {}
     # Область «свои» (аудит 21.10.2026): реестр не отдаёт ДС с чужими сделками — правило то же, что у карточки ДС.
     from app.sales import scope as SC
     own = SC.own_rep_ids_or_all(db, user, "sales_registry")
@@ -687,7 +692,8 @@ def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW), cont
                        "contract_date": c.contract_date,
                        # Вид базового шаблона ДС выводится из формата договора (макет 13.10.2026).
                        "cooperation_format": c.cooperation_format,
-                       "deals": deals.get(a.id, [])}
+                       "deals": deals.get(a.id, []),
+                       "master_code": masters.get(a.master_deal_id)}
                       for a, c, cp in rows]}
 
 
@@ -719,14 +725,14 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
     ws = wb.active
     ws.title = "Приложения"
     head = ["Юрлицо", "ИНН", "Договор", "Дата договора", "Приложение", "Дата",
-            "Период с", "Период по", "Сумма с НДС", "Сделки", "Статус"]
+            "Период с", "Период по", "Сумма с НДС", "Мастер-сделка", "Сделки", "Статус"]
     ws.append(head)
     fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = fill
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for w, letter in zip([34, 13, 18, 13, 17, 12, 12, 12, 15, 16, 12], "ABCDEFGHIJK"):
+    for w, letter in zip([34, 13, 18, 13, 17, 12, 12, 12, 15, 14, 16, 12], "ABCDEFGHIJKL"):
         ws.column_dimensions[letter].width = w
     for i in order:
         a = items[i]
@@ -735,6 +741,7 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
             a["contract_number"], a["contract_date"],
             a["number"] or "черновик", a["date"],
             a["period_from"], a["period_to"], a["total_amount"],
+            a.get("master_code") or "",
             ", ".join(d["code"] or str(d["id"]) for d in a["deals"]),
             "черновик" if a["is_draft"] else "выпущено",
         ])
@@ -805,7 +812,7 @@ def _external_view(db: Session, a) -> dict:
 
 @router.post("/{annex_id}/external")
 async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = Form(...), total: float = Form(...),
-                        items: str = Form("[]"), number: str = Form(""), edo_link: str = Form(""),
+                        items: str = Form("[]"), number: str = Form(""), edo_link: str = Form(""), own_number: bool = Form(False),
                         file: Optional[UploadFile] = File(None), db: Session = Depends(get_db), user: User = Depends(EDIT)):
     """«Подписан вне системы» (03.11.2026): черновик ДС пакета становится подтверждённым и подписанным; документ — файл или
     ссылка ЭДО, сумма и услуги — со слов аккаунта. Номер занимается тем же способом, что при подтверждении, и пакет идёт
@@ -822,7 +829,7 @@ async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = For
     def work():
         stored.update(X.sign_external(db, a, user, no=no, number_text=number, doc_date=doc_date, total=total, items=lines,
                                       edo_link=edo_link, file_name=file.filename if file is not None else None,
-                                      file_bytes=content))
+                                      file_bytes=content, own_number=own_number))
         from app.master_deal import to_annex as TA
         from app.master_deal.models import MasterDeal
         m = db.get(MasterDeal, a.master_deal_id)

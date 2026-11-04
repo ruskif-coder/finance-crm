@@ -1019,14 +1019,28 @@ def cabinet_prio_sku(prio_id: int, payload: CabinetPrioSkuIn, db: Session = Depe
     return {"sku": p.product_id}
 
 
+def _erid_after_ok(prio_id: int) -> None:
+    """Выпуск ЕРИД после «ок» — фоном, своей сессией: ОРД отвечает до 40 с, а кабинет ждёт шлюз 15 с (ревью 05.11.2026) —
+    площадка видела «Система временно недоступна» при записанном ответе. Не вышло — повторит крон."""
+    from app.database import SessionLocal
+    from app.prio import erid as prio_erid
+    db = SessionLocal()
+    try:
+        prio_erid.issue_after_verdict(db, prio_id)
+    finally:
+        db.close()
+
+
 @router.post("/prio/{prio_id}/verdict", dependencies=[Depends(require_cabinet_service)])
-def cabinet_prio_verdict(prio_id: int, payload: CabinetPrioVerdictIn, db: Session = Depends(get_db)):
+def cabinet_prio_verdict(prio_id: int, payload: CabinetPrioVerdictIn, db: Session = Depends(get_db),
+                         bg: BackgroundTasks = None):
     """Ответ площадки на запрос: согласовать (нужен SKU) / вернуть с замечанием / отказать с причиной (РК в архив)."""
     from app.prio import service as PS
     p = _prio_placement(db, prio_id, payload.publisher_id)
     acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
     try:
-        PS.verdict(db, p, payload.verdict, payload.reason)
+        PS.verdict(db, p, payload.verdict, payload.reason, author_name=payload.author_name,
+                   author_email=getattr(acc, "email", None))
     except PS.PrioError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     journal.write(db, {'ок': 'приоритезация_ок', 'вернуть': 'приоритезация_возврат',
@@ -1039,4 +1053,7 @@ def cabinet_prio_verdict(prio_id: int, payload: CabinetPrioVerdictIn, db: Sessio
     from app.prio.autostop import _deal_of
     PN.site_answered(db, _deal_of(db, p), p)
     db.commit()
+    if payload.verdict == 'ок' and bg is not None:
+        # ЕРИД площадки — сразу после её «ок» (владелец 04.11.2026), но после ответа кабинету. Не вышел — повторит крон.
+        bg.add_task(_erid_after_ok, prio_id)
     return {"status": p.status}

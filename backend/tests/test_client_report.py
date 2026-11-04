@@ -92,7 +92,8 @@ def client():
     app.dependency_overrides.clear()
 
 
-def test_admin_downloads_excel_with_both_sets(client):
+def test_admin_downloads_excel_without_model_sheets(client):
+    """Вкладки «(модель)» из выгрузки убраны (владелец 04.11.2026) — клиенту уходит только факт."""
     db = SessionLocal()
     _, deal_id = _camp_with_fact(db)
     db.close()
@@ -101,7 +102,7 @@ def test_admin_downloads_excel_with_both_sets(client):
     assert r.status_code == 200, r.text[:200]
     assert "filename*=UTF-8''" in r.headers["content-disposition"]
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
-    assert wb.sheetnames == ["Отчёт", "По неделям", "Отчёт (модель)", "По неделям (модель)"]
+    assert wb.sheetnames == ["Отчёт", "По неделям"]
 
 
 def test_no_campaign_and_bad_period(client):

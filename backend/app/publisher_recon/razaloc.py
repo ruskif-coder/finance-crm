@@ -115,7 +115,7 @@ def lines_of(db: Session, request_id: int) -> List[dict]:
                         "type": r["i_type"], "subject_type": r["i_subject"], "action_type": r["i_action"],
                         "is_agent_acting_for_publisher": r["i_for_rr"]}
         elif r["f_ord_id"]:
-            us = own_company.of_contract(db.get(Contract, r["contract_id"])) or own_company.sole(db)
+            us = own_company.for_contract(db, db.get(Contract, r["contract_id"]))
             contract = {"kind": "final", "ord_id": r["f_ord_id"], "advertiser_inn": r["f_adv_inn"],
                         "advertiser_name": r["f_adv_name"], "contractor_inn": us.inn if us else None,
                         "contractor_name": us.name if us else None, "number": r["f_number"], "date": r["f_date"],

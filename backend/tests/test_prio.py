@@ -78,22 +78,26 @@ def test_lists_are_normalised_for_api(env):
     assert r.target_meta == "от аллергии, от зуда"
 
 
-def test_send_needs_site_erid_landing(env):
+def test_send_needs_site_and_landing_but_not_erid(env):
+    """ЕРИД до отправки не нужен — его выпускает ОРД после «ок» площадки (владелец 04.11.2026); руками его не вписать."""
     db, d, pubs = env
     p = _ready(db, d, pubs[0])
     with pytest.raises(S.PrioError) as e:
         S.send(db, d, p.id, _U())
-    assert "ЕРИД" in e.value.message and "посадочной" in e.value.message
+    assert "посадочной" in e.value.message and "ЕРИД" not in e.value.message
     with pytest.raises(S.PrioError):
         S.edit_placement(db, d, p.id, {"product_url": "javascript:alert(1)"})
-    S.edit_placement(db, d, p.id, {"erid": "2SDnjcpKqT9", "product_url": "https://maksavit.ru/p/1"})
+    with pytest.raises(S.PrioError) as e:
+        S.edit_placement(db, d, p.id, {"erid": "2SDnjcpKqT9"})
+    assert e.value.status == 400 and "руками" in e.value.message
+    S.edit_placement(db, d, p.id, {"product_url": "https://maksavit.ru/p/1"})
     assert S.send(db, d, p.id, _U()).status == M.AT_SITE
     assert S.view(db, d)["pipeline"][1] == {"status": M.AT_SITE, "count": 1}
 
 
 def _sent(db, d, pub):
     p = _ready(db, d, pub)
-    S.edit_placement(db, d, p.id, {"erid": "2SDnjcpKqT9", "product_url": "https://maksavit.ru/p/1"})
+    S.edit_placement(db, d, p.id, {"product_url": "https://maksavit.ru/p/1"})
     return S.send(db, d, p.id, _U())
 
 
@@ -124,10 +128,18 @@ def test_reject_is_final(env):
         S.verdict(db, p, "ок", None)
 
 
+def with_erid(p, erid="2SDnjcpKqT9", status="Active"):
+    """Маркер площадки — как его записал бы наш ОРД после «ок» (`app/prio/erid.py`); тестам запуска сеть ОРД не нужна."""
+    from sqlalchemy.orm import object_session
+    p.erid, p.ord_status, p.ord_env = erid, status, "demo"
+    object_session(p).flush()          # запуск перечитывает строку под замком (populate_existing) — иначе маркер затёрся бы
+    return p
+
+
 def _approved(db, d, pub):
     p = _sent(db, d, pub)
     S.set_sku(db, p, "1234567")
-    return S.verdict(db, p, "ок", None)
+    return with_erid(S.verdict(db, p, "ок", None))
 
 
 def test_launch_stop_start_and_no_duplicate(env):
@@ -228,7 +240,7 @@ def test_rejected_share_goes_to_others_launched_keep_goal(env):
     b = S.add_placement(db, d, pubs[1], _U())
     plan = S.view(db, d)["plan_volume"]
     for p in (a, b):
-        S.edit_placement(db, d, p.id, {"erid": "E", "product_url": "https://x.example/p"})
+        S.edit_placement(db, d, p.id, {"product_url": "https://x.example/p"})
         S.send(db, d, p.id, _U())
     S.verdict(db, b, "отказ", "нет товара")
     assert a.goal_imp == plan and b.goal_imp in (0, None), "доля отказавшей площадки не перешла"

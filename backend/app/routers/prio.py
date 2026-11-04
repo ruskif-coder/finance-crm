@@ -147,6 +147,29 @@ def _act(db, d, pid, action, body, user):
     raise S.PrioError(400, "Неизвестное действие")
 
 
+@router.post("/deal/{deal_id}/placements/{pid}/erid")
+def prio_erid(deal_id: int, pid: int, db: Session = Depends(get_db),
+              user: User = Depends(require_permission("ord_submit", "create"))):
+    """«Выпустить ЕРИД» / «обновить статус» площадки — то же, что кнопка у комплекта креативов: регистрация в ОРД или
+    опрос, если креатив уже заведён. Обычно не нужна — ЕРИД выпускается сам после «ок» площадки и кроном; кнопка — на
+    случай, когда аккаунт починил причину отказа и не хочет ждать прогона. Право `ord_submit`: запись в ЕРИР необратима.
+    Объявлена ДО общего `/{action}`: иначе путь съел бы общий обработчик."""
+    from app.prio import erid as E
+    d = _deal(db, deal_id, user)
+    p = S.placement(db, d, pid)
+    try:
+        if (p.erid or "").strip():
+            E.refresh(db, d, p, user)
+        else:
+            why = E.blockers(db, d, p)
+            if why:
+                raise S.PrioError(409, "Не хватает: " + ", ".join(why))
+            E.issue(db, d, p, user)
+    except S.PrioError as e:
+        db.rollback(); _err(e)
+    return S.view(db, d)
+
+
 @router.post("/deal/{deal_id}/placements/{pid}/{action}")
 def prio_action(deal_id: int, pid: int, action: str, body: ActIn = ActIn(), db: Session = Depends(get_db),
                 user: User = Depends(EDIT)):
@@ -172,7 +195,7 @@ def prio_bulk(deal_id: int, action: str, db: Session = Depends(get_db), user: Us
         raise HTTPException(400, "Массово: send / launch")
     st = S.view(db, d)
     ids = [x["id"] for x in st["placements"]
-           if (action == "send" and x["status"] == M.DRAFT and not x["missing"]) or (action == "launch" and x["status"] == M.APPROVED)]
+           if (action == "send" and x["status"] == M.DRAFT and not x["missing"]) or (action == "launch" and x["status"] == M.APPROVED and x["erid_ready"])]
     done, failed, warnings = [], [], []
     for pid in ids:
         try:

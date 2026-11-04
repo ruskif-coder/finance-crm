@@ -89,3 +89,17 @@ def of_contract(contract) -> Optional[Counterparty]:
     а не мёртвый код, и переезд начнётся именно с него.
     """
     return getattr(contract, "own_company", None) if contract is not None else None
+
+
+def for_contract(db, contract) -> Optional[Counterparty]:
+    """Наше юрлицо для документа и операции по договору: юрлицо договора, иначе единственное наше (04.11.2026).
+
+    Одно правило на печать ДС, мост мастер-сделки в операции и разаллокацию сверки. До этого печать держала его по
+    месту, а мост брал голую колонку договора: у договоров с пустой колонкой ДС печатался с юрлицом, а операция из него
+    приходила без юрлица. Ноль или два наших юрлица — `sole` отвечает None, и здесь тоже None: не угадываем."""
+    return of_contract(contract) or sole(db)
+
+
+def for_contract_id(db, contract) -> Optional[int]:
+    c = for_contract(db, contract)
+    return c.id if c else None

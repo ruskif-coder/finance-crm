@@ -202,3 +202,36 @@ def test_sk_discount_shown_in_layout_and_sum_matches(env):
         expect = sum(CL.compute(db, d)["total_net"] for d in (d1, d2))
         assert lay["total_net"] == pytest.approx(expect, abs=0.05)
         assert all(k["net"] > 0 for ds in lay["ds"] for k in ds["upds"]), "комплект из одной скидки не образуется"
+
+
+def test_start_no_below_issued_is_allowed_when_the_number_is_free(monkeypatch):
+    """Владелец 05.11.2026 (АПР Евразия): выпущены наши № 30 и № 31, октябрьский пакет получает № 28 — номер ниже выпущенного
+    можно, если ДС пакета не повторит выпущенный нами номер."""
+    from datetime import datetime
+    from types import SimpleNamespace
+    from app.master_deal import package as PK
+    monkeypatch.setattr(PK, "issued", lambda db, cid: [{"no": 30, "at": datetime(2026, 11, 2)}, {"no": 31, "at": datetime(2026, 11, 2)}])
+    monkeypatch.setattr(PK, "_contract_start", lambda db, cid: None)
+    monkeypatch.setattr(PK, "_packages_on", lambda db, m, n: [])
+    m = SimpleNamespace(id=1, contract_id=180)
+    ok = PK.check_start_no(None, m, 27)
+    assert ok["ok"] and "28" in ok["warn"] and "31" in ok["warn"]
+    for no in (29, 30):
+        bad = PK.check_start_no(None, m, no)
+        assert not bad["ok"] and f"№ {no + 1} уже выпущен" in bad["text"]
+    assert PK.check_start_no(None, m, 31)["ok"]
+
+
+def test_start_no_respects_the_contract_start_and_other_packages(monkeypatch):
+    """Ревью 05.11.2026: номер ниже выпущенного стал можно — и два пакета договора могли получить один № (второй падал на
+    подтверждении), а номер не выше «ДС с» договора отказывал только при подтверждении."""
+    from types import SimpleNamespace
+    from app.master_deal import package as PK
+    monkeypatch.setattr(PK, "issued", lambda db, cid: [])
+    monkeypatch.setattr(PK, "_contract_start", lambda db, cid: 20)
+    monkeypatch.setattr(PK, "_packages_on", lambda db, m, n: ["M-0019"] if n == 28 else [])
+    m = SimpleNamespace(id=1, contract_id=180)
+    assert not PK.check_start_no(None, m, 19)["ok"], "ДС пакета № 20 — не выше «ДС с» договора"
+    bad = PK.check_start_no(None, m, 27)
+    assert not bad["ok"] and "M-0019" in bad["text"]
+    assert PK.check_start_no(None, m, 28)["ok"]

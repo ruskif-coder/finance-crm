@@ -4,7 +4,7 @@
 Кнопка — в раскрытой строке очереди аккаунта перед «Карточкой». Права: дашборд аккаунта или
 дашборд трафика (+ админ). Аккаунт видит отчёт только по сделке из своей зоны видимости;
 трафик — по любой РК, как на своём дашборде. У сделки одна РК (замер прода 05.10.2026: 139 из
-139), отчёт строится по ней. В файле два комплекта листов: факт и модель SIMB ID.
+139), отчёт строится по ней. В файле — листы факта; комплект «(модель)» убран 04.11.2026.
 """
 import re
 from datetime import date
@@ -67,7 +67,6 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
         from app.dsp.db import DspSessionLocal
         dsp_db = DspSessionLocal() if DspSessionLocal else None
         rep = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db, group=group)
-        rep_m = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db, model=True, group=group)
     finally:
         if dsp_db is not None:
             dsp_db.close()
@@ -76,7 +75,9 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
             or not rep.totals["shows"]:
         raise HTTPException(status_code=409, detail="За выбранный период данных нет — "
                                                     "пустой отчёт клиенту не отдаём")
-    body = client_report_xlsx.to_xlsx(rep, rep_m)
+    # Только факт: вкладки «Отчёт (модель)» / «По неделям (модель)» из выгрузки убраны (владелец 04.11.2026). Уники на
+    # листах факта по-прежнему — модель SIMB ID (24.10.2026); `to_xlsx` второй комплект умеет, но его больше не просят.
+    body = client_report_xlsx.to_xlsx(rep)
     code = re.sub(r"[^\w-]", "", deal.code or str(deal.id))
     human = f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"_{date.today():%d.%m.%Y}.xlsx"
     return Response(content=body, media_type=(

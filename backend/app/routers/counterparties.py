@@ -7,6 +7,7 @@ from app import own_company
 from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
 from app.permissions import get_permissions_for_user, require_permission, require_any_permission
+from app import legal_form as LF
 from app.audit import log_action
 from app.receivables import DEFAULT_TERM_DAYS
 from app.signers import service as SG
@@ -70,6 +71,10 @@ class CounterpartyRequisitesUpdate(BaseModel):
     signer_position: Optional[str] = None
     signer_basis: Optional[str] = None
     note: Optional[str] = None
+    # Окно контрагента (04.11.2026). Оба поля трогаются, только если их прислали: старые экраны их не шлют и не должны
+    # стирать. Место подписания печатается в шапке ДС только у НАШЕГО юрлица.
+    legal_form: Optional[str] = None
+    signed_place: Optional[str] = None
     bank_accounts: List[BankAccountData] = []
 
 def _signer_out(s) -> dict:
@@ -815,6 +820,12 @@ def get_counterparty_analytics(
     }
 
 
+# Подписи полей реквизитов в журнале «было → стало» (окно контрагента разбирает их в историю изменений блока).
+_REQ_LABELS = (("inn", "ИНН"), ("kpp", "КПП"), ("ogrn", "ОГРН"), ("okpo", "ОКПО"), ("legal_form", "форма"),
+               ("address", "юр. адрес"), ("address_fact", "факт. адрес"), ("phone", "телефон"), ("email", "почта"),
+               ("website", "сайт"), ("edo_id", "ЭДО"), ("signed_place", "место подписания"), ("note", "примечание"))
+
+
 @router.put("/{counterparty_id}/requisites")
 def update_counterparty_requisites(
     counterparty_id: int,
@@ -830,12 +841,13 @@ def update_counterparty_requisites(
 
     def _s(v): return (v or '').strip() or None
 
-    # По ИНН сходятся операции при импорте, договоры ОРД и переопределения отсрочки —
-    # его смену видно в журнале отдельной строкой, а не «обновлены реквизиты».
-    new_inn = _s(data.inn)
-    inn_change = (f"; ИНН: {cp.inn or '—'} → {new_inn or '—'}"
-                  if new_inn != cp.inn else "")
-    cp.inn           = new_inn
+    sent = data.dict(exclude_unset=True)
+    if "legal_form" in sent and _s(data.legal_form) and _s(data.legal_form) not in LF.FORMS:
+        raise HTTPException(status_code=400, detail="Форма организации — одна из: " + ", ".join(LF.FORMS))
+    # Журнал «поле: было → стало» (окно контрагента, 04.11.2026): из него строится история изменений блока. Раньше здесь
+    # была одна строка «Обновлены реквизиты» и отдельно — смена ИНН.
+    before = {k: getattr(cp, k) for k, _ in _REQ_LABELS}
+    cp.inn           = _s(data.inn)
     cp.kpp           = _s(data.kpp)
     cp.ogrn          = _s(data.ogrn)
     cp.okpo          = _s(data.okpo)
@@ -844,8 +856,10 @@ def update_counterparty_requisites(
     cp.phone         = _s(data.phone)
     cp.email         = _s(data.email)
     cp.edo_id        = _s(data.edo_id)
+    for k in ("legal_form", "signed_place"):
+        if k in sent:
+            setattr(cp, k, _s(sent[k]))
     # Подписант — не колонки контрагента (заморожены 28.10.2026), а подписант по умолчанию; трогаем, только если форма прислала поля.
-    sent = data.dict(exclude_unset=True)
     signer = {k: sent[k] for k in ("director_name", "signer_position", "signer_basis") if k in sent}
     if signer:
         SG.upsert_default(db, cp, signer, current_user)
@@ -853,10 +867,11 @@ def update_counterparty_requisites(
     cp.note          = _s(data.note)
 
     # Убрать счёт — это удаление (аудит 2.6.76, п. 1.22): раньше право «удаление» проверял только экран, а ручка под
-    # «правкой» перезаписывала счета целиком. Счёт узнаём по номеру расчётного счёта.
-    was = {(a.rs or "").strip() for a in db.query(CounterpartyBankAccount)
-           .filter(CounterpartyBankAccount.counterparty_id == counterparty_id) if (a.rs or "").strip()}
-    gone = was - {(ba.rs or "").strip() for ba in data.bank_accounts}
+    # «правкой» перезаписывала счета целиком. Убрать — когда заполненных счетов стало МЕНЬШЕ: исправить опечатку в р/с —
+    # правка, не удаление (ревью 05.11.2026: прежнее сравнение номеров давало аккаунту 403 на исправлении).
+    was = [a for a in db.query(CounterpartyBankAccount)
+           .filter(CounterpartyBankAccount.counterparty_id == counterparty_id) if (a.rs or "").strip()]
+    gone = len([ba for ba in data.bank_accounts if (ba.rs or "").strip()]) < len(was)
     if gone and not get_permissions_for_user(db, current_user).get("counterparties", {}).get("delete"):
         raise HTTPException(status_code=403, detail="Убрать банковский счёт можно только с правом «удаление» на контрагентов")
 
@@ -878,7 +893,9 @@ def update_counterparty_requisites(
     db.commit()
     log_action(db, current_user, "update_counterparty_requisites",
                entity_type="counterparty", entity_id=cp.id,
-               details=f"Обновлены реквизиты: «{cp.name}»{inn_change}")
+               details=f"Обновлены реквизиты: «{cp.name}»" + "".join(
+                   f"; {label}: {before[k] or '—'} → {getattr(cp, k) or '—'}"
+                   for k, label in _REQ_LABELS if (before[k] or None) != (getattr(cp, k) or None)))
     return {"message": "Реквизиты обновлены"}
 
 

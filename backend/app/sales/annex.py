@@ -335,7 +335,7 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
     номер занимается насовсем.
     """
     payer = contract.counterparty
-    us = contract.own_company or own_company.sole(db)
+    us = own_company.for_contract(db, contract)
     # Ставка берётся из `vat_rate_income` нашего юрлица — это НДС по нашим УСЛУГАМ
     # (22 % на 05.09.2026). Поле `vat_rate` у того же контрагента означает ставку по
     # его расходам и стоит нулём; перепутать их значит выпустить документ без налога.

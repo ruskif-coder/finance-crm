@@ -7,6 +7,7 @@ UPLOADS_DIR = "/app/uploads/contracts"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ — максимальный размер прикреплённого файла
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
 from sqlalchemy.orm import Session
+from app import own_company
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
@@ -276,6 +277,8 @@ def create_contract(
         counterparty_id=cp.id,
         marketing_name=_clean(data.marketing_name),
         cooperation_format=_clean(data.cooperation_format),
+        # Вид ДС — сразу, той же проверкой, что правка (ревью 05.11.2026: форма заведения его слала, ручка не писала).
+        annex_word=_annex_word(data.annex_word),
         services=_clean(data.services),
         end_date_text=_clean(data.end_date_text),
         prolongation=_clean(data.prolongation),
@@ -285,6 +288,9 @@ def create_contract(
         payment_term_condition=_clean(data.payment_term_condition),
         note=_clean(data.note),
         document_link=_validate_link(data.document_link),
+        # Наше юрлицо — сразу (04.11.2026): без него операции из мастер-сделки шли без юрлица. Выбора в форме нет —
+        # юрлицо одно; при двух `sole_id` вернёт None, и договор останется пустым, а не с чужим.
+        own_company_id=own_company.sole_id(db),
     )
     db.add(contract)
     db.commit()

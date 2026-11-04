@@ -10,6 +10,7 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ord import readiness
 from app.prio import models as M
 from app.prio.client import PrioApiError, PrioClient
 from app.prio.service import PrioError, placement, request_of
@@ -63,6 +64,11 @@ def _launch(db: Session, deal, pid: int, client) -> M.PrioPlacement:
     p = db.query(M.PrioPlacement).filter(M.PrioPlacement.id == p.id).with_for_update().populate_existing().one()
     if p.status != M.APPROVED:
         raise PrioError(409, f"Запустить можно согласованную площадку, а она «{p.status}»")
+    # Маркер уходит в систему приоритезации вместе с РК — без готового не запускаем (то же правило, что у комплекта
+    # креативов перед DSP: `ord/readiness`, 04.11.2026).
+    if not readiness.erid_ready(p):
+        raise PrioError(409, readiness.waiting_text(p) if (p.erid or "").strip()
+                        else "ЕРИД площадки ещё не выпущен — он выпускается после её согласования")
     body = payload(db, deal, p)
     if not body["site_id"]:
         raise PrioError(409, "У площадки нет site_id системы приоритезации")

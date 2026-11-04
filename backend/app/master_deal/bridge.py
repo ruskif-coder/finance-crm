@@ -14,6 +14,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import own_company
+
 log = logging.getLogger("finance.master_deal")
 PLANNED = "план поступлений"
 
@@ -70,7 +72,7 @@ def sync_kit(db: Session, m, k):
     fields = {"date": k.onec_invoice_date or date.today(), "status": PLANNED, "income": income, "expense": 0.0, "period": m.period,
               "vat_rate": vat, "vat_fact": compute_vat_fact(income, 0.0, vat), "article_id": _article(db, a, k),
               "counterparty_id": m.payer_counterparty_id or (c.counterparty_id if c else None),
-              "own_company_id": c.own_company_id if c else None, "ds_num": a.number, "invoice": k.onec_invoice_no,
+              "own_company_id": own_company.for_contract_id(db, c), "ds_num": a.number, "invoice": k.onec_invoice_no,
               "invoice_date": k.onec_invoice_date, "description": basis, "master_deal_upd_id": k.id}
     if op is None:
         op = Operation(**fields)

@@ -27,21 +27,25 @@ def _need(value, what: str, who: str):
     return v
 
 
-def legal_form(inn: str) -> str:
-    """Организационно-правовая форма по длине ИНН.
+def legal_form(inn: str, form: Optional[str] = None) -> str:
+    """Организационно-правовая форма: из справочника (`counterparties.legal_form`, с 04.11.2026), иначе по длине ИНН.
 
     Десять цифр — всегда юрлицо, тут выбора нет. Двенадцать — ИП ИЛИ физлицо, и
     различить их по ИНН невозможно: у нас таких 27 из 211 (мерено 26.08.2026), а поля
     формы в справочнике нет. Поэтому двенадцать цифр — отказ с просьбой указать форму,
     а не «наверное, ИП»: неверная форма стороны договора уезжает в ЕРИР.
     """
+    from app.legal_form import ord_code
+    code = ord_code(form)
+    if code:
+        return code
     digits = (inn or '').strip()
     if len(digits) == 10:
         return 'JuridicalPerson'
     if len(digits) == 12:
         raise OrdPayloadError(
             f"ИНН {digits} из 12 цифр — это ИП или физлицо, различить нельзя. "
-            "Укажите форму вручную (поля в справочнике пока нет).")
+            "Укажите форму организации в окне контрагента (Справочники → Добавить данные).")
     raise OrdPayloadError(f"ИНН «{digits}» не похож ни на юрлицо, ни на ИП")
 
 
@@ -55,7 +59,7 @@ def client(cp) -> dict:
     return {
         'inn': _need(cp.inn, 'ИНН', who),
         'name': _need(cp.name, 'название', who),
-        'legalForm': legal_form(cp.inn),
+        'legalForm': legal_form(cp.inn, getattr(cp, 'legal_form', None)),
         'isPhysicalPersonAddressExists': False,
         'createMode': 'DirectClient',
     }
@@ -127,6 +131,23 @@ CREATIVE_FORMS = ('Banner', 'BannerHtml5', 'Text', 'TextGraphic', 'Video', 'Audi
 CREATIVE_TYPES = ('CPM', 'CPC', 'CPA', 'Other')
 
 
+def _kktu(brand, who: str) -> str:
+    """Код ККТУ бренда — один на креатив, третьего уровня.
+
+    Только бренд: переопределение на комплект заморожено 31.08.2026 (использовано 0 раз из 24). ККТУ описывает
+    рекламируемый товар, а не конкретный материал, и задаётся один раз на сделку в блоке сборки ОРД. Общий для комплекта
+    креативов и для креатива приоритезации."""
+    kktu = ((brand.kktu_code if brand else None) or '').strip()
+    if not kktu:
+        raise OrdPayloadError(
+            f"{who}: не заполнен код ККТУ. Он живёт на бренде и подставляется сюда — "
+            f"проставьте его в карточке рекламодателя")
+    if len(kktu.split('.')) != 3:
+        raise OrdPayloadError(
+            f"{who}: код ККТУ «{kktu}» не третьего уровня — реестр принимает только «X.X.X»")
+    return kktu
+
+
 def creative(cset, files, deal, brand, final_ord_id, initial_ord_id=None,
              campaign_type: Optional[str] = None, advertiser_urls=None) -> dict:
     """CreateCreativeRequest — комплект креативов на регистрацию.
@@ -147,18 +168,7 @@ def creative(cset, files, deal, brand, final_ord_id, initial_ord_id=None,
     запроса после обрыва связи заводит в ЕРИР второй креатив, который не отозвать.
     """
     who = f"комплект №{cset.no}"
-
-    # Только бренд: переопределение на комплект заморожено 31.08.2026 (использовано
-    # 0 раз из 24). ККТУ описывает рекламируемый товар, а не конкретный материал, и
-    # задаётся один раз на сделку в блоке сборки ОРД.
-    kktu = ((brand.kktu_code if brand else None) or '').strip()
-    if not kktu:
-        raise OrdPayloadError(
-            f"{who}: не заполнен код ККТУ. Он живёт на бренде и подставляется сюда — "
-            f"проставьте его в карточке рекламодателя")
-    if len(kktu.split('.')) != 3:
-        raise OrdPayloadError(
-            f"{who}: код ККТУ «{kktu}» не третьего уровня — реестр принимает только «X.X.X»")
+    kktu = _kktu(brand, who)
 
     form = cset.form
     if form and form not in CREATIVE_FORMS:
@@ -212,4 +222,49 @@ def creative(cset, files, deal, brand, final_ord_id, initial_ord_id=None,
         body['creativeGroupStartDate'] = deal.period_from.isoformat()
     if deal.period_to:
         body['creativeGroupEndDate'] = deal.period_to.isoformat()
+    return body
+
+
+def prio_creative(p, req, deal, brand, final_ord_id, initial_ord_id=None) -> dict:
+    """CreateCreativeRequest — креатив приоритезации одной площадки (владелец 04.11.2026).
+
+    Отличие от комплекта креативов одно: материал — не файл, а приоритетный показ карточки товара в поиске и каталоге
+    аптеки. Поэтому форма `Text` — единственная форма ОРД, которой не нужны медиаданные (остальные, включая
+    «текстово-графический блок», требуют файл; спека v3, проверено на демо-контуре 04.11.2026: 201 и ЕРИД сразу). Текст —
+    название товара из общей части запроса, МНН — в скобках. Остальное — как у комплекта: тот же ККТУ бренда, та же
+    договорная цепочка, флаги явно, детерминированный `nativeCustomerId` как ключ идемпотентности.
+
+    Свой креатив и свой ЕРИД у КАЖДОЙ площадки: площадки согласуют в разное время, а посадочная у каждой своя —
+    дописывать её в уже зарегистрированный креатив значило бы править запись ЕРИР после каждого нового «ок».
+    """
+    who = f"приоритезация, площадка запроса №{p.id}"
+    kktu = _kktu(brand, who)
+    product = _need(getattr(req, 'product_name', None), 'название товара', who)
+    url = _need(getattr(p, 'product_url', None), 'посадочная', who)
+    mnn = (getattr(req, 'target_mnn', None) or '').strip()
+    text = f"{product} ({mnn})" if mnn else product
+    body = {
+        'nativeCustomerId': f"prio-{p.id}",
+        'creativeGroupName': f"{deal.code}-П{p.id}",
+        'finalContractId': _need(final_ord_id, 'доходный договор в ОРД', who),
+        'isSelfPromotion': bool(getattr(deal, 'is_self_promo', False)),
+        'isNative': False,
+        'isSocial': False,
+        'isSocialQuota': False,
+        'isCobranding': False,
+        'kktuCodes': [kktu],
+        'form': 'Text',
+        # Площадке платим за тысячу показов, как в еФарме (владелец 19.10.2026).
+        'type': 'CPM',
+        'textData': [{'textData': text[:1000]}],
+        'advertiserUrls': [url],
+    }
+    if initial_ord_id:
+        body['initialContractId'] = initial_ord_id
+    description = ((brand.ad_object_description if brand else None) or product).strip()
+    body['description'] = description[:1000]
+    if getattr(req, 'date_start', None):
+        body['creativeGroupStartDate'] = req.date_start.isoformat()
+    if getattr(req, 'date_end', None):
+        body['creativeGroupEndDate'] = req.date_end.isoformat()
     return body

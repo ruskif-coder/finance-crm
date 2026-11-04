@@ -235,7 +235,7 @@ def annexes_of(db: Session, m: MasterDeal) -> list:
     from app.sales.models import SalesAnnex
     rows = db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id).order_by(SalesAnnex.id).all()
     base = (m.start_no or 0) + 1
-    main_no = next((a.no for a in rows if a.no is not None and not a.sub_no), None)
+    main_no = next((a.no for a in rows if a.no is not None and not a.sub_no and a.kind != "addons"), None)   # допы бывают со своим №
     word = getattr(db.get(Contract, m.contract_id), "annex_word", None)
     # Номер черновика — тем же словом, что его документ: зафиксированный вид, иначе тумблер договора.
     return [{"id": a.id, "kind": a.kind,

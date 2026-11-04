@@ -1171,6 +1171,13 @@ def prio_tasks(acc=Depends(current_account)):
         return {"items": []}
     with scoped_session(ids) as db:
         rows = db.execute(text("SELECT * FROM pub.prio_task_v1 ORDER BY date_start, prio_id")).all()
+        # Переписка (04.11.2026): замечание площадки и ответ аккаунта по порядку, а не одно последнее сообщение.
+        talk: dict = {}
+        for m in db.execute(text("SELECT prio_id, side, kind, author_name, body, created_at FROM pub.prio_message_v1 "
+                                 "ORDER BY prio_id, message_id")).all():
+            talk.setdefault(m.prio_id, []).append({"side": m.side, "kind": m.kind, "author": m.author_name,
+                                                   "body": m.body,
+                                                   "at": _to_msk(m.created_at).isoformat(timespec="minutes") if m.created_at else None})
     return {"items": [{
         "id": r.prio_id, "publisher_id": r.publisher_id, "site": r.publisher_name,
         "advertiser": r.advertiser, "brand": r.brand, "product": r.product_name,
@@ -1180,6 +1187,7 @@ def prio_tasks(acc=Depends(current_account)):
         "competitors": _prio_list(r.target_competitors), "inn": _prio_list(r.target_mnn),
         "keywords": _prio_list(r.target_meta),
         "waiting_days": (_msk_today() - _to_msk(r.sent_at).date()).days if r.sent_at else None,
+        "messages": talk.get(r.prio_id, []),
     } for r in rows]}
 
 

@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
+import { can, getPermissions } from '@/lib/auth'
 import { MONO, UI, btn, btnSm, inp } from '@/components/salesTableKit'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { fmtDateFull, grp } from '@/lib/salesFormat'
@@ -108,25 +109,49 @@ function Landing({ p, canEdit, onSave }) {
   )
 }
 
-function Erid({ p, canEdit, onSave }) {
-  const [edit, setEdit] = useState(false)
-  const [v, setV] = useState(p.erid || '')
-  if (edit) {
+// ЕРИД площадки выпускает наш ОРД сам после её «ок» (владелец 04.11.2026) — руками не вводится. Здесь только показ:
+// маркер, его статус в ЕРИР и кнопка «выпустить» на случай, когда аккаунт починил причину отказа и не хочет ждать крона.
+const ERID_AFTER_OK = ['черновик', 'у площадки', 'правки']
+const ERID_READY = ['Active', 'Registering', 'RegistrationRequired']   // то же правило, что app/ord/readiness
+
+function Erid({ p, mayIssue, busy, onIssue }) {
+  const small = { fontFamily: MONO, fontSize: 10, textAlign: 'left' }
+  const issueBtn = (label) => mayIssue && (
+    <button type="button" disabled={busy} onClick={onIssue}
+      style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', fontSize: 11, textAlign: 'left' }}>{label}</button>)
+  if (p.status === 'отказ') return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  if (!p.erid) {
+    if (ERID_AFTER_OK.includes(p.status)) return <span style={{ ...small, fontSize: 11, color: 'var(--text-faint)' }}>после «ок» площадки</span>
+    const why = p.erid_blockers || []
+    if (why.length) {
+      return (
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }} title={why.join('; ')}>
+          <span style={{ ...small, fontSize: 11.5, color: 'var(--danger-fg)' }}>не выпущен</span>
+          <span style={{ ...small, ...ELL, color: 'var(--danger-fg)' }}>{why.join('; ')}</span>
+        </span>
+      )
+    }
     return (
-      <span style={{ display: 'flex', gap: 4, minWidth: 0 }}>
-        <input autoFocus value={v} onChange={e => setV(e.target.value)} placeholder="ЕРИД" style={{ ...inp, padding: '5px 8px', fontSize: 12, flex: 1, minWidth: 0, fontFamily: MONO }} />
-        <button type="button" style={btnSm(true)} onClick={async () => { if (await onSave({ erid: v.trim() || null })) setEdit(false) }}>ОК</button>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span style={{ ...small, fontSize: 11.5, color: p.ord_error ? 'var(--danger-fg)' : 'var(--warning-text)' }}
+          title={p.ord_error || undefined}>{p.ord_error ? 'ОРД отказал' : 'выпускается…'}</span>
+        {!!p.ord_error && <span style={{ ...small, ...ELL, color: 'var(--danger-fg)' }} title={p.ord_error}>{p.ord_error}</span>}
+        {issueBtn('выпустить')}
       </span>
     )
   }
-  const draft = canEdit && ['черновик', 'правки'].includes(p.status)
-  if (!p.erid) return draft ? <button type="button" onClick={() => setEdit(true)} style={{ border: 0, background: 'none', padding: 0, color: 'var(--danger-fg)', cursor: 'pointer', fontSize: 12, fontFamily: MONO, textAlign: 'left' }}>нет ЕРИД · указать</button>
-    : <span style={{ color: 'var(--danger-fg)', fontFamily: MONO, fontSize: 12 }}>нет ЕРИД</span>
+  const ready = !!p.erid_ready
+  const failed = p.ord_status === 'RegistrationError'
   return (
-    <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
-      <span title={p.erid} style={{ ...ELL, fontFamily: MONO, fontSize: 12 }}>{p.erid}</span>
-      <button type="button" title="Скопировать ЕРИД" onClick={() => navigator.clipboard?.writeText(p.erid)} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}>⧉</button>
-      {draft && <button type="button" title="Изменить ЕРИД" onClick={() => setEdit(true)} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}>✎</button>}
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
+        <span title={p.erid} style={{ ...ELL, fontFamily: MONO, fontSize: 12 }}>{p.erid}</span>
+        <button type="button" title="Скопировать ЕРИД" onClick={() => navigator.clipboard?.writeText(p.erid)} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}>⧉</button>
+      </span>
+      <span style={{ ...small, ...ELL, color: failed ? 'var(--danger-fg)' : ready ? 'var(--text-faint)' : 'var(--warning-text)' }}
+        title={p.ord_error || `статус регистрации в ЕРИР: ${p.ord_status || 'не получен'}`}>
+        {failed ? `отказ ЕРИР${p.ord_error ? ': ' + p.ord_error : ''}` : ready ? (p.ord_status || '') : `ждёт ЕРИР · ${p.ord_status || 'статус не получен'}`}</span>
+      {(failed || (!ready && !ERID_READY.includes(p.ord_status))) && issueBtn('обновить статус')}
     </span>
   )
 }
@@ -134,10 +159,11 @@ function Erid({ p, canEdit, onSave }) {
 const ACTION = { 'черновик': ['send', 'Отправить', true], 'у площадки': ['remind', 'Напомнить', false], 'правки': ['reply', 'Ответить', false],
   'согласовано': ['launch', 'Запустить', true], 'идёт': ['stop', 'Стоп', false], 'остановлено': ['start', 'Старт', false] }
 
-function Row({ p, canEdit, busy, act, edit, remove }) {
+function Row({ p, canEdit, mayIssue, busy, act, edit, remove }) {
   const [reply, setReply] = useState(null)
   const a = ACTION[p.status]
-  const blocked = p.status === 'черновик' && p.missing.length > 0
+  const noErid = p.status === 'согласовано' && !p.erid_ready
+  const blocked = (p.status === 'черновик' && p.missing.length > 0) || noErid
   return (
     <div style={{ borderBottom: '1px solid var(--border-row)' }}>
       <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center', padding: '11px 4px' }}>
@@ -151,7 +177,7 @@ function Row({ p, canEdit, busy, act, edit, remove }) {
           <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{p.status === 'отказ' ? 'выбыла' : p.weight_pct != null ? `вес ${String(p.weight_pct).replace('.', ',')} %` : '—'}</span>
           {p.fact_imp != null && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)' }} title="факт по суточной статистике системы приоритезации">факт {grp(p.fact_imp)}</span>}
         </span>
-        <Erid key={p.erid || ''} p={p} canEdit={canEdit} onSave={(x) => edit(p.id, x)} />
+        <Erid p={p} mayIssue={mayIssue} busy={busy} onIssue={() => act(p.id, 'erid')} />
         <Landing key={p.product_url || ''} p={p} canEdit={canEdit} onSave={(x) => edit(p.id, x)} />
         <span style={{ fontFamily: MONO, fontSize: 12.5, color: p.product_id ? 'var(--violet-fg)' : 'var(--text-faint)' }}>
           {p.product_id || (p.status === 'у площадки' ? 'ждём' : '—')}</span>
@@ -163,33 +189,60 @@ function Row({ p, canEdit, busy, act, edit, remove }) {
           {canEdit && a && (
             <button type="button" disabled={busy || blocked}
               onClick={() => (a[0] === 'reply' ? setReply('') : act(p.id, a[0]))}
-              title={blocked ? `Не хватает: ${p.missing.join(', ')}` : undefined}
+              title={noErid ? 'Запуск — после выпуска ЕРИД площадки' : blocked ? `Не хватает: ${p.missing.join(', ')}` : undefined}
               style={{ ...btnSm(a[2]), opacity: busy || blocked ? 0.45 : 1,
                 ...(a[0] === 'stop' ? { color: 'var(--danger-fg)', borderColor: 'var(--danger-border)' } : {}) }}>{a[1]}</button>
           )}
-          {blocked && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--danger-fg)', textAlign: 'right' }}>нет {p.missing.join(', ')}</span>}
+          {blocked && !noErid && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--danger-fg)', textAlign: 'right' }}>нет {p.missing.join(', ')}</span>}
+          {noErid && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--warning-text)', textAlign: 'right' }}>ждёт ЕРИД</span>}
           {p.status === 'у площадки' && !!p.reminded_at && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>напомнили {fmtDateTimeShort(p.reminded_at)}</span>}
           {canEdit && p.status === 'черновик' && (
             <button type="button" onClick={() => remove(p.id)} style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)' }}>убрать</button>
           )}
         </span>
       </div>
-      {!!p.remark && ['правки', 'отказ'].includes(p.status) && (
-        <div style={{ margin: '0 4px 11px', padding: '9px 12px', borderRadius: 10, fontSize: 12.5,
-          background: p.status === 'отказ' ? 'var(--danger-tint)' : 'var(--warning-tint)',
-          border: `1px solid ${p.status === 'отказ' ? 'var(--danger-border)' : 'var(--warning-border)'}` }}>
-          <span style={{ ...CAP, color: p.status === 'отказ' ? 'var(--danger-fg)' : 'var(--warning-text)' }}>
-            {p.status === 'отказ' ? 'отказ площадки' : 'замечание площадки'}</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-faint)', marginLeft: 8 }}>{fmtDateTimeShort(p.remark.at)}</span>
-          <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>{p.name} {p.status === 'отказ' ? 'отказала' : 'вернула с замечанием'}: «{p.remark.text}»</div>
-          {reply != null && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <input autoFocus value={reply} onChange={e => setReply(e.target.value)} placeholder="ответ площадке" style={{ ...inp, flex: 1 }} />
-              <button type="button" style={btn(false)} onClick={() => setReply(null)}>Отмена</button>
-              <button type="button" disabled={busy || !reply.trim()} style={{ ...btn(true), opacity: busy || !reply.trim() ? 0.5 : 1 }}
-                onClick={async () => { if (await act(p.id, 'reply', reply.trim())) setReply(null) }}>Отправить снова</button>
-            </div>
-          )}
+      {(talk(p).length > 0 || reply != null) && (
+        <Thread p={p} reply={reply} setReply={setReply} busy={busy} act={act} />
+      )}
+    </div>
+  )
+}
+
+// Переписка по площадке (04.11.2026): каждый ход — строкой, замечание площадки больше не затирается ответом. Показываем
+// ходы с текстом и отказ/согласование; «отправка» и «напоминание» без текста — шум, они видны статусом и датой.
+const KIND_LABEL = { 'замечание': 'вернула с замечанием', 'отказ': 'отказала', 'ответ': 'ответ аккаунта',
+  'согласование': 'согласовала', 'отправка': 'отправлено', 'напоминание': 'напомнили' }
+const talk = (p) => (p.messages || []).filter(m => m.body || m.kind === 'согласование')
+
+function Thread({ p, reply, setReply, busy, act }) {
+  const last = talk(p).slice(-1)[0]
+  const tone = p.status === 'отказ' ? ['var(--danger-tint)', 'var(--danger-border)'] : p.status === 'правки'
+    ? ['var(--warning-tint)', 'var(--warning-border)'] : ['var(--bg-subtle)', 'var(--border-card)']
+  return (
+    <div style={{ margin: '0 4px 11px', padding: '9px 12px', borderRadius: 10, fontSize: 12.5, background: tone[0], border: `1px solid ${tone[1]}`,
+      display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ ...CAP, color: 'var(--text-muted)' }}>переписка с площадкой</span>
+      {talk(p).map((m, i) => {
+        const site = m.side === 'площадка'
+        const bad = m.kind === 'отказ'
+        return (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: site ? 0 : 14,
+            borderLeft: site ? 'none' : '2px solid var(--border-card)' }}>
+            <span style={{ fontSize: 11, color: bad ? 'var(--danger-fg)' : 'var(--text-muted)' }}>
+              <b style={{ fontWeight: 600 }}>{site ? (m.author || p.name) : (m.author || 'мы')}</b> · {KIND_LABEL[m.kind] || m.kind}
+              <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>{fmtDateTimeShort(m.at)}</span>
+              {m === last && p.status === 'правки' && site && <span style={{ color: 'var(--warning-text)', marginLeft: 8 }}>ждёт вашего ответа</span>}
+            </span>
+            {!!m.body && <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>«{m.body}»</div>}
+          </div>
+        )
+      })}
+      {reply != null && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+          <input autoFocus value={reply} onChange={e => setReply(e.target.value)} placeholder="ответ площадке" style={{ ...inp, flex: 1 }} />
+          <button type="button" style={btn(false)} onClick={() => setReply(null)}>Отмена</button>
+          <button type="button" disabled={busy || !reply.trim()} style={{ ...btn(true), opacity: busy || !reply.trim() ? 0.5 : 1 }}
+            onClick={async () => { if (await act(p.id, 'reply', reply.trim())) setReply(null) }}>Отправить снова</button>
         </div>
       )}
     </div>
@@ -220,6 +273,9 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
   const [pubs, setPubs] = useState([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // Выпуск ЕРИД — запись в ЕРИР, право `ord_submit` (как у кнопки комплекта креативов); localStorage — только в эффекте.
+  const [mayIssue, setMayIssue] = useState(false)
+  useEffect(() => { setMayIssue(!!canEdit && can(getPermissions(), 'ord_submit', 'create')) }, [canEdit])
   const base = `/prio/deal/${dealId}`
   const load = useCallback(() => {
     api.get(base, auth()).then(r => { setS(r.data); setErr('') }).catch(e => setErr(e?.response?.data?.detail || 'Запрос не загрузился'))
@@ -270,7 +326,7 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
           border: '1px solid var(--warning-border)', color: 'var(--warning-text)' }}>
           У площадок запроса нет расчётного индекса — объём поделён поровну. Индекс считает балансировщик (Трафики → Балансировщик).</div>}
         {s.placements.length === 0 && <div style={{ padding: '14px 4px', fontSize: 12.5, color: 'var(--text-faint)' }}>Площадок ещё нет — добавьте.</div>}
-        {s.placements.map(p => <Row key={`${p.id}:${p.status}:${p.remark?.at || ''}`} p={p} canEdit={canEdit} busy={busy} act={act} edit={edit} remove={remove} />)}
+        {s.placements.map(p => <Row key={`${p.id}:${p.status}:${(p.messages || []).length}`} p={p} canEdit={canEdit} mayIssue={mayIssue} busy={busy} act={act} edit={edit} remove={remove} />)}
         {canEdit && <AddRow pubs={pubs} taken={s.placements.map(p => p.publisher_id)} busy={busy}
           onAdd={(publisher_id) => call(() => api.post(`${base}/placements`, { publisher_id }, auth()))} />}
         {!!err && <div style={{ fontSize: 12, color: 'var(--danger-fg)', marginTop: 8 }}>{err}</div>}

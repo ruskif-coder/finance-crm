@@ -6,6 +6,7 @@
  * Длинные тексты — в окне «Подробнее», целиком, чипами с «копировать». Денег нет.
  */
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
 import safeHref from '../lib/safeHref'
@@ -81,7 +82,10 @@ function Details({ t, stTone, stLabel, busy, canApprove, onApprove, onAsk, onClo
   }, [onClose])
   const cell = { display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 14px', minWidth: 0 }
   const val = { fontSize: 13.5, fontWeight: 600, textWrap: 'pretty', overflowWrap: 'anywhere' }
-  return (
+  // Порталом в body, как окна сверки (`ReconTask`): карточка-родитель живёт на анимации `.rise` (transform), и
+  // `position: fixed` внутри неё отсчитывался от карточки — подложка закрывала одну карточку, окно обрезалось её краем
+  // (проверка кабинета 04.11.2026).
+  return createPortal(
     <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'var(--overlay)',
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '6vh 16px', overflowY: 'auto' }}>
       <div style={{ width: '100%', maxWidth: 760, background: C.card, borderRadius: 18, boxShadow: 'var(--shadow-float)',
@@ -106,7 +110,8 @@ function Details({ t, stTone, stLabel, busy, canApprove, onApprove, onAsk, onClo
           <span style={{ ...cell, borderLeft: `1px solid ${C.row}` }}><span style={{ ...CAP, marginBottom: 0 }}>целевые показы</span>
             <span style={{ ...val, fontFamily: MONO }}>{fmtN(t.target_impressions)}</span></span>
           <span style={{ ...cell, borderLeft: `1px solid ${C.row}` }}><span style={{ ...CAP, marginBottom: 0 }}>ЕРИД</span>
-            <span style={{ ...val, fontFamily: MONO }}>{t.erid || '—'}</span></span>
+            <span style={{ ...val, fontFamily: MONO, ...(t.erid ? {} : { color: C.faint, fontFamily: UI, fontWeight: 500, fontSize: 12.5 }) }}>
+              {t.erid || 'выпустим после согласования'}</span></span>
         </div>
         <ListBlock title="Конкуренты" items={t.competitors} />
         <ListBlock title="МНН" items={t.inn} />
@@ -120,7 +125,8 @@ function Details({ t, stTone, stLabel, busy, canApprove, onApprove, onAsk, onClo
           </>}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -139,6 +145,7 @@ export default function PrioTask({ t, today, canApprove, onDone, onErr }) {
   const skuOk = SKU_RE.test(sku.trim())
   const hasSku = SKU_RE.test(t.sku || '')
   const n = (a, w) => `${a.length} ${w(a.length)}`
+  const talk = (t.messages || []).filter(m => m.body)
 
   const run = async (fn, msg) => {
     setBusy(true)
@@ -189,6 +196,26 @@ export default function PrioTask({ t, today, canApprove, onDone, onErr }) {
           {!canApprove && <span style={{ fontSize: 11.5, color: C.faint }}>у вас доступ только на просмотр</span>}
         </span>
       </div>
+
+      {/* Переписка по запросу (04.11.2026): своё замечание и ответ аккаунта под ним — раньше ответ затирал замечание,
+          а в карточке не было ни того, ни другого (только в письме). */}
+      {talk.length > 0 && (
+        <div style={{ background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 11, padding: '9px 12px', fontSize: 12.5,
+          display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ ...CAP, marginBottom: 0 }}>переписка по запросу</span>
+          {talk.map((m, i) => (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: m.side === 'площадка' ? 0 : 12,
+              borderLeft: m.side === 'площадка' ? 'none' : `2px solid ${C.border}` }}>
+              <span style={{ fontSize: 11, color: C.muted }}>
+                <b style={{ fontWeight: 600 }}>{m.side === 'площадка' ? (m.author || 'вы') : 'SIMB-AD'}</b>
+                {' · '}{m.side === 'площадка' ? 'ваше замечание' : 'ответ'}
+                <span style={{ color: C.faint, marginLeft: 8, fontFamily: MONO }}>{m.at ? `${dm(m.at)} ${String(m.at).slice(11, 16)}` : ''}</span>
+              </span>
+              <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>«{m.body}»</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {canApprove && editSku && !ask && (
         <div style={{ background: C.accentTint, border: `1px solid ${C.accentBorder}`, borderRadius: 12, padding: '10px 12px',

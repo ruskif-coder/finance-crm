@@ -37,7 +37,7 @@ def env(monkeypatch):
     db.execute(text("UPDATE sales_publishers SET prio_site_id = 7777 WHERE id = :p"), {"p": acc[1]})
     S.save_common(db, d, {"product_name": "Аллервэй 5мг"}, _U())
     p = S.add_placement(db, d, acc[1], _U())
-    S.edit_placement(db, d, p.id, {"erid": "2SDtest", "product_url": "https://apteka.example/p/1"})
+    S.edit_placement(db, d, p.id, {"product_url": "https://apteka.example/p/1"})
     S.send(db, d, p.id, _U())
     monkeypatch.setattr(db, "commit", db.flush)            # шлюз коммитит — в тесте только flush
     try:
@@ -47,14 +47,21 @@ def env(monkeypatch):
         db.close()
 
 
-def test_sku_and_approve_via_gateway(env):
+def test_sku_and_approve_via_gateway(env, monkeypatch):
     db, acc_id, pub, p = env
+    asked = []                                             # ЕРИД после «ок» — сразу, тем же запросом (04.11.2026)
+    monkeypatch.setattr("app.prio.erid.issue_after_verdict", lambda db_, pid: asked.append(pid))
     with pytest.raises(HTTPException) as e:
         G.cabinet_prio_sku(p.id, G.CabinetPrioSkuIn(publisher_id=pub, account_id=acc_id, sku="12", author_name="т"), db)
     assert e.value.status_code == 400
     G.cabinet_prio_sku(p.id, G.CabinetPrioSkuIn(publisher_id=pub, account_id=acc_id, sku="1234567", author_name="т"), db)
-    out = G.cabinet_prio_verdict(p.id, G.CabinetPrioVerdictIn(publisher_id=pub, account_id=acc_id, verdict="ок", author_name="т"), db)
+    from fastapi import BackgroundTasks
+    bg = BackgroundTasks()
+    out = G.cabinet_prio_verdict(p.id, G.CabinetPrioVerdictIn(publisher_id=pub, account_id=acc_id, verdict="ок", author_name="т"), db, bg=bg)
     assert out["status"] == M.APPROVED
+    # Ревью 05.11.2026: ОРД отвечает до 40 с, а кабинет ждёт шлюз 15 с — выпуск после ответа площадке, в фоне.
+    assert asked == [], "ЕРИД выпускался внутри запроса кабинета"
+    assert [(t.func, t.args) for t in bg.tasks] == [(G._erid_after_ok, (p.id,))], "после «ок» площадки выпуск ЕРИД не запрошен"
     kinds = [r[0] for r in db.execute(text("SELECT action FROM cabinet_log WHERE entity_type = 'prio_placement' AND entity_id = :e"),
                                       {"e": p.id})]
     assert set(kinds) >= {"приоритезация_sku", "приоритезация_ок"}

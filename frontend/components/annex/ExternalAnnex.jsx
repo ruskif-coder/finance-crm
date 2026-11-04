@@ -57,7 +57,7 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
       .catch(() => setErr('Справочник услуг не загрузился — список пуст не потому, что услуг нет'))
     api.get('/sales/directories/services/addons?only_active=true', auth()).then(r => setAddons(r.data?.items || []))
       .catch(() => setErr('Справочник доп. услуг не загрузился — список пуст не потому, что их нет'))
-    setF({ no: defaultNo || '', number: '', date: defaultDate || '', how: 'file', link: '', total: annex.total_amount ? String(annex.total_amount) : '',
+    setF({ no: defaultNo || '', own: false, number: '', date: defaultDate || '', how: 'file', link: '', total: annex.total_amount ? String(annex.total_amount) : '',
            rows: [{ key: '', amount: annex.total_amount ? String(annex.total_amount) : '', volume: '' }] })
     setFile(null)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,6 +69,7 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
       const body = new FormData()
       body.append('no', f.no); body.append('doc_date', f.date); body.append('total', String(num(f.total)))
       body.append('number', f.number)
+      if (f.own) body.append('own_number', 'true')
       body.append('items', JSON.stringify(f.rows.filter(r => r.key).map(r => {
         const [kind, id] = r.key.split(':')
         return { [kind === 's' ? 'service_id' : 'addon_id']: Number(id), amount: num(r.amount), volume: r.volume === '' ? null : num(r.volume) }
@@ -99,6 +100,16 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
               <label><div style={LBL}>Как в документе · необязательно</div><input value={f.number} onChange={set('number')} placeholder="Дополнительное соглашение № 30" style={{ ...inp, width: '100%' }} /></label>
               <label><div style={LBL}>Дата</div><input type="date" value={f.date} onChange={set('date')} style={{ ...inp, width: '100%', fontFamily: MONO }} /></label>
             </div>
+            {/* ДС допов у клиента бывает отдельным документом со своим номером (№ 29), а не «28-01» — владелец 05.11.2026 */}
+            {annex.master?.kind === 'addons' && (
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}>
+                <input type="checkbox" checked={f.own} onChange={e => setF(s => ({ ...s, own: e.target.checked }))} />
+                свой номер, не суффикс основного ДС
+                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                  {f.own ? `ДС получит № ${f.no || '…'}` : `ДС получит № ${f.no || '…'}-01`}
+                </span>
+              </label>
+            )}
             <div>
               <div style={{ ...LBL, marginBottom: 6 }}>Документ</div>
               <div style={{ display: 'flex', gap: 16, marginBottom: 8, fontSize: 13 }}>

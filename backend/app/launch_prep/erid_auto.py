@@ -243,11 +243,31 @@ def catch_up(db, dry_run: bool = False) -> list:
     return erid_service.announce_pending(db, dry_run=dry_run)
 
 
+def _merge_prio(db, issued: dict, refreshed: dict, dry_run: bool) -> None:
+    """Площадки приоритезации (04.11.2026) — тем же прогоном: выпуск ЕРИД согласовавшим без маркера и опрос статуса
+    (`app/prio/erid.run_part`). Их строки ложатся в те же списки, что у комплектов (`set_id` = «П<id>»), поэтому отчёт,
+    строка на экране «Статус» и тревога о сбое у них общие. Сбой этой доли — сбой прогона, а не тишина."""
+    from app.prio import erid as prio_erid
+    try:
+        part = prio_erid.run_part(db, dry_run=dry_run)
+    except Exception as e:  # noqa: BLE001 — комплекты уже обработаны; доля приоритезации падает отдельной строкой
+        db.rollback()
+        log.exception("автовыпуск ЕРИД: приоритезация")
+        issued["failed"].append({"set_id": "П—", "deal": "приоритезация", "error": str(e)})
+        return
+    for k in ("issued", "pending", "blocked", "failed"):
+        issued[k].extend(part[k])
+    refreshed["checked"] += part["checked"]
+    refreshed["changed"].extend(part["changed"])
+    refreshed["failed"].extend(part["refresh_failed"])
+
+
 def run(dry_run: bool = False) -> dict:
     db = SessionLocal()
     try:
         issued = issue_due(db, dry_run=dry_run)
         refreshed = refresh_statuses(db, dry_run=dry_run)
+        _merge_prio(db, issued, refreshed, dry_run)
         out = {"issue": issued, "refresh": refreshed, "dry_run": dry_run}
         try:
             out["caught_up"] = catch_up(db, dry_run=dry_run)

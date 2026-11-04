@@ -14,6 +14,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ord import readiness
 from app.prio import models as M
 
 SKU_RE = re.compile(r"^\d{4,}$")
@@ -151,8 +152,7 @@ def missing(p: M.PrioPlacement, site_id: Optional[int]) -> list:
     out = []
     if not site_id:
         out.append("site_id")
-    if not (p.erid or "").strip():
-        out.append("ЕРИД")
+    # ЕРИД до отправки не нужен: его выпускает наш ОРД после «ок» площадки (владелец 04.11.2026, `app/prio/erid.py`).
     if not (p.product_url or "").strip():
         out.append("посадочной")
     if not p.goal_imp:
@@ -162,6 +162,15 @@ def missing(p: M.PrioPlacement, site_id: Optional[int]) -> list:
 
 def _user_name(db: Session, uid: Optional[int]) -> Optional[str]:
     return db.execute(text("SELECT coalesce(name, email) FROM users WHERE id = :u"), {"u": uid}).scalar() if uid else None
+
+
+def _erid_blockers(db: Session, deal, pl) -> list:
+    """Почему ЕРИД согласованной площадки не выпускается — то же, что крон пишет в отчёт (`prio/erid.blockers`). Без этого
+    аккаунт видел «выпускается…» бесконечно, а причина жила только в отчёте прогона (проверка 04.11.2026)."""
+    from app.prio import erid as E
+    if (pl.erid or "").strip() or pl.status not in E.NEEDS_ERID:
+        return []
+    return E.blockers(db, deal, pl)
 
 
 def view(db: Session, deal) -> dict:
@@ -193,6 +202,9 @@ def view(db: Session, deal) -> dict:
             pl = db.get(M.PrioPlacement, p)
             rows.append({"id": pl.id, "publisher_id": pl.publisher_id, "name": name, "site_id": site,
                          "goal_imp": pl.goal_imp, "index": idx.get(pl.publisher_id), "erid": pl.erid, "product_url": pl.product_url, "product_id": pl.product_id,
+                         "erid_ready": readiness.erid_ready(pl), "ord_status": pl.ord_status, "ord_error": pl.ord_error,
+                         "erid_blockers": _erid_blockers(db, deal, pl),
+                         "messages": messages(db, pl.id),
                          "status": pl.status, "camp_id": pl.camp_id, "toggle_on": pl.toggle_on,
                          "fact_imp": fact.get(pl.camp_id) if pl.camp_id else None,
                          "goal_reached_at": pl.goal_reached_at.isoformat(timespec="seconds") if pl.goal_reached_at else None,
@@ -212,7 +224,7 @@ def view(db: Session, deal) -> dict:
             "plan_volume": plan_volume(db, deal), "no_index": bool(idx) and not tot,
             "pipeline": [{"status": s, "count": counts[s]} for s in PIPELINE],
             "ready_to_send": sum(1 for x in rows if x["status"] == M.DRAFT and not x["missing"]),
-            "ready_to_launch": sum(1 for x in rows if x["status"] == M.APPROVED)}
+            "ready_to_launch": sum(1 for x in rows if x["status"] == M.APPROVED and x["erid_ready"])}
 
 
 # ── правки аккаунта ───────────────────────────────────────────────────────────────────────────────
@@ -228,10 +240,43 @@ def save_common(db: Session, deal, data: dict, user) -> M.PrioRequest:
             v = join_list(v) if k.startswith("target_") else ((v or "").strip() or None)
             if k == "product_name" and not v:
                 raise PrioError(400, "Название товара не может быть пустым")
+            if k == "product_name" and v != r.product_name:
+                _assert_no_erid_yet(db, r)
+                _clear_ord_refusals(db, r)
             setattr(r, k, v)
     r.updated_by, r.updated_at = getattr(user, "id", None), datetime.utcnow()
     db.flush()
     return r
+
+
+# ── переписка ─────────────────────────────────────────────────────────────────────────────────────
+
+def _author(db: Session, user) -> tuple:
+    """Имя и почта нашего сотрудника снимком; без пользователя (крон) — пусто."""
+    if user is None:
+        return None, None
+    return getattr(user, "name", None), getattr(user, "email", None)
+
+
+def say(db: Session, p: M.PrioPlacement, side: str, kind: str, body: Optional[str] = None,
+        author_name: Optional[str] = None, author_email: Optional[str] = None) -> M.PrioMessage:
+    """Ход в переписке площадки (04.11.2026). Текстовый ход становится и последним сообщением `comment` — его читают
+    уведомления и кабинетный `prio_task_v1`; отдельной записи в `comment` нигде больше нет."""
+    body = (body or "").strip() or None
+    m = M.PrioMessage(placement_id=p.id, side=side, kind=kind, body=body,
+                      author_name=author_name, author_email=author_email, created_at=datetime.utcnow())
+    db.add(m)
+    if body:
+        p.comment, p.comment_at = body, m.created_at
+    db.flush()
+    return m
+
+
+def messages(db: Session, placement_id: int) -> list:
+    return [{"side": m.side, "kind": m.kind, "body": m.body, "author": m.author_name,
+             "at": m.created_at.isoformat(timespec="seconds") if m.created_at else None}
+            for m in db.query(M.PrioMessage).filter(M.PrioMessage.placement_id == placement_id)
+                       .order_by(M.PrioMessage.id).all()]
 
 
 def placement(db: Session, deal, pid: int) -> M.PrioPlacement:
@@ -268,6 +313,17 @@ def remove_placement(db: Session, deal, pid: int) -> None:
 EDITABLE = (M.DRAFT, M.REWORK, M.AT_SITE, M.APPROVED)
 
 
+def _assert_no_erid_yet(db: Session, r) -> None:
+    """Название товара — текст креатива в ЕРИР: после выпуска ЕРИД хоть одной площадке оно заморожено (ревью 05.11.2026)."""
+    if db.query(M.PrioPlacement.id).filter(M.PrioPlacement.request_id == r.id, M.PrioPlacement.erid.isnot(None)).first():
+        raise PrioError(409, "ЕРИД уже выпущен с этим названием товара — в ЕРИР креатив останется прежним")
+
+
+def _clear_ord_refusals(db: Session, r) -> None:
+    db.query(M.PrioPlacement).filter(M.PrioPlacement.request_id == r.id, M.PrioPlacement.erid.is_(None),
+                                     M.PrioPlacement.ord_error.isnot(None)).update({"ord_error": None}, synchronize_session=False)
+
+
 def edit_placement(db: Session, deal, pid: int, data: dict) -> M.PrioPlacement:
     """Посадочная, ЕРИД, цель — аккаунт. После запуска — через «Стоп» (правка уходит в систему приоритезации отдельно)."""
     p = placement(db, deal, pid)
@@ -277,9 +333,13 @@ def edit_placement(db: Session, deal, pid: int, data: dict) -> M.PrioPlacement:
         u = (data["product_url"] or "").strip()
         if u and not URL_RE.match(u):
             raise PrioError(400, "Посадочная — ссылка вида https://…")
+        if (u or None) != p.product_url:
+            if (p.erid or "").strip():
+                raise PrioError(409, "ЕРИД уже выпущен на эту посадочную — креатив в ЕРИР с ней и останется; другая посадочная — новый запрос площадке")
+            p.ord_error = None             # данные поправили — крон повторит выпуск
         p.product_url = u or None
     if "erid" in data:
-        p.erid = (data["erid"] or "").strip() or None
+        raise PrioError(400, "ЕРИД не вводится руками: его выпускает ОРД, когда площадка согласует запрос")
     if "goal_imp" in data:
         raise PrioError(400, "Цель площадки не правится руками: она раскладывается по расчётному индексу площадки")
     p.updated_at = datetime.utcnow()
@@ -302,7 +362,7 @@ def send(db: Session, deal, pid: int, user) -> M.PrioPlacement:
     if not (r.product_name and r.date_start and r.date_end):
         raise PrioError(409, "Заполните общую часть: название товара и период")
     p.status, p.sent_at, p.updated_at = M.AT_SITE, datetime.utcnow(), datetime.utcnow()
-    db.flush()
+    say(db, p, "мы", "отправка", None, *_author(db, user))
     return p
 
 
@@ -311,7 +371,7 @@ def remind(db: Session, deal, pid: int, user) -> M.PrioPlacement:
     if p.status != M.AT_SITE:
         raise PrioError(409, "Напомнить можно, пока запрос у площадки")
     p.reminded_at = datetime.utcnow()
-    db.flush()
+    say(db, p, "мы", "напоминание", None, *_author(db, user))
     return p
 
 
@@ -322,7 +382,8 @@ def reply(db: Session, deal, pid: int, text_: str, user) -> M.PrioPlacement:
         raise PrioError(409, "Ответить можно на замечание площадки (статус «правки»)")
     if not (text_ or "").strip():
         raise PrioError(400, "Напишите ответ площадке")
-    p.comment, p.comment_by, p.comment_at = text_.strip(), getattr(user, "id", None), datetime.utcnow()
+    p.comment_by = getattr(user, "id", None)
+    say(db, p, "мы", "ответ", text_, *_author(db, user))
     p.status, p.updated_at = M.AT_SITE, datetime.utcnow()
     db.flush()
     return p
@@ -341,7 +402,8 @@ def set_sku(db: Session, p: M.PrioPlacement, sku: str) -> M.PrioPlacement:
     return p
 
 
-def verdict(db: Session, p: M.PrioPlacement, verdict_: str, reason: Optional[str], by_user_id: Optional[int] = None) -> M.PrioPlacement:
+def verdict(db: Session, p: M.PrioPlacement, verdict_: str, reason: Optional[str], by_user_id: Optional[int] = None,
+            author_name: Optional[str] = None, author_email: Optional[str] = None) -> M.PrioPlacement:
     """Площадка: «ок» — согласовать (нужен SKU), «вернуть» — замечание аккаунту, «отказ» — причина, РК в архив."""
     # Двойной ответ («ок» и «отказ» почти одновременно) проходил оба раза: проверка статуса — под замком строки (аудит 21.10.2026)
     db.flush()
@@ -358,10 +420,12 @@ def verdict(db: Session, p: M.PrioPlacement, verdict_: str, reason: Optional[str
         if not SKU_RE.match(p.product_id or ""):
             raise PrioError(409, "Сначала укажите SKU товара")
         p.status, p.approved_at = M.APPROVED, now
+        say(db, p, "площадка", "согласование", None, author_name, author_email)
     elif verdict_ in ("вернуть", "отказ"):
         if not reason:
             raise PrioError(400, "Напишите замечание" if verdict_ == "вернуть" else "Укажите причину отказа")
-        p.comment, p.comment_by, p.comment_at = reason, by_user_id, now
+        p.comment_by = by_user_id
+        say(db, p, "площадка", "замечание" if verdict_ == "вернуть" else "отказ", reason, author_name, author_email)
         if verdict_ == "вернуть":
             p.status = M.REWORK
         else:
