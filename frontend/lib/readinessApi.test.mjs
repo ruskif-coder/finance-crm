@@ -107,4 +107,14 @@ const writes = calls => calls.filter(([m]) => m !== 'GET')
   const res = await api.saveBlock(7, 'sk', { sk: [{ id: null, _new: true, target: '12', mode: 'постоплата', percent: '', from: '01.01.2026' }] })
   assert.equal(writes(http.calls).length, 0); assert.ok(res.errors._)
 }
+// СК юрлица двух агентств (прод 04.11.2026, АДЛАБС): подпись и получатель — своего агентства, а не «агентство 87» / первое
+{
+  const v = mapReadiness({ ...RAW, agency: { id: 86, short_name: 'Adlabs' }, sk: [
+    { id: 2, contract_id: 501, agency_id: 86, kind: 'основная', mode: 'постоплата', percent: 30, valid_from: '2026-01-01',
+      contract_number: 'РМ-01/25', agency_name: 'Adlabs' },
+    { id: 15, contract_id: 501, agency_id: 87, kind: 'основная', mode: 'постоплата', percent: 30, valid_from: '2026-01-01',
+      contract_number: 'РМ-01/25', agency_name: 'Havas' }] }, {})
+  assert.equal(v.sk[1].target, 'договор РМ-01/25 · агентство Havas')
+  assert.equal(v.sk[1].recipient, 'Havas')
+}
 console.log('readinessApi: ok')

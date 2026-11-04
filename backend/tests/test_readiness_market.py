@@ -151,3 +151,24 @@ def test_main_sk_rule_missing_and_expiring(db):
     got = _ids(M.checks(db, cp, ON))
     assert f"sk.missing.{ct.id}" not in got and got[f"sk.expiring.{r.id}"]["sev"] == "warn"
     assert any(x["id"] == r.id for x in M.sk_data(db, cp))
+
+
+def test_one_legal_entity_of_two_agencies_names_both(db):
+    """Прод 04.11.2026, АДЛАБС.РУ ООО: юрлицо двух агентств (Adlabs и Havas), правило СК на каждое. Окно подписывало второе
+    правило «агентство 87», получателем — первое агентство, а блок «Агентство» второго не показывал вовсе."""
+    from app.agency_terms.models import SkRule
+    cp = _cp(db)
+    ct = _ct(db, cp)
+    ags = []
+    for name in ("Тест-Адлабс", "Тест-Хавас"):
+        ag = SalesAgency(name=f"{name} {next(_N)}", short_name=name)
+        db.add(ag)
+        db.flush()
+        db.add(SalesAgencyCounterparty(agency_id=ag.id, counterparty_id=cp.id))
+        db.add(SkRule(kind="основная", contract_id=ct.id, agency_id=ag.id, mode="постоплата", percent=30, valid_from=date(2026, 1, 1)))
+        ags.append(ag)
+    db.flush()
+    rows = {r["agency_id"]: r for r in M.sk_data(db, cp)}
+    assert rows[ags[1].id]["agency_name"] == "Тест-Хавас" and rows[ags[1].id]["contract_number"] == ct.contract_number
+    data = M.ag_data(db, cp)
+    assert {a["short_name"] for a in data["agencies"]} == {"Тест-Адлабс", "Тест-Хавас"}

@@ -41,8 +41,12 @@ def ag_data(db: Session, cp) -> Optional[dict]:
     legal = (db.query(SalesAgencyCounterparty.counterparty_id).filter(SalesAgencyCounterparty.agency_id == a.id).all())
     from app.models import Counterparty
     ents = db.query(Counterparty).filter(Counterparty.id.in_([x for (x,) in legal])).order_by(Counterparty.name).all()
+    # Одно юрлицо бывает у нескольких агентств холдинга (АДЛАБС.РУ ООО — Adlabs и Havas, прод 04.11.2026): правится первое,
+    # остальные называются — иначе их правила СК в окне выглядят чужими.
+    others = db.query(SalesAgency).filter(SalesAgency.id.in_(ids)).order_by(SalesAgency.short_name).all()
     return {"id": a.id, "short_name": a.short_name, "holding": a.holding, "name_en": a.name_en, "name_ru": a.name_ru, "note": a.note,
-            "legal_entities": [{"id": c.id, "name": c.name, "inn": c.inn, "self": c.id == cp.id} for c in ents]}
+            "legal_entities": [{"id": c.id, "name": c.name, "inn": c.inn, "self": c.id == cp.id} for c in ents],
+            "agencies": [{"id": x.id, "short_name": x.short_name or x.name} for x in others]}
 
 
 def ad_data(db: Session, cp) -> List[dict]:
@@ -73,9 +77,17 @@ def _rules_of(rules: List[dict], ct_ids, ag_ids, adv_ids) -> List[dict]:
 
 
 def sk_data(db: Session, cp) -> List[dict]:
+    """Правила СК юрлица с подписями: номер договора, агентство, рекламодатель — названием, а не номером строки
+    (правило может быть на агентство, которое окно не правит: юрлицо у двух агентств)."""
     cts = [c for (c,) in db.query(Contract.id).filter(Contract.counterparty_id == cp.id)]
-    return sorted(_rules_of(all_rules(db), set(cts), set(_agency_ids(db, cp)), set(_advertiser_ids(db, cp))),
-                  key=lambda r: (r.get("valid_from") or date.min), reverse=True)
+    rules = sorted(_rules_of(all_rules(db), set(cts), set(_agency_ids(db, cp)), set(_advertiser_ids(db, cp))),
+                   key=lambda r: (r.get("valid_from") or date.min), reverse=True)
+    ids = lambda k: {r[k] for r in rules if r.get(k)}  # noqa: E731
+    numbers = dict(db.query(Contract.id, Contract.contract_number).filter(Contract.id.in_(ids("contract_id") or {0})).all())
+    agencies = {a.id: a.short_name or a.name for a in db.query(SalesAgency).filter(SalesAgency.id.in_(ids("agency_id") or {0}))}
+    advs = {a.id: a.short_name or a.name for a in db.query(SalesAdvertiser).filter(SalesAdvertiser.id.in_(ids("advertiser_id") or {0}))}
+    return [{**r, "contract_number": numbers.get(r.get("contract_id")), "agency_name": agencies.get(r.get("agency_id")),
+             "advertiser_name": advs.get(r.get("advertiser_id"))} for r in rules]
 
 
 def ord_data(db: Session, cp) -> dict:

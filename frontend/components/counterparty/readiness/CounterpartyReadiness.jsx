@@ -692,7 +692,14 @@ function CheckView({ data, onSaveBlock, onUploadDocument, onOpen, onConfirmBank,
         );
 
         if (b.id === 'ag') return (
-          <BlockRow key={b.id} {...common}>
+          <BlockRow key={b.id} {...common} meta={data.agency.agencies?.length > 1 ? `правится ${data.agency.short_name}` : null}>
+            {data.agency.agencies?.length > 1 && (
+              // одно юрлицо у нескольких агентств холдинга — у каждого свои правила СК (прод 04.11.2026: Adlabs и Havas)
+              <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                Это юрлицо — у {plural(data.agency.agencies.length, 'агентства', 'агентств', 'агентств')}: <b>{data.agency.agencies.map(a => a.short_name).join(', ')}</b>.
+                {' '}Остальные правятся в справочнике агентств.
+              </span>
+            )}
             <SchemaGroups groups={SCH.ag} src={D.agency} editing={ed} set={(k, v) => setDraft(d => { d.agency[k] = v; })} hl={edit?.hl} errs={errs} data={data} />
             <Sub>
               <SubTitle title="Юрлица агентства" meta={String(data.agency.legal_entities.length)} />

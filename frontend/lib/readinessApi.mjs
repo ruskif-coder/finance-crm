@@ -48,14 +48,14 @@ export function mapReadiness(raw, history = {}, money = String) {
     ...a, exclude_from_revenue: a.exclude_from_revenue ? 'да' : 'нет',
     collapsed: !touched(checks, ['ad'], [a.id, ...a.brands.map(b => b.id)]),
   }))
-  const advName = Object.fromEntries((raw.advertisers || []).map(a => [a.id, a.short_name]))
   const sk = raw.sk && raw.sk.map(r => ({
     id: r.id, _raw: r,
-    target: [r.contract_id && `договор ${byContract[r.contract_id] || r.contract_id}`,
-      r.agency_id && `агентство ${raw.agency?.id === r.agency_id ? raw.agency.short_name : r.agency_id}`,
-      r.advertiser_id && `рекламодатель ${advName[r.advertiser_id] || r.advertiser_id}`,
+    // подписи — с сервера (`market.sk_data`): правило бывает на агентство, которое окно не правит (юрлицо у двух агентств)
+    target: [r.contract_id && `договор ${r.contract_number || byContract[r.contract_id] || r.contract_id}`,
+      r.agency_id && `агентство ${r.agency_name || r.agency_id}`,
+      r.advertiser_id && `рекламодатель ${r.advertiser_name || r.advertiser_id}`,
       r.brand_id && 'бренд'].filter(Boolean).join(' · ') || '—',
-    recipient: raw.agency?.short_name || null, mode: r.mode, percent: pct(r.percent),
+    recipient: r.agency_name || r.advertiser_name || null, mode: r.mode, percent: pct(r.percent),
     from: dmy(r.valid_from), till: dmy(r.valid_to), kind: r.kind,
   }))
   const ord = raw.ord && {
