@@ -204,24 +204,19 @@ def test_bonus_row_has_dashes_in_every_money_column_of_the_word_file():
     assert [c.text.strip() for c in table.rows[1].cells][9] == "345,00"
 
 
-def test_head_and_place_are_editable_and_inherited(db, stub_plan):
-    """Владелец 05.11.2026: «заголовок» и «место и дата» правятся в конструкторе ДС (мастер аккаунт и админ) — в этом ДС и во всех
-    последующих ДС договора (постоянные ключи, наследование как у основания закрывающих)."""
+def test_head_and_place_come_from_the_template_not_from_the_card(db, stub_plan):
+    """Владелец 05.11.2026 (вечер): «заголовок» и «место и дата» правятся ТОЛЬКО в шаблоне — из карточки ДС убраны. Правка,
+    сохранённая в карточке раньше (своя или унаследованная от прошлого ДС), документ не меняет и дальше по цепочке не уходит."""
     m = _model(db)
     assert m["head"]["edited"] is False and "{номер_дс}" in m["head"]["template"]
     assert m["place"]["template"] == AS.PLACE_DEFAULT
-    assert AS.validate_edit(SAMPLE, AS.HEAD_KEY, "Дополнительное соглашение {номер_дс}\nк Договору № {договор_номер}") is None
-    assert AS.validate_edit(SAMPLE, AS.PLACE_KEY, "г. Санкт-Петербург | {дата_дс_полностью}") is None
+    assert AS.validate_edit(SAMPLE, AS.HEAD_KEY, "Дополнительное соглашение {номер_дс}") is not None
 
-    edited = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
-                         edits={AS.PLACE_KEY: "г. Санкт-Петербург | {дата_дс_полностью}"})
-    assert edited["place"]["edited"] and edited["place"]["text"].startswith("г. Санкт-Петербург | «")
-    assert edited["edits"][AS.PLACE_KEY], "правка замораживается — следующий ДС наследует её"
-
-    later = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 12, 1), period_to=date(2026, 12, 31), deal_ids=[1, 2], no=8,
-                        defaults={AS.HEAD_KEY: {"text": "ДС {номер_дс}\nк договору {договор_номер}", "from": "ДС № 7"}})
-    assert later["head"]["inherited_from"] == "ДС № 7" and later["head"]["text"].startswith("ДС №8")
-    assert later["edits"][AS.HEAD_KEY], "унаследованная правка тоже уходит дальше по цепочке"
+    old = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
+                      edits={AS.PLACE_KEY: "г. Санкт-Петербург | {дата_дс_полностью}"},
+                      defaults={AS.HEAD_KEY: {"text": "ДС {номер_дс}", "from": "ДС № 6"}})
+    assert old["place"]["template"] == AS.PLACE_DEFAULT and not old["place"]["edited"]
+    assert old["head"]["inherited_from"] is None and AS.HEAD_KEY not in old["edits"]
 
 
 def test_word_file_prints_the_edited_head_and_place():
@@ -239,30 +234,30 @@ def test_word_file_prints_the_edited_head_and_place():
     assert paras[2] == "г. Казань\t«30» сентября 2026 г."
 
 
-def test_head_edit_needs_the_master_deals_approve_right(db, monkeypatch):
-    """Править заголовок и место — право «Мастер-сделки · согласование» (мастер аккаунт и админ); у прочих пунктов правило прежнее."""
+def test_head_edit_in_the_annex_card_is_refused_even_with_the_right(db, monkeypatch):
+    """Заголовок и место в карточке ДС не правит никто — даже с правом «Мастер-сделки · согласование»: только шаблон (05.11.2026)."""
     from fastapi import HTTPException
     a = db.query(SalesAnnex).filter(SalesAnnex.no.is_(None)).order_by(SalesAnnex.id.desc()).first()
     if a is None:
         pytest.skip("нужен черновик ДС")
-    monkeypatch.setattr(A, "_may_change_rk", lambda db_, u: False)
-    user = SimpleNamespace(id=None, name="тест", role=SimpleNamespace(key="role_8"), role_id=None)
+    monkeypatch.setattr(A, "_may_change_rk", lambda db_, u: True)
+    user = SimpleNamespace(id=None, name="тест", role=SimpleNamespace(key="role_9"), role_id=None)
     monkeypatch.setattr(A, "_annex", lambda db_, aid, u: a)
     with pytest.raises(HTTPException) as e:
         A.edit_block(a.id, A.EditIn(key=AS.HEAD_KEY, text="Заголовок {номер_дс}"), db=db, user=user)
-    assert e.value.status_code == 403
+    assert e.value.status_code == 409
 
 
 def test_head_and_place_text_lives_in_the_template_too(db, stub_plan):
     """Владелец 05.11.2026: заголовок и «место и дата» правятся и в шаблоне (как преамбула) — это текст по умолчанию для всех ДС
-    по шаблону; правка в карточке ДС — поверх него. Без текста в шаблоне и без правок файл печатает как раньше."""
+    по шаблону. Правка в карточке ДС его не перекрывает (05.11.2026, вечер). Без текста в шаблоне файл печатает как раньше."""
     blocks = [dict(b, text="Соглашение {номер_дс}\nк договору {договор_номер}") if b.get("sys") == "head" else dict(b) for b in SAMPLE]
     m = AS.assemble(db, _contract(db), _version(blocks), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7)
     assert m["head"]["custom"] and m["head"]["text"].startswith("Соглашение №7") and not m["head"]["edited"]
     assert not m["place"]["custom"], "место без текста в шаблоне — печатается как раньше"
     own = AS.assemble(db, _contract(db), _version(blocks), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
                       edits={AS.HEAD_KEY: "Своё {номер_дс}"})
-    assert own["head"]["text"] == "Своё №7", "правка в карточке ДС — поверх текста шаблона"
+    assert own["head"]["text"].startswith("Соглашение №7"), "правка в карточке ДС текст шаблона не перекрывает"
 
 
 def test_template_check_validates_head_and_place_text():

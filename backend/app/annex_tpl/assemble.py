@@ -298,14 +298,13 @@ def service_text(db: Session, deal_ids, rows) -> str:
     return ", ".join(dict.fromkeys(x for x in out if x))
 
 
-def _sys_text(key: str, default: str, edits: dict, defaults: dict, values: dict, tpl_text: str = "") -> dict:
-    """Заголовок / «место и дата»: своя правка ДС → унаследованная из прошлого ДС → текст шаблона → стандартный образец.
-    `custom` — печатать этот текст; без правок и текста шаблона файл рисует блок как раньше. `template` в ответе — с чего
-    начинается правка в карточке ДС (текст шаблона, если он есть)."""
-    own, prev = edits.get(key), defaults.get(key)
-    base = (tpl_text or "").strip() or default
-    out = closing_resolve(own or (prev["text"] if prev else base), values, bool(own), prev["from"] if prev and not own else None)
-    return {**out, "custom": bool(own or prev or (tpl_text or "").strip()), "from_template": bool((tpl_text or "").strip())}
+def _sys_text(default: str, values: dict, tpl_text: str = "") -> dict:
+    """Заголовок / «место и дата»: текст шаблона → стандартный образец. Правятся ТОЛЬКО в шаблоне (владелец 05.11.2026:
+    из карточки ДС убрали) — правки, сохранённые в карточке до этого, не читаются. `custom` — печатать этот текст;
+    без текста шаблона файл рисует блок как раньше."""
+    tpl = (tpl_text or "").strip()
+    out = closing_resolve(tpl or default, values, False, None)
+    return {**out, "custom": bool(tpl), "from_template": bool(tpl)}
 
 
 def _tpl_sys(blocks: list, sys_key: str) -> str:
@@ -327,7 +326,7 @@ def validate_edit(blocks: list, key: str, text) -> Optional[str]:
     bad = unknown_keys(text)
     if bad:
         return "Неизвестная подстановка " + ", ".join("{" + k + "}" for k in bad)
-    if key in (CLOSING_KEY, HEAD_KEY, PLACE_KEY):
+    if key == CLOSING_KEY:
         return None
     for i, b in enumerate(blocks):
         if b.get("id") == key and not b.get("sys"):
@@ -466,14 +465,14 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
         "values": values, "blocks": blocks, "table": {"groups": groups, "totals": _totals(rows)},
         # `edits` — ЭФФЕКТИВНЫЕ правки (свои и унаследованные): их и замораживает подтверждение, чтобы следующий ДС наследовал по цепочке.
         "edits": {**{k: v["text"] for k, v in defaults.items()
-                     if k in {b["id"] for b in blocks if b.get("zone") == "acc"} or k in (CLOSING_KEY, HEAD_KEY, PLACE_KEY)},
+                     if k in {b["id"] for b in blocks if b.get("zone") == "acc"} or k == CLOSING_KEY},
                   **edits,
                   # явный сброс «по шаблону» тоже замораживается — иначе следующий ДС снова унаследует текст из-за этого ДС
                   **{k: None for k in reset}},
         "closing_basis": closing_resolve(closing_text or (closing_default["text"] if closing_default else closing_template_for(rows)), values, bool(closing_text),
                                          closing_default["from"] if closing_default and not closing_text else None),
-        "head": _sys_text(HEAD_KEY, HEAD_DEFAULT, edits, defaults, values, _tpl_sys(version.blocks, "head")),
-        "place": _sys_text(PLACE_KEY, PLACE_DEFAULT, edits, defaults, values, _tpl_sys(version.blocks, "place")),
+        "head": _sys_text(HEAD_DEFAULT, values, _tpl_sys(version.blocks, "head")),
+        "place": _sys_text(PLACE_DEFAULT, values, _tpl_sys(version.blocks, "place")),
         # договор и реквизиты сторон — то, без чего документ неликвиден (21.10.2026); подписанта проверяет `party` выше
         "missing": _missing(empties, ex, cu, rows, values["бренд"]) + contract_gaps(db, contract),
         "consistency": consistency(gross, vat, rows),

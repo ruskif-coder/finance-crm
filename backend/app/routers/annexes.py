@@ -404,9 +404,9 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     if frozen and _sent_to_onec(a):
         raise HTTPException(409, "Приложение уже ушло в 1С — править его нельзя")
     key = payload.key
-    if key in (HEAD_KEY, PLACE_KEY) and not _may_change_rk(db, user):
-        # Заголовок и «место и дата» — мастер аккаунт и админ (тот же ромб «Мастер-сделки · согласование», владелец 05.11.2026)
-        raise HTTPException(403, "Заголовок и «место и дату» правит мастер аккаунт или админ (право «Мастер-сделки · согласование»)")
+    if key in (HEAD_KEY, PLACE_KEY):
+        # Заголовок и «место и дата» правятся только в шаблоне ДС (владелец 05.11.2026: из карточки ДС убрали)
+        raise HTTPException(409, "Заголовок и «место и дату» правят в шаблоне ДС, а не в карточке")
     if payload.text is not None:
         if frozen:
             blocks = a.blocks["blocks"]                      # зоны и системные блоки читаются из самого замороженного документа

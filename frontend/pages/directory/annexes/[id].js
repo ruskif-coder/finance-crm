@@ -174,12 +174,9 @@ export default function AnnexAssembly() {
   // Файл договора отдаёт ручка договоров под своим правом. Кнопку без этого права не
   // показываем: она всё равно вернула бы 403, а мёртвая кнопка тратит время каждый раз.
   const [mayViewContracts, setMayViewContracts] = useState(false)
-  // Заголовок и «место и дата» — мастер аккаунт и админ: ромб «Мастер-сделки · согласование» (владелец 05.11.2026)
-  const [mayHead, setMayHead] = useState(false)
   useEffect(() => {
     const perms = getPermissions()
     setMayEdit(can(perms, 'annexes', 'edit'))
-    setMayHead(can(perms, 'annexes', 'edit') && can(perms, 'master_deals', 'approve'))
     setMayViewContracts(can(perms, 'contracts', 'view'))
   }, [])
 
@@ -487,12 +484,7 @@ export default function AnnexAssembly() {
             {a.model && a.model.blocks && !a.model_legacy && !a.external && (
               <div style={SECTION}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                  {mayHead && a.model.head && [['head', 'Заголовок', 'sys_head', 'первая строка — жирным, остальные под ней'],
-                                                ['place', 'Место и дата', 'sys_place', '«|» делит строку: слева место, справа дата']].map(([k, t, key, hint]) => (
-                    <AnnexQuickEdit key={key} title={t} hint={`${hint} · правка переходит на следующие ДС договора · мастер аккаунт и админ`}
-                                    source={a.model[k].template} edited={!!a.model[k].edited} inheritedFrom={a.model[k].inherited_from}
-                                    values={a.model.values} canEdit editedLabel="изменено" onSave={(txt) => saveEdit(key, txt)} />
-                  ))}
+                  {/* Заголовок и «место и дата» здесь не правятся — только в шаблоне ДС (владелец 05.11.2026, вечер) */}
                   {a.model.blocks.filter(b => !b.sys && b.zone === 'acc').map((b, i) => (
                     <AnnexQuickEdit key={b.id} title={`Пункт ${b.num} ${b.title || ''}`} hint="до таблицы медиаплана — правит аккаунт"
                                     source={b.source_text != null ? b.source_text : (b.template_text || '')} defaultText={b.template_text} edited={!!b.edited} inheritedFrom={b.inherited_from} values={a.model.values}
