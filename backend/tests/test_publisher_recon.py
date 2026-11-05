@@ -409,3 +409,20 @@ def test_archived_placement_of_an_agreed_month_stays_in_the_cabinet(ready):
     total = db.execute(text("""SELECT sum(fact) FROM pub.campaign_v1
                                WHERE publisher_id = :p AND to_char(date_from, 'YYYY-MM') = '2026-10'"""), {"p": pid}).scalar()
     assert total == req.recon.agreed_volume
+
+
+def test_last_recon_period_is_the_latest_month_with_a_sent_recon():
+    """Вкладка «Сверки» открывается на последнем месяце, где сверки есть (владелец 05.11.2026), а не на текущем:
+    в начале месяца текущий пуст, а работа — в прошлом. Нет ни одной сверки — None, экран остаётся на текущем."""
+    db = SessionLocal()
+    try:
+        pid = db.execute(text("SELECT id FROM sales_publishers ORDER BY id LIMIT 1")).scalar()
+        before = B.last_period(db)
+        db.add(PublisherRequest(kind="сверка", publisher_id=pid, period="2099-01"))
+        db.add(PublisherRequest(kind="вопрос", publisher_id=pid, period="2099-05"))   # не сверка — не в счёт
+        db.flush()
+        assert B.last_period(db) == "2099-01"
+        assert before is None or before < "2099-01"
+    finally:
+        db.rollback()
+        db.close()

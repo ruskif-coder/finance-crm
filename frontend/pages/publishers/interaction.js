@@ -38,16 +38,20 @@ export default function PublisherInteraction() {
     }
     setPerms(p)
     setView(can(p, 'dir_publishers_approvals', 'view') ? 'stuck' : 'recon')
-    setReady(true)
-  }, [router])
+    api.get('/publisher-recon/last-period', auth())
+      .then(r => r.data.period || current).catch(() => current)
+      // месяц по умолчанию — последний, где сверки уже есть (владелец 05.11.2026); нет ни одной — текущий
+      .then(m => { setMonth(m); setYear(Number(m.slice(0, 4))); setReady(true) })
+  }, [router, current])
 
-  // Счётчик «есть ответ» на вкладке «Сверки» — сразу, а не после её открытия (первой стоит «Подвисшие»).
+  // Счётчик «есть ответ» на вкладке «Сверки» — сразу, а не после её открытия (первой стоит «Подвисшие»); за выбранный
+  // месяц — тот же, что на доске (сначала — последний со сверками), чтобы возврат на вкладку не подменял число.
   const loadCount = useCallback(() => {
-    if (!ready) return
-    api.get(`/publisher-recon/board?period=${current}`, auth())
+    if (!ready || !month) return
+    api.get(`/publisher-recon/board?period=${month}`, auth())
       .then(r => setAnswers(counts(r.data.rows || []).answer))
       .catch(() => setAnswers(0))      // счётчик — подсказка; сама вкладка покажет ошибку, если откроют
-  }, [ready, current])
+  }, [ready, month])
   useEffect(() => { loadCount() }, [loadCount])
   useRefreshOnReturn(loadCount)
 

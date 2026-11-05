@@ -162,6 +162,12 @@ def unagreed_before(db: Session, period: str, today: Optional[date] = None) -> L
     return out
 
 
+def last_period(db: Session) -> Optional[str]:
+    """Последний месяц, за который сверку уже отправляли площадкам, — с него открывается вкладка «Сверки»
+    (владелец 05.11.2026): в начале месяца текущий пуст, а работа идёт по прошлому. Нет ни одной — None."""
+    return db.execute(text("SELECT max(period) FROM publisher_request WHERE kind = 'сверка' AND period ~ '^[0-9]{4}-[0-9]{2}$'")).scalar()
+
+
 def board(db: Session, period: str, today: Optional[date] = None) -> dict:
     today = today or date.today()
     return {"period": period, "start": START, "active": period >= START,

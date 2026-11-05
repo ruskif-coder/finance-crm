@@ -53,6 +53,12 @@ def board(period: Optional[str] = None, db: Session = Depends(get_db), user: Use
     return B.board(db, _period(period or date.today().strftime("%Y-%m")))
 
 
+@router.get("/last-period")
+def last_period(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Месяц, на котором открывать «Сверки»: последний со сверками, иначе текущий (владелец 05.11.2026)."""
+    return {"period": B.last_period(db) or date.today().strftime("%Y-%m")}
+
+
 @router.get("/summary")
 def summary(year: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     year = year or date.today().year
