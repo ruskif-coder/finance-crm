@@ -80,7 +80,7 @@ export default function PlatformsReport({ data, traffic, trafficOptions = [], on
           actLabel="показать по WR" onAct={() => { setFilter('wr'); setMetric('wr'); }} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 520px', gap: 14, alignItems: 'start', ...rise(0.14) }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) clamp(560px, 34vw, 880px)', gap: 14, alignItems: 'start', ...rise(0.14) }}>
         <div style={{ ...card, padding: '14px 18px 12px', display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             {FILTERS.map(([k, label, dot]) => { const on = eff === k, zero = !counts[k]; return (
@@ -108,11 +108,11 @@ export default function PlatformsReport({ data, traffic, trafficOptions = [], on
 
 function Shell({ children, sub, traffic, trafficOptions, onTraffic, onExcel, onBack }) {
   return (
-    <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '22px 30px 40px', display: 'flex', justifyContent: 'center', background: 'var(--bg-canvas)', fontFamily: "'Manrope', sans-serif", color: 'var(--text-primary)' }}>
+    <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '18px 28px 40px', display: 'flex', justifyContent: 'center', background: 'var(--bg-canvas)', fontFamily: "'Manrope', sans-serif", color: 'var(--text-primary)' }}>
       <style>{`@keyframes prRise { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
         .pr-row:hover { background: var(--bg-subtle) }
         @media (prefers-reduced-motion: reduce) { .pr-root * { animation-duration: 1ms !important; animation-delay: 0s !important } }`}</style>
-      <div className="pr-root" style={{ width: '100%', maxWidth: 1860, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="pr-root" style={{ width: '100%', maxWidth: 2500,   /* под 2560, как дашборд (владелец 05.11.2026); в макете — 1860 */ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, ...rise(0) }}>
           <span style={btn} onClick={onBack}>← Дашборд</span>
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

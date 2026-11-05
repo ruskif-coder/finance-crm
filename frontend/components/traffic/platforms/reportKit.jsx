@@ -7,6 +7,8 @@ import React from 'react';
 
 export { MONO } from '@/components/salesTableKit';   // один шрифт с китом (вставка хендоффа 05.11.2026)
 import { MONO } from '@/components/salesTableKit';
+// Статус запуска площадки в РК — той же пилюлей, что в расхлопе РК на дашборде (владелец 05.11.2026)
+import { StatusPill } from '@/components/traffic/dashboardKit';
 
 /** Тон клетки темпа и суток — пороги ТЗ: от 90 % норма, 60–90 % недокрут, ниже 60 % провал. */
 export const toneTempo = v => (v == null ? 'none' : v >= 0.9 ? 'ok' : v >= 0.6 ? 'warn' : 'bad');
@@ -71,11 +73,12 @@ export function VerdictPill({ verdict, wr }) {
 
 /** Полоска по РК. size — ширина квадрата, max — сколько квадратов показать. */
 export function Strip({ cells, metric, size = 10, height = 14, max, showSplit = true }) {
+  // Квадраты резиновые (владелец 05.11.2026, экран под 2560): растут до 1,8 размера на широком, сжимаются на узком — не обрезаются.
   const shown = max ? cells.slice(0, max) : cells;
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
       <span style={{ display: 'flex', gap: 2, height, overflow: 'hidden' }}>
-        {shown.map((c, i) => <span key={i} title={cellTitle(c, metric)} style={{ flex: `0 0 ${size}px`, borderRadius: 2, background: C[c.t] }} />)}
+        {shown.map((c, i) => <span key={i} title={cellTitle(c, metric)} style={{ flex: `1 1 ${size}px`, minWidth: 3, maxWidth: Math.round(size * 1.8), borderRadius: 2, background: C[c.t] }} />)}
       </span>
       {showSplit && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{stripSplit(cells, metric)}</span>}
     </span>
@@ -123,12 +126,12 @@ export function TempoBar({ value }) {
 
 /** Таблица РК площадки (карточка отчёта и раскрытие виджета). Сортировка — по недокруту. */
 export function PlatformRks({ platform, rkByCode, limit, onOpenRk }) {
-  const cols = '72px minmax(0,1fr) 64px 84px 60px';
+  const cols = '72px minmax(0,1fr) 64px 84px 60px 112px';
   const rows = platform.pairs.slice().sort((a, b) => b.under - a.under).slice(0, limit || undefined);
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '0 10px', padding: '0 4px 6px', borderBottom: '1px solid var(--border-inner)' }}>
-        <Cap>РК</Cap><Cap>темп · прогноз к плану</Cap><Cap style={{ textAlign: 'right' }}>сутки</Cap><Cap style={{ textAlign: 'right' }}>недокрут</Cap><Cap style={{ textAlign: 'right' }}>WR</Cap>
+        <Cap>РК</Cap><Cap>темп · прогноз к плану</Cap><Cap style={{ textAlign: 'right' }}>сутки</Cap><Cap style={{ textAlign: 'right' }}>недокрут</Cap><Cap style={{ textAlign: 'right' }}>WR</Cap><Cap style={{ textAlign: 'right' }}>запуск</Cap>
       </div>
       {rows.map(x => { const rk = rkByCode[x.rk]; return (
         <div key={x.rk} style={{ display: 'grid', gridTemplateColumns: cols, gap: '0 10px', alignItems: 'center', padding: '6px 4px', borderBottom: '1px solid var(--border-row)' }}>
@@ -138,6 +141,7 @@ export function PlatformRks({ platform, rkByCode, limit, onOpenRk }) {
           <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right', color: FG[toneTempo(x.day)] }}>{pct(x.day)}</span>
           <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right', color: x.under ? 'var(--text-primary)' : 'var(--text-disabled)' }}>{minus(x.under)}</span>
           <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right', color: FG[toneWr(x.wr, rk.wr_threshold)] }}>{sgn(x.wr)}</span>
+          <span style={{ justifySelf: 'end' }}>{x.status ? <StatusPill value={x.status} w={104} /> : <span style={{ color: 'var(--text-disabled)' }}>—</span>}</span>
         </div>); })}
     </div>
   );
