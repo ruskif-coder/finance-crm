@@ -145,6 +145,16 @@ def account_manager(db: Session, ctx: dict) -> List[int]:
     return _active(db, [rep.user_id]) if rep else []
 
 
+def traffic_manager(db: Session, ctx: dict) -> List[int]:
+    """Ответственный трафик сделки (`deal.traffic_manager_id` → профиль → учётка) — лог РК, 05.11.2026."""
+    deal = ctx.get("deal")
+    if deal is None or not deal.traffic_manager_id:
+        return []
+    from app.sales.models import SalesRep
+    rep = db.query(SalesRep).filter(SalesRep.id == deal.traffic_manager_id).first()
+    return _active(db, [rep.user_id]) if rep else []
+
+
 def master_of_responsible(db: Session, ctx: dict) -> List[int]:
     """Мастер ответственного — подъём по дереву sales_reps.master_id с защитой от цикла.
     Если master_id не заполнен (а он пока не заполнен ни у кого), падаем на запасной
@@ -212,6 +222,7 @@ RESOLVERS = {
     "mp_author": mp_author,
     "responsible": responsible,
     "account_manager": account_manager,
+    "traffic_manager": traffic_manager,
     "sales_rep_of_deal": sales_rep_of_deal,
     "sales_head": sales_head,
     "year_plan_owner": year_plan_owner,
@@ -239,6 +250,7 @@ RESOLVER_CTX = {
     "mp_author": "media_plan",          # SalesMediaPlan
     "responsible": "deal",              # SalesDeal
     "account_manager": "deal",          # SalesDeal
+    "traffic_manager": "deal",          # SalesDeal
     "sales_rep_of_deal": "deal",        # SalesDeal
     "year_plan_owner": "rep_id",        # int или список id SalesRep — владельцы строки
     "master_of_responsible": "deal",    # SalesDeal
@@ -253,6 +265,7 @@ RESOLVER_LABELS = {
     "mp_author": "Автор МП",
     "responsible": "Ответственный",
     "account_manager": "Аккаунт сделки",
+    "traffic_manager": "Трафик сделки",
     "sales_rep_of_deal": "Сейлз сделки",
     "sales_head": "Руководитель отдела продаж",
     "year_plan_owner": "Сейлз годового плана",

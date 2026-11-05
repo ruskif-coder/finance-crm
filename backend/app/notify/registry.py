@@ -732,6 +732,26 @@ register(Event(
     params={"days": 3, "repeat_days": 3},
 ))
 
+# ── Лог РК (владелец 05.11.2026) ─────────────────────────────────────────────
+register(Event(
+    key="rk_note_problem", direction="account", group="Рекламная кампания",
+    title="Проблема в логе РК",
+    description=("Трафик или аккаунт записал в лог РК запись с типом «проблема» — аккаунт сделки узнаёт сразу, "
+                 "а не на сверке. Автору уведомление не приходит."),
+    tone="bad", action="Открыть дашборд", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+))
+
+register(Event(
+    key="rk_note_from_account", direction="traffic", group="Рекламная кампания",
+    title="Аккаунт написал в лог РК",
+    description="Новая запись аккаунта в логе РК — ответственному трафику сделки: договорённость, просьба клиента, проблема.",
+    tone="info", action="Открыть дашборд", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "traffic_manager"}],
+    channels={"app": True},
+))
+
 register(Event(
     key="creative_erid_issued", direction="account", group="Креативы",
     title="ЕРИД выпущен",

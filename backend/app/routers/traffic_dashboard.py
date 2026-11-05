@@ -55,6 +55,7 @@ from app.traffic.delivery_facts import _facts, _creatives_all, _placements_of  #
 
 log = logging.getLogger("finance.traffic_dashboard")
 
+from app.ad import notes as rk_notes  # noqa: E402 — лог РК (05.11.2026)
 router = APIRouter()
 
 VIEW = require_permission("traffic_dashboard", "view")
@@ -1004,6 +1005,9 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
             running=sum(1 for r in out["rows"] if r.get("status") in PLACEMENT_RUNNING),
             waiting=sum(1 for r in out["rows"] if r.get("start_why"))),
         "owners": _owners(db, deal, user),
+        # Лог РК (05.11.2026): счётчик для плитки — без загрузки самого лога; писать — ответственные сделки и админ.
+        "notes_count": rk_notes.count_for(db, c.id),
+        "can_write_notes": rk_notes.can_write(db, deal, user),
         # KPI приёмки из медиаплана — рядом с фактом, чтобы трафик видел, к чему его
         # открутку будут принимать, не открывая карточку сделки (владелец 05.09.2026).
         "goals": build.deal_goals(db, deal.id),
@@ -1055,6 +1059,33 @@ def _owners(db: Session, deal, user: User) -> dict:
 
 class TrafficManagerIn(BaseModel):
     user_id: Optional[int] = None                 # None — снять назначение
+
+
+class NoteIn(BaseModel):
+    kind: str = "note"
+    text: str = ""
+
+
+@router.get("/campaign/{campaign_id}/notes")
+def campaign_notes(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Лог РК: записи новые сверху. Видят все, кому видна РК."""
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    return {"items": rk_notes.list_for(db, c.id), "can_write": rk_notes.can_write(db, _deal, user)}
+
+
+@router.post("/campaign/{campaign_id}/notes", status_code=201)
+def add_campaign_note(campaign_id: int, payload: NoteIn, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Запись в лог РК — отдельной строкой; правки и удаления нет (журнал). Пишут ответственные этой сделки — трафик и
+    аккаунт — и админ: право проверяется по назначению (`ad.notes.can_write`), а не правкой раздела — у аккаунта к
+    дашборду трафика бывает только просмотр."""
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    try:
+        out = rk_notes.add(db, c, deal, user, payload.kind, payload.text)
+        db.commit()
+    except rk_notes.NoteError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    return out
 
 
 @router.put("/campaign/{campaign_id}/traffic-manager")

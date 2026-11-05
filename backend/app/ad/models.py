@@ -267,3 +267,17 @@ class AdCampaignBoost(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     ended_at = Column(DateTime)
     ended_reason = Column(String(32))
+
+
+class AdCampaignNote(Base):
+    """Лог РК — заметка трафика или аккаунта по кампании (владелец 05.11.2026). Только добавление: правку запрещает
+    триггер базы, удаление — только каскадом вместе с РК. Миграция `2026-11-05_ad_campaign_note.sql`."""
+    __tablename__ = "ad_campaign_note"
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("ad_campaign.id", ondelete="CASCADE"), nullable=False)
+    author_id = Column(Integer, ForeignKey("users.id"))
+    author_name = Column(Text, nullable=False)          # снимком: учётку могут удалить
+    kind = Column(String(16), nullable=False, default="note")   # note | agreement | problem
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())

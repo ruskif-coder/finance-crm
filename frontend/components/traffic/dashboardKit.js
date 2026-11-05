@@ -876,7 +876,7 @@ export const Owners = ({ owners, reps, onPick }) => {
       color: faint ? 'var(--text-faint)' : 'var(--text-primary)' }}>{v}</span>
   )
   return (
-    <div style={{ marginLeft: 'auto', minWidth: 260, display: 'flex',
+    <div style={{ marginLeft: 'auto', minWidth: 250, display: 'flex',
       flexDirection: 'column', gap: 4 }}>
       {line('аккаунт', txt(owners.account || 'не назначен', !owners.account))}
       {line('трафик', owners.can_change_traffic
@@ -954,14 +954,24 @@ function MpBrief({ brief }) {
   )
 }
 
+/* Бейдж плитки ряда «Управление РК» — число записей лога, у «Задач» — что задача от аккаунта есть (05.11.2026).
+   Одна деталь на все плитки: квадрат плитки — `position: relative`. */
+export const TileBadge = ({ n }) => (n > 0 ? (
+  <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 18, height: 18, padding: '0 5px', boxSizing: 'border-box',
+    borderRadius: 9, background: 'var(--accent)', color: 'var(--on-accent)', border: '2px solid var(--bg-card)',
+    fontFamily: MONO, fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    {n > 99 ? '99+' : n}
+  </span>
+) : null)
+
 /* Кнопка «Разбор РК» в блоке управления расхлопа — рядом с «Задачи РК» и того же вида (владелец 11.10.2026).
    Ведёт на страницу разбора одной РК: срезы, площадки с галочками, выводы. */
 export const RkReportLink = ({ code }) => (
   <a href={`/traffic/campaign/${encodeURIComponent(code || '')}`} title="Отчёт по РК: срезы, площадки, выводы"
-    style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '2px 8px', textDecoration: 'none' }}>
-    <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 13,
+    style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
+    <span style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, boxSizing: 'border-box', borderRadius: 10,
       background: 'var(--accent-tint)', border: '1px solid var(--accent-border)' }}>
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
       </svg>
     </span>
@@ -1003,11 +1013,13 @@ export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
         title={has ? 'Задачи РК от аккаунта и бриф медиаплана'
           : brief ? 'Задачи от аккаунта нет — есть бриф медиаплана' : 'Аккаунт не заполнил «Цели и особенности РК»'}
         style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
-          gap: 5, cursor: 'pointer', padding: '2px 8px' }}>
-        <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44,
-          borderRadius: 13, background: any ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+          gap: 5, cursor: 'pointer' }}>
+        <span style={{ position: 'relative', display: 'grid', placeItems: 'center', width: 40, height: 40, boxSizing: 'border-box',
+          borderRadius: 10, background: any ? 'var(--accent-tint)' : 'var(--bg-subtle)',
           border: `1px solid ${any ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={fg}
+          {/* Задача от аккаунта прописана — бейдж, как у лога (владелец 05.11.2026) */}
+          <TileBadge n={has ? 1 : 0} />
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={fg}
             strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
             <path d="M14 3v5h5" />

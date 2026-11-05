@@ -52,12 +52,16 @@ VIEW_ONLY_WRITES = {
         "ЗАПИСЬ осознанно: будильник человек ставит САМ СЕБЕ, сделки и чужие данные не меняет — видит экран, может напомнить "
         "себе (владелец 23.10.2026)",
     ("DELETE", "/api/sales-status/reminder/{rid}"): "ЗАПИСЬ осознанно: снять можно только свой будильник (23.10.2026)",
+    ("POST", "/api/traffic-dashboard/campaign/{campaign_id}/notes"):
+        "ЗАПИСЬ осознанно: лог РК пишут ответственные этой сделки (трафик и аккаунт) и админ — проверка по назначению "
+        "внутри (`ad.notes.can_write`), а у аккаунта к дашборду трафика бывает только просмотр (владелец 05.11.2026)",
 }
 
 # Ручки из списка, про которые проверяется «в исходнике нет записи в базу»
 WRITES_ON_PURPOSE = {("POST", "/api/launch-prep/set/{set_id}/erid/refresh"),
                      ("POST", "/api/operations/export/alfa"),
-                     ("PUT", "/api/sales-status/reminder"), ("DELETE", "/api/sales-status/reminder/{rid}")}
+                     ("PUT", "/api/sales-status/reminder"), ("DELETE", "/api/sales-status/reminder/{rid}"),
+                     ("POST", "/api/traffic-dashboard/campaign/{campaign_id}/notes")}
 NO_DB_WRITE = {k for k in VIEW_ONLY_WRITES if k not in WRITES_ON_PURPOSE}
 
 

@@ -42,6 +42,7 @@ import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import { fmtDateTime, todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
+import RkLog, { RkLogTile } from '@/components/traffic/RkLog'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
   GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, RkReportLink, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
@@ -315,6 +316,9 @@ export default function TrafficDashboard() {
   // по строкам, а не по расхлопам.
   const [open, setOpen] = useState(null)      // id открытой РК или null
   const [detail, setDetail] = useState({})    // id РК → площадки
+  // Лог РК (05.11.2026): открыт ли и записи — по id РК; грузится при первом открытии, счётчик до того — из расхлопа
+  const [logOpen, setLogOpen] = useState({})
+  const [rkNotes, setRkNotes] = useState({})
   const [stat, setStat] = useState({})        // id РК → динамика
   const [grain, setGrain] = useState({})      // id РК → день/неделя
   const [range, setRange] = useState({})      // id РК → {from, to} или null
@@ -553,6 +557,26 @@ export default function TrafficDashboard() {
   /* Смена ответственного трафика. Пишет ручка дашборда, а та зовёт ручку сборки —
      назначение живёт в одном месте. Перезагружаем и строку, и расхлоп: ответственный
      виден в расхлопе, а фильтр «чьи РК» в шапке считается по нему же. */
+  const toggleLog = (row) => {
+    const open = !logOpen[row.id]
+    setLogOpen(o => ({ ...o, [row.id]: open }))
+    if (open && !rkNotes[row.id]) {
+      api.get(`/traffic-dashboard/campaign/${row.id}/notes`, auth())
+        .then(r => setRkNotes(n => ({ ...n, [row.id]: r.data.items || [] })))
+        .catch(() => setRkNotes(n => ({ ...n, [row.id]: [] })))
+    }
+  }
+  // Ошибка — исключением с текстом сервера: компонент оставит запись в поле и покажет причину
+  const addNote = async (row, note) => {
+    try {
+      const saved = (await api.post(`/traffic-dashboard/campaign/${row.id}/notes`, note, auth())).data
+      setRkNotes(n => ({ ...n, [row.id]: [saved, ...(n[row.id] || [])] }))
+      return saved
+    } catch (e) {
+      throw new Error(e?.response?.data?.detail || 'Не сохранилось — текст остался в поле, попробуйте ещё раз')
+    }
+  }
+
   const setTraffic = async (row, userId) => {
     try {
       const r = await api.put(`/traffic-dashboard/campaign/${row.id}/traffic-manager`,
@@ -1681,50 +1705,57 @@ export default function TrafficDashboard() {
                             </div>
                           )}
 
-                          <div style={{ marginTop: 12, paddingTop: 10, display: 'flex',
-                            gap: 18, alignItems: 'flex-start', flexWrap: 'wrap',
-                            borderTop: '1px solid var(--border-inner)' }}>
-                            <div style={{ flex: '1 1 340px' }}>
-                              {/* Подпись живёт вместе с кнопками: без права правки под ней
-                                  было бы пусто, а заголовок обещал бы действия. */}
-                              {mayEdit && (<>
-                              <span style={{ ...CAP, marginBottom: 8, display: 'block' }}>управление рк</span>
-                              {/* Цвета — из макета один в один: основное действие заливкой,
-                                  «Стоп» красным контуром (он разрушительный и обязан
-                                  отличаться), «Завершить» синим контуром. Подпись первой
-                                  кнопки зависит от статуса: пауза и возобновление — одно
-                                  состояние, а не два действия. */}
+                          {/* Ряд управления (владелец 05.11.2026): заголовок и подпись — сверху, ниже в одну линию кнопки,
+                              плитки и ответственные; шаг между кнопками и плитками один — 8 px. */}
+                          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>
+                            {mayEdit && (
+                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+                                <span style={{ ...CAP, marginBottom: 0 }}>управление рк</span>
+                                {/* Подпись называет НАШУ стадию: в макете стоит «Предварительная сверка», но в каталоге такой
+                                    стадии нет — после размещения идёт «Итоговая сверка». */}
+                                <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.45 }}>
+                                  «Завершить РК» двигает сделку на стадию «Итоговая сверка» — хозяином снова становится аккаунт.
+                                </span>
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                              {mayEdit && (
                               <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'nowrap' }}>
                                 {/* До выкладки в DSP запуск и стоп заперты (владелец 29.09.2026):
                                     иначе меняется только наша пометка, а в сети — ничего.
                                     Причина — с сервера, тем же правилом, что у ручки. */}
                                 <button disabled={!!r.dsp_block}
-                                  title={r.status === 'запущена' ? undefined
+                                  aria-label={r.status === 'запущена' ? 'Пауза РК' : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
+                                  title={r.status === 'запущена' ? 'Пауза РК'
                                     : (detail[r.id]?.launch_hint || r.launch_hint)
-                                      ? `Запуск заперт: ${detail[r.id]?.launch_hint || r.launch_hint}` : undefined}
+                                      ? `Запуск заперт: ${detail[r.id]?.launch_hint || r.launch_hint}`
+                                      : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
                                   onClick={() => (r.status === 'запущена'
                                     ? setCampaignStatus(r, 'пауза')
                                     /* Старт и возобновление — через окно с планом по площадкам
                                        (01.10.2026): голое «запущена» не поднимало площадки, и
                                        РК «стартовала» с 19 площадками в «ждёт запуска». */
                                     : startCampaign(r))}
-                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                  style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                                     border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--blue)'}`,
                                     background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--blue)',
-                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--on-accent)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
-                                  {r.status === 'запущена' ? 'Пауза РК'
-                                    : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
+                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--on-accent)' }}>
+                                  {r.status === 'запущена'
+                                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1.2" /><rect x="14" y="4" width="5" height="16" rx="1.2" /></svg>
+                                    : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
                                 </button>
-                                <button disabled={!!r.dsp_block} title={r.dsp_block || undefined}
+                                <button disabled={!!r.dsp_block} title={r.dsp_block || 'Стоп РК'} aria-label="Стоп РК"
                                   onClick={() => setCampaignStatus(r, 'остановлена')}
-                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                  style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                                     border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--danger-border)'}`,
                                     background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--bg-card)',
-                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--danger)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
-                                  Стоп
+                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--danger)' }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
                                 </button>
                                 <button onClick={() => finish(r)}
-                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                                  style={{ height: 40, padding: '0 16px', borderRadius: 10, cursor: 'pointer',
                                     border: '1px solid var(--blue-soft)', background: 'var(--bg-card)',
                                     color: 'var(--blue)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
                                   Завершить РК
@@ -1735,7 +1766,7 @@ export default function TrafficDashboard() {
                                   /* Пиктограммой круговых стрелок в одном ряду с остальными
                                      (владелец 03.10.2026); смысл — в подсказке и aria-label. */
                                   <button aria-label="Обновить данные в DSP"
-                                    style={{ width: 34, padding: 0, borderRadius: 10, cursor: 'pointer',
+                                    style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: 'pointer',
                                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                                       border: '1px solid var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)' }}
                                     title="Обновить данные в DSP: перезаписать ссылки, пиксели и таргеты по текущим данным; сначала покажет, что изменится"
@@ -1748,32 +1779,28 @@ export default function TrafficDashboard() {
                                   </button>
                                 )}
                               </span>
-                              {/* Подпись называет НАШУ стадию: в макете стоит «Предварительная
-                                  сверка», но в каталоге такой стадии нет — после размещения
-                                  идёт «Итоговая сверка». */}
-                              {!!r.dsp_block && (
-                                <div style={{ fontSize: 11.5, color: 'var(--warning-text)', marginTop: 8, lineHeight: 1.45 }}>
-                                  Запуск и остановка станут доступны после выгрузки в DSP — кнопка «В DSP» выше.
-                                </div>
                               )}
-                              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8,
-                                lineHeight: 1.45 }}>
-                                «Завершить РК» двигает сделку на стадию «Итоговая сверка» —
-                                хозяином снова становится аккаунт.
-                              </div>
-                              </>)}
-                            </div>
-                            {/* Послание аккаунта — между кнопками и ответственными:
-                                читают его перед тем, как что-то нажать. */}
-                            {/* «Отчёт» и «Задачи» — одной ячейкой: отдельным элементом отчёт выталкивал ответственных на новую строку. */}
-                            <span style={{ display: 'inline-flex', gap: 4 }}>
-                              {mayReport && <RkReportLink code={r.deal_code} />}
+                              <span style={{ display: 'inline-flex', gap: 8, marginLeft: mayEdit ? 16 : 0 }}>
+                              {/* Порядок плиток (владелец 05.11.2026): «Задачи» · «Отчёт» · «Лог РК» */}
                               <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
                                 title={r.deal_title} advertiser={d.advertiser_label} />
-                            </span>
-                            <Owners owners={d.owners} reps={data?.reps}
-                              onPick={uid => setTraffic(r, uid)} />
+                              {mayReport && <RkReportLink code={r.deal_code} />}
+                              <RkLogTile count={rkNotes[r.id] ? rkNotes[r.id].length : (d.notes_count || 0)}
+                                open={!!logOpen[r.id]} onToggle={() => toggleLog(r)} />
+                              </span>
+                              <Owners owners={d.owners} reps={data?.reps}
+                                onPick={uid => setTraffic(r, uid)} />
+                            </div>
+                            {mayEdit && !!r.dsp_block && (
+                              <div style={{ fontSize: 11.5, color: 'var(--warning-text)', marginTop: 8, lineHeight: 1.45 }}>
+                                Запуск и остановка станут доступны после выгрузки в DSP — кнопка «В DSP» выше.
+                              </div>
+                            )}
                           </div>
+                          {!!logOpen[r.id] && (
+                            <RkLog rkCode={r.deal_code} notes={rkNotes[r.id] || []} canWrite={!!d.can_write_notes}
+                              onAdd={note => addNote(r, note)} onClose={() => toggleLog(r)} />
+                          )}
                         </>
                       )}
                     </div>
