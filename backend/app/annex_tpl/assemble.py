@@ -282,12 +282,18 @@ def service_text(db: Session, deal_ids, rows) -> str:
     return ", ".join(dict.fromkeys(x for x in out if x))
 
 
-def _sys_text(key: str, default: str, edits: dict, defaults: dict, values: dict) -> dict:
-    """Заголовок / «место и дата»: своя правка, унаследованная из прошлого ДС или шаблон по умолчанию. `custom` — печатать
-    этот текст; без него файл рисует блок как раньше (по умолчанию ничего не меняется)."""
+def _sys_text(key: str, default: str, edits: dict, defaults: dict, values: dict, tpl_text: str = "") -> dict:
+    """Заголовок / «место и дата»: своя правка ДС → унаследованная из прошлого ДС → текст шаблона → стандартный образец.
+    `custom` — печатать этот текст; без правок и текста шаблона файл рисует блок как раньше. `template` в ответе — с чего
+    начинается правка в карточке ДС (текст шаблона, если он есть)."""
     own, prev = edits.get(key), defaults.get(key)
-    out = closing_resolve(own or (prev["text"] if prev else default), values, bool(own), prev["from"] if prev and not own else None)
-    return {**out, "custom": bool(own or prev)}
+    base = (tpl_text or "").strip() or default
+    out = closing_resolve(own or (prev["text"] if prev else base), values, bool(own), prev["from"] if prev and not own else None)
+    return {**out, "custom": bool(own or prev or (tpl_text or "").strip()), "from_template": bool((tpl_text or "").strip())}
+
+
+def _tpl_sys(blocks: list, sys_key: str) -> str:
+    return next(((b.get("text") or "") for b in blocks or [] if b.get("sys") == sys_key), "")
 
 
 def closing_resolve(template: str, values: dict, edited: bool, inherited_from: Optional[str] = None) -> dict:
@@ -449,8 +455,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
                   **{k: None for k in reset}},
         "closing_basis": closing_resolve(closing_text or (closing_default["text"] if closing_default else closing_template_for(rows)), values, bool(closing_text),
                                          closing_default["from"] if closing_default and not closing_text else None),
-        "head": _sys_text(HEAD_KEY, HEAD_DEFAULT, edits, defaults, values),
-        "place": _sys_text(PLACE_KEY, PLACE_DEFAULT, edits, defaults, values),
+        "head": _sys_text(HEAD_KEY, HEAD_DEFAULT, edits, defaults, values, _tpl_sys(version.blocks, "head")),
+        "place": _sys_text(PLACE_KEY, PLACE_DEFAULT, edits, defaults, values, _tpl_sys(version.blocks, "place")),
         # договор и реквизиты сторон — то, без чего документ неликвиден (21.10.2026); подписанта проверяет `party` выше
         "missing": _missing(empties, ex, cu, rows, values["бренд"]) + contract_gaps(db, contract),
         "consistency": consistency(gross, vat, rows),

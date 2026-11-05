@@ -2,9 +2,11 @@
  * Левые две колонки режима правки (макет 13.10.2026): список блоков и редактор пункта.
  * Состояние живёт в окне-родителе; здесь только показ и вызовы.
  */
+import { useEffect, useState } from 'react'
 import { MONO } from '@/components/salesTableKit'
+import { can, getPermissions } from '@/lib/auth'
 import {
-  SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, PRE_DEFAULT, isKnownSub, numbering, zoneAt, canMove,
+  SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, PRE_DEFAULT, HEAD_DEFAULT, PLACE_DEFAULT, isKnownSub, numbering, zoneAt, canMove,
 } from '@/lib/annexTemplate.mjs'
 import { Segs } from '@/components/annex/TemplateSheet'
 
@@ -41,13 +43,13 @@ function BlockRow({ b, i, blocks, num, on, onPick, onMove }) {
   const down = canMove(blocks, i, 1)
   const hint = 'через таблицу МП и системные блоки не перескакивает'
   return (
-    <div onClick={() => (!b.sys || b.sys === 'pre') && onPick(b.id)}
-         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys && b.sys !== 'pre' ? 'default' : 'pointer' }}>
+    <div onClick={() => (!b.sys || SYS_TEXT[b.sys]) && onPick(b.id)}
+         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys && !SYS_TEXT[b.sys] ? 'default' : 'pointer' }}>
       <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: b.sys ? 'var(--text-disabled)' : 'var(--accent)', flex: '0 0 28px' }}>{b.sys ? '—' : num[b.id]}</span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' }}>
         <span style={{ fontSize: 12, fontWeight: on ? 700 : 600, color: b.sys ? 'var(--text-faint)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.req ? '🔒 ' : ''}{b.title}</span>
         <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: b.sys ? 'var(--text-faint)' : zone === 'acc' ? 'var(--accent-fg)' : 'var(--violet-fg)' }}>
-          {b.sys ? (b.sys === 'table' ? 'граница зон' : b.sys === 'pre' ? (b.text ? 'текст шаблона' : 'стандартная · править') : 'системный') : ZN[zone][0]}
+          {b.sys ? (b.sys === 'table' ? 'граница зон' : SYS_TEXT[b.sys] ? (b.text ? 'текст шаблона' : 'стандартная · править') : 'системный') : ZN[zone][0]}
         </span>
       </span>
       {!b.sys && (
@@ -100,19 +102,32 @@ function warningsOf(sel) {
   return out
 }
 
-/** Преамбула (02.11.2026): текст шаблона с подстановками сторон. Пусто — печатается стандартная формула; правка начинается с неё. */
-function PreambleEditor({ b, onPatch }) {
-  const text = b.text ?? PRE_DEFAULT
-  const addSub = (k) => onPatch(b.id, { text: `${text.replace(/\s*$/, '')} {${k}}` })
+/** Системные блоки, у которых бывает текст шаблона: преамбула (02.11.2026), заголовок и «место и дата» (05.11.2026 — правит
+ *  мастер аккаунт и админ, ромб «Мастер-сделки · согласование»; сервер проверяет то же при сохранении версии). */
+const SYS_TEXT = {
+  pre: { title: 'Преамбула', def: PRE_DEFAULT, restore: 'Вернуть стандартную' },
+  head: { title: 'Заголовок', def: HEAD_DEFAULT, restore: 'Вернуть стандартный', hint: 'первая строка — жирным, остальные под ней', guarded: true },
+  place: { title: 'Место и дата', def: PLACE_DEFAULT, restore: 'Вернуть стандартные', hint: '«|» делит строку: слева место, справа дата', guarded: true },
+}
+
+/** Текст системного блока в шаблоне. Пусто — печатается стандартный вид; правка начинается с образца. */
+function SysTextEditor({ b, onPatch }) {
+  const cfg = SYS_TEXT[b.sys]
+  const [allowed, setAllowed] = useState(!cfg.guarded)
+  useEffect(() => { if (cfg.guarded) setAllowed(can(getPermissions(), 'master_deals', 'approve')) }, [cfg.guarded])
+  const text = b.text ?? cfg.def
+  const addSub = (k) => allowed && onPatch(b.id, { text: `${text.replace(/\s*$/, '')} {${k}}` })
   return (
     <div style={{ flex: '1 1 0', minWidth: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 14, fontWeight: 700 }}>Преамбула</span>
-        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{b.text ? 'текст шаблона' : 'стандартная формула — правка сохранится в шаблоне'}</span>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>{cfg.title}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+          {!allowed ? 'правит мастер аккаунт или админ' : b.text ? 'текст шаблона' : 'стандартный вид — правка сохранится в шаблоне'}{cfg.hint ? ` · ${cfg.hint}` : ''}
+        </span>
       </div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         <span style={CAP}>Текст · подстановки в фигурных скобках</span>
-        <textarea value={text} rows={7} onChange={e => onPatch(b.id, { text: e.target.value })}
+        <textarea value={text} rows={cfg.guarded ? 3 : 7} disabled={!allowed} onChange={e => onPatch(b.id, { text: e.target.value })}
                   style={{ boxSizing: 'border-box', padding: '10px 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, lineHeight: 1.55, resize: 'vertical', outline: 'none', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
       </label>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -137,11 +152,11 @@ function PreambleEditor({ b, onPatch }) {
           <Segs text={text} />
         </div>
       </div>
-      {!!b.text && (
+      {!!b.text && allowed && (
         <div style={{ display: 'flex', paddingTop: 4, borderTop: '1px solid var(--border-row)' }}>
-          <span onClick={() => onPatch(b.id, { text: undefined })} title="убрать текст из шаблона — печатается стандартная формула"
+          <span onClick={() => onPatch(b.id, { text: undefined })} title="убрать текст из шаблона — печатается стандартный вид"
                 style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border-card)', color: 'var(--text-secondary)', background: 'var(--bg-card)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-            Вернуть стандартную
+            {cfg.restore}
           </span>
         </div>
       )}
@@ -152,7 +167,7 @@ function PreambleEditor({ b, onPatch }) {
 export function PointEditor({ blocks, sel, onPatch, onRemove }) {
   const i = blocks.findIndex(b => b.id === sel)
   const b = blocks[i]
-  if (b && b.sys === 'pre') return <PreambleEditor b={b} onPatch={onPatch} />
+  if (b && SYS_TEXT[b.sys]) return <SysTextEditor key={b.id} b={b} onPatch={onPatch} />
   if (!b || b.sys) {
     return <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Выберите текстовый пункт слева</div>
   }

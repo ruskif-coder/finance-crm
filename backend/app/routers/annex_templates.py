@@ -218,6 +218,9 @@ def create_base(payload: BaseIn, db: Session = Depends(get_db), user: User = Dep
         blocks = src.blocks if src else None
     if not blocks:
         raise HTTPException(400, "Нужен шаблон-источник (copy_from) или блоки")
+    if payload.copy_from is None:                       # свои блоки — текст заголовка и места в них тоже под правом
+        from app.annex_tpl import rights
+        rights.assert_head_place_unchanged_or_allowed(db, user, [], blocks)
     try:
         v = S.create_base(db, payload.title, blocks, user.id, user.name or "—", payload.formats)
         db.commit()
@@ -439,6 +442,9 @@ def save(template_id: int, payload: BlocksIn, db: Session = Depends(get_db), use
                 raise HTTPException(status_code=400, detail=str(e))
             except PermissionError as e:
                 raise HTTPException(status_code=403, detail=str(e))
+        from app.annex_tpl import rights
+        cur = S.current(db, template_id)
+        rights.assert_head_place_unchanged_or_allowed(db, user, cur.blocks if cur else [], payload.blocks)
         v = S.save_version(db, template_id, payload.blocks, user, payload.adopt_base)
         db.commit()
     except S.AnnexTplError as e:

@@ -800,9 +800,9 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
 
 
 def _may_change_rk(db: Session, user) -> bool:
-    """Даты РК во внешнем ДС — право «Мастер-сделки · согласование» (мастер аккаунт; админ — всегда)."""
-    from app.permissions import get_permissions_for_user
-    return bool((get_permissions_for_user(db, user).get("master_deals") or {}).get("approve"))
+    """Даты РК во внешнем ДС, заголовок и «место и дата» — право «Мастер-сделки · согласование» (`annex_tpl/rights`)."""
+    from app.annex_tpl import rights
+    return rights.may_edit_head(db, user)
 
 
 def _external_view(db: Session, a) -> dict:

@@ -15,6 +15,7 @@ from typing import List, Optional
 from app.annex_tpl.subs import PROTECTED_GROUPS, SUBS
 
 SYS_ORDER = ("head", "place", "pre", "table", "sign")
+SYS_TEXT = {"pre": "Преамбула", "head": "Заголовок", "place": "Место и дата"}     # системные блоки, у которых бывает текст шаблона
 MAX_BLOCKS = 60
 MAX_TEXT = 8000
 PLACEHOLDER = "Текст пункта."
@@ -124,14 +125,15 @@ def check(blocks) -> List[dict]:
         return issues
     num = numbering(blocks)
     for b in blocks:
-        if b.get("sys") == "pre" and b.get("text"):
-            # Преамбула с текстом шаблона (02.11.2026): те же правила подстановок и длины, что у пункта; без текста — прежняя формула.
+        if b.get("sys") in SYS_TEXT and b.get("text"):
+            # Преамбула (02.11.2026), заголовок и «место и дата» (05.11.2026) с текстом шаблона: те же правила подстановок и длины,
+            # что у пункта; без текста — прежний вид.
+            where = SYS_TEXT[b["sys"]] + " · "
             bad = unknown_keys(b["text"])
             if bad:
-                issues.append({"id": b["id"], "where": "Преамбула · ",
-                               "text": "неизвестная подстановка " + ", ".join("{" + k + "}" for k in bad)})
+                issues.append({"id": b["id"], "where": where, "text": "неизвестная подстановка " + ", ".join("{" + k + "}" for k in bad)})
             if len(b["text"]) > MAX_TEXT:
-                issues.append({"id": b["id"], "where": "Преамбула · ", "text": f"текст длиннее {MAX_TEXT} знаков"})
+                issues.append({"id": b["id"], "where": where, "text": f"текст длиннее {MAX_TEXT} знаков"})
             continue
         if b.get("sys"):
             continue

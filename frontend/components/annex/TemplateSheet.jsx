@@ -83,9 +83,15 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
   const tag = b.sys === 'table' ? ['граница', 'var(--bg-subtle)', 'var(--text-muted)'] : z
   const dateBad = emptyDemo
   return (
-    <div onClick={() => edit && (!b.sys || b.sys === 'pre') && onPick(b.id)}
+    <div onClick={() => edit && (!b.sys || ['pre', 'head', 'place'].includes(b.sys)) && onPick(b.id)}
          style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', margin: '0 -8px', borderRadius: 6, background: active ? 'var(--bg-tint)' : 'transparent', outline: active ? '1px solid var(--accent-border)' : 'none', cursor: edit && !b.sys ? 'pointer' : 'default' }}>
-      {b.sys === 'head' && (
+      {/* Заголовок и «место и дата» с текстом шаблона (05.11.2026) — как напечатает файл; без текста — стандартный вид */}
+      {b.sys === 'head' && !!b.text && (
+        <span style={{ textAlign: 'center' }}>
+          {b.text.split('\n').map((line, k) => <span key={k} style={{ display: 'block', fontWeight: k ? 400 : 700 }}><Segs text={line} emptyDemo={emptyDemo} /></span>)}
+        </span>
+      )}
+      {b.sys === 'head' && !b.text && (
         <span style={{ textAlign: 'right', fontSize: '0.93em' }}>
           Приложение № <b style={GREEN}>68</b><br />
           к Договору № <b style={GREEN}>РМ 30-11-2023</b> от{' '}
@@ -95,7 +101,12 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
           </span>
         </span>
       )}
-      {b.sys === 'place' && <span style={{ display: 'flex', justifyContent: 'space-between' }}><span>г. Москва</span><span style={GREEN}>«31» октября 2026 г.</span></span>}
+      {b.sys === 'place' && !!b.text && (
+        <span style={{ display: 'flex', justifyContent: 'space-between' }}>
+          {b.text.split('|').slice(0, 2).map((part, k) => <span key={k}><Segs text={part.trim()} emptyDemo={emptyDemo} /></span>)}
+        </span>
+      )}
+      {b.sys === 'place' && !b.text && <span style={{ display: 'flex', justifyContent: 'space-between' }}><span>г. Москва</span><span style={GREEN}>«31» октября 2026 г.</span></span>}
       {b.sys === 'pre' && !!b.text && (
         <span style={{ textAlign: 'justify', textIndent: '2em' }}><Segs text={b.text} emptyDemo={emptyDemo} /></span>
       )}

@@ -251,3 +251,33 @@ def test_head_edit_needs_the_master_deals_approve_right(db, monkeypatch):
     with pytest.raises(HTTPException) as e:
         A.edit_block(a.id, A.EditIn(key=AS.HEAD_KEY, text="Заголовок {номер_дс}"), db=db, user=user)
     assert e.value.status_code == 403
+
+
+def test_head_and_place_text_lives_in_the_template_too(db, stub_plan):
+    """Владелец 05.11.2026: заголовок и «место и дата» правятся и в шаблоне (как преамбула) — это текст по умолчанию для всех ДС
+    по шаблону; правка в карточке ДС — поверх него. Без текста в шаблоне и без правок файл печатает как раньше."""
+    blocks = [dict(b, text="Соглашение {номер_дс}\nк договору {договор_номер}") if b.get("sys") == "head" else dict(b) for b in SAMPLE]
+    m = AS.assemble(db, _contract(db), _version(blocks), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7)
+    assert m["head"]["custom"] and m["head"]["text"].startswith("Соглашение №7") and not m["head"]["edited"]
+    assert not m["place"]["custom"], "место без текста в шаблоне — печатается как раньше"
+    own = AS.assemble(db, _contract(db), _version(blocks), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
+                      edits={AS.HEAD_KEY: "Своё {номер_дс}"})
+    assert own["head"]["text"] == "Своё №7", "правка в карточке ДС — поверх текста шаблона"
+
+
+def test_template_check_validates_head_and_place_text():
+    from app.annex_tpl.check import check
+    blocks = [dict(b, text="г. Москва | {нет_такого}") if b.get("sys") == "place" else dict(b) for b in SAMPLE]
+    assert any("нет_такого" in i["text"] for i in check(blocks))
+
+
+def test_changing_head_text_in_a_template_needs_the_approve_right(monkeypatch):
+    from fastapi import HTTPException
+    from app.annex_tpl import rights
+    old = [dict(b) for b in SAMPLE]
+    new = [dict(b, text="Соглашение {номер_дс}") if b.get("sys") == "head" else dict(b) for b in SAMPLE]
+    monkeypatch.setattr(rights, "may_edit_head", lambda db, u: False)
+    with pytest.raises(HTTPException) as e:
+        rights.assert_head_place_unchanged_or_allowed(None, None, old, new)
+    assert e.value.status_code == 403
+    rights.assert_head_place_unchanged_or_allowed(None, None, old, [dict(b) for b in SAMPLE])     # без изменений — можно
