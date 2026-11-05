@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.master_deal import doc_sign as DS
 
 SCAN_DS, SCAN_UPD = "скан ДС", "скан УПД"
+SCAN_KINDS = (SCAN_DS, SCAN_UPD)      # в master_deal_files рядом лежат и файлы из 1С (05.11.2026) — сканы только этими видами
 SCAN_EXTS = (".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff")      # один файл — один документ: без архивов
 DUE_DEFAULT = 30      # владелец 19.10.2026
 

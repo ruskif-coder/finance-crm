@@ -40,7 +40,7 @@ function Kit({ k, rows, rate, doc, code, onPick, setErr, basis, busy, onBasis, c
       </span>
       <span style={{ gridColumn: 1, fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>сделки: {k.deals.join(', ')}</span>
       <span style={{ gridColumn: 2, gridRow: '1 / span 4', alignSelf: 'start' }}>
-        <KitDocs kit={doc} upd_no={k.upd_no} paper={scanOpen(doc)} code={code} onPick={onPick} setErr={setErr} />
+        <KitDocs kit={doc} upd_no={k.upd_no} paper={scanOpen(doc)} code={code} onPick={onPick} setErr={setErr} canEdit={canEdit} onDone={onDone} />
       </span>
       {open && (
         <div onClick={e => e.stopPropagation()} style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, paddingTop: 8, borderTop: '1px solid var(--accent-border)', cursor: 'default' }}>

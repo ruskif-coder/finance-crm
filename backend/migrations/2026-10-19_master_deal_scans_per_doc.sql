@@ -10,5 +10,7 @@ ALTER TABLE master_deal_files ADD COLUMN IF NOT EXISTS annex_id integer REFERENC
 ALTER TABLE master_deal_files ADD COLUMN IF NOT EXISTS upd_no integer;                                                -- скан УПД № в пакете
 ALTER TABLE master_deal_files ALTER COLUMN kind SET DEFAULT 'скан ДС';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_master_files_annex ON master_deal_files (master_deal_id, annex_id) WHERE annex_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_master_files_upd ON master_deal_files (master_deal_id, upd_no) WHERE upd_no IS NOT NULL;
+-- Уникальность по УПД — с видом файла: (master_deal_id, upd_no, kind), см. 2026-11-05_onec_desk.sql. Прежний индекс
+-- (master_deal_id, upd_no) здесь больше не создаётся: при повторном прогоне он вернулся бы и запретил PDF из 1С рядом со сканом.
+DROP INDEX IF EXISTS ux_master_files_upd;
 COMMIT;

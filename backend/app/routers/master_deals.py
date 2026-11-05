@@ -355,6 +355,44 @@ def master_confirm_ds(code: str, db: Session = Depends(get_db), user: User = Dep
     return _done(db, user, m, "master_deal_confirm_ds", "ДС подтверждены — " + ", ".join(map(str, done)), confirmed=done)
 
 
+class FixedIn(BaseModel):
+    text: Optional[str] = None
+
+
+@router.post("/{code}/upd/{upd_no}/onec-fixed")
+def master_onec_fixed(code: str, upd_no: int, payload: FixedIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """Бухгалтер вернула комплект — аккаунт исправил: комплект снова в очереди «Документов для 1С» (05.11.2026)."""
+    from app.master_deal.models import MasterDealUpd
+    from app.onec_desk import service as SV
+    m = _master_rw(db, code, user)
+    k = db.query(MasterDealUpd).filter_by(master_deal_id=m.id, upd_no=upd_no).first()
+    if k is None:
+        raise HTTPException(404, f"УПД № {upd_no} в пакете нет")
+    try:
+        SV.fixed(db, m, k, payload.text, user)
+    except SV.DeskError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    return _done(db, user, m, "master_deal_onec_fixed", f"УПД № {upd_no} исправлен" + (f": {payload.text.strip()}" if (payload.text or "").strip() else ""))
+
+
+@router.post("/{code}/upd/{upd_no}/onec-reply")
+def master_onec_reply(code: str, upd_no: int, payload: FixedIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """Ответ аккаунта на вопрос бухгалтера — без возврата комплекта; в её очереди у заявки появится «ответ» (05.11.2026)."""
+    from app.master_deal.models import MasterDealUpd
+    from app.onec_desk import service as SV
+    m = _master_rw(db, code, user)
+    k = db.query(MasterDealUpd).filter_by(master_deal_id=m.id, upd_no=upd_no).first()
+    if k is None:
+        raise HTTPException(404, f"УПД № {upd_no} в пакете нет")
+    try:
+        SV.reply(db, m, k, payload.text, user)
+    except SV.DeskError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    return _done(db, user, m, "master_deal_onec_reply", f"УПД № {upd_no}: ответ бухгалтеру — {payload.text.strip()}")
+
+
 @router.put("/{code}/upd/{upd_no}/basis")
 def master_upd_basis(code: str, upd_no: int, payload: BasisIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
     """Основание для закрытия по одной УПД (одна УПД = одно основание); до отправки в 1С."""
@@ -441,7 +479,10 @@ def master_file_download(code: str, file_id: int, db: Session = Depends(get_db),
         f = FL.get(db, _master_ro(db, code, user), file_id)
     except MS.MasterError as e:
         _err(e)
-    return FileResponse(existing_upload_path(f.path), filename=f.filename, media_type=FL.media_type(f.filename))
+    from app.onec_desk import names as NM
+    m = _master_ro(db, code, user)
+    # Имя — с пакетом, контрагентом и периодом (владелец 05.11.2026): скан или PDF из 1С узнаётся на диске сам
+    return FileResponse(existing_upload_path(f.path), filename=NM.for_file(db, m, f), media_type=f.content_type or FL.media_type(f.filename))
 
 
 @router.delete("/{code}/files/{file_id}")

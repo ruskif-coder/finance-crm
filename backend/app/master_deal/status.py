@@ -93,6 +93,10 @@ def _check_forward(db: Session, m, to: str) -> None:
                                "стартовый пакет возвращает в работу «Отправить в ДО»")
     if to == ISSUE and not channel_of(db, m):
         raise StatusError(409, "У договора не задано «Выставление» — ЭДО или бумага. Проставьте его в реестре договоров")
+    if to == ISSUE and m.status == WAIT_1C:
+        left = _desk_pending(db, m)
+        if left:     # 05.11.2026: ручная отметка «УПД из 1С получены» заменена «Документами для 1С»
+            raise StatusError(409, "Счёт и УПД вносит бухгалтер в «Документах для 1С». Не внесены: " + ", ".join(left))
     if to == WAIT_PAY:
         left = IS.not_sent(db, m)
         if left:
@@ -101,6 +105,11 @@ def _check_forward(db: Session, m, to: str) -> None:
         left = IS.unsigned(db, m)
         if left or not IS.state(db, m)["total"]:
             raise StatusError(409, "В архив — когда подписаны все документы пакета. Не подписаны: " + (", ".join(left) or "документов нет"))
+
+
+def _desk_pending(db: Session, m) -> list:
+    from app.onec_desk.service import pending
+    return pending(db, m)
 
 
 def move(db: Session, m, to: str, user) -> None:
@@ -140,6 +149,12 @@ def _drafts(db: Session, m) -> int:
     return db.execute(text("SELECT count(*) FROM sales_annexes WHERE master_deal_id = :m AND no IS NULL"), {"m": m.id}).scalar() or 0
 
 
+def _desk(db: Session, m) -> tuple:
+    """«Документы для 1С»: (неисправленный возврат | None, сколько комплектов не внесено, сколько всего)."""
+    from app.onec_desk import service as SV
+    return SV.last_return(db, m), len(SV.pending(db, m)), len(SV.kits(db, m))
+
+
 def _t(text_: str, who: str, tone: str = "info") -> dict:
     return {"text": text_, "who": who, "tone": tone}
 
@@ -161,7 +176,13 @@ def todo(db: Session, m) -> Optional[dict]:
     if m.status == WAIT_1C:
         if not channel_of(db, m):
             return _t("в договоре не задано ЭДО или бумага", "аккаунт", "bad")
-        return _t("ждём УПД из 1С", "1С")
+        back, left, total = _desk(db, m)
+        if back:
+            return _t(f"бухгалтер вернул УПД № {back['upd_no']}: {back['text']}", "аккаунт", "bad")
+        if total and not left:     # всё внесено, а пакет стоит: канал проставили позже или пакет вернули на шаг (ревью 05.11.2026)
+            return _t("счёт и УПД внесены — переведите в «выставление»", "аккаунт", "warn")
+        return _t(f"бухгалтерия: внесено {total - left} из {total}" if total - left else "ждём счёт и УПД от бухгалтерии",
+                  "бухгалтерия")
     return _todo_issue(db, m)
 
 
@@ -197,8 +218,10 @@ def row_step(db: Session, m) -> Optional[str]:
     """Действие прямо из строки реестра (хендофф 19.10.2026): шаги-отметки без ввода данных; остальное — «открыть».
     docs_1c / docs / paid / archive; contract — красная ссылка в договор; None — «открыть».
     `docs` не открывает окно, а раскрывает строку: с 02.11.2026 у каждого документа своя отметка подписи."""
-    if m.status == WAIT_1C:                      # до интеграции 1С — отметка руками; с 1С её поставит ответ «УПД готовы»
-        return "docs_1c" if channel_of(db, m) else "contract"
+    if m.status == WAIT_1C:                      # счёт и УПД вносит бухгалтер в «Документах для 1С» (05.11.2026), пакет уходит сам;
+        if not channel_of(db, m):                # шаг руками — только если всё внесено, а пакет остался стоять
+            return "contract"
+        return None if _desk_pending(db, m) else "docs_1c"
     if m.status == ISSUE:
         return "docs" if channel_of(db, m) else "contract"
     if m.status == WAIT_PAY and is_paper(db, m):

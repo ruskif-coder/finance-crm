@@ -44,6 +44,7 @@ import { fmtDateTime, todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import RkLog, { RkLogTile } from '@/components/traffic/RkLog'
 import CulpritsWidget from '@/components/traffic/platforms/CulpritsWidget'
+import WrLinkRow from '@/components/traffic/WrLinkRow'
 import { toReport } from '@/lib/platformsReport'
 import { downloadFile } from '@/lib/download'
 import {
@@ -1724,6 +1725,11 @@ export default function TrafficDashboard() {
                             </div>
                           )}
 
+                          {/* Отчёт Weborama по ссылке — внешний пиксель (05.11.2026): сверка РК в целом снимается по ссылке клиента */}
+                          {!!d.wr_link && (
+                            <WrLinkRow campaignId={r.id} link={d.wr_link} mayEdit={mayEdit}
+                              onChange={wl => { setDetail(prev => ({ ...prev, [r.id]: { ...prev[r.id], wr_link: wl } })); loadStat(r.id, grain[r.id] || 'day') }} />
+                          )}
                           {/* Ряд управления (владелец 05.11.2026): заголовок и подпись — сверху, ниже в одну линию кнопки,
                               плитки и ответственные; шаг между кнопками и плитками один — 8 px. */}
                           <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>

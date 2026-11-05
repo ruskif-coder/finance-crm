@@ -220,6 +220,9 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
   const [mode, setMode] = useState('own')
   const [tag, setTag] = useState('')
   const [ins, setIns] = useState('')
+  // Ссылка на отчёт Weborama (05.11.2026): ляжет в РК, если она собрана; ответ сервера — словами под блоком
+  const [reportUrl, setReportUrl] = useState('')
+  const [note, setNote] = useState('')
   const on = !!deal.weborama_pixel
   const external = (deal.weborama_pixel_mode || 'own') === 'external'
   const canUnset = !!deal.can_unset_weborama_pixel
@@ -229,10 +232,11 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
     setBusy(true); setErr('')
     const body = value
       ? { weborama_pixel: true, mode, tag: mode === 'external' ? tag.trim() : null,
-        insertion: mode === 'external' ? ins.trim() : null }
+        insertion: mode === 'external' ? ins.trim() : null,
+        report_url: mode === 'external' ? (reportUrl.trim() || null) : null }
       : { weborama_pixel: false }
     api.put(`/sales/deals/${dealId}/campaign-extra`, body, auth())
-      .then(r => { setBusy(false); setAsk(false); onSaved(r.data) })
+      .then(r => { setBusy(false); setAsk(false); setNote(r.data.report_url_note || ''); onSaved(r.data) })
       .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
   }
 
@@ -242,6 +246,7 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {!!note && <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Отчёт Weborama: {note}</span>}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           width: 20, height: 20, borderRadius: 6, flex: '0 0 20px', marginTop: 1,
@@ -258,7 +263,7 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
                 ? 'Решено: не нужен. Вставки в Weborama не заводятся, пиксель в креатив не вшивается, выгрузка в DSP его не требует.'
                 : 'Решение не принято. Выберите «нужен» или «не нужен» — от этого зависит, потребует ли выгрузка в DSP пиксель по каждой площадке.')
               : external
-                ? `Внешний тег${when ? ', загружен ' + when : ''}. Вставку завёл клиент — свою не заводим. Статистику Weborama по такой РК не снимает: показы вносятся руками на сверке.`
+                ? `Внешний тег${when ? ', загружен ' + when : ''}. Вставку завёл клиент — свою не заводим. Показы Weborama снимаются по ссылке клиента на отчёт (блок РК ниже), без ссылки — вносятся руками на сверке.`
                 : `Свой${when ? ', заказан ' + when : ''}. Трафик получил задачу; выгрузка в DSP не пойдёт, пока пиксель не получен по всем площадкам.`}
           </span>
         </span>
@@ -370,8 +375,8 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
               <>
                 <span style={{ color: 'var(--text-secondary)' }}>
                   Тег из выгрузки клиента — столбец <b>Impression tags</b>. Он один на всю
-                  кампанию: свою вставку заводить не будем, а статистику по такой РК
-                  Weborama не отдаёт — показы вносятся руками на сверке.
+                  кампанию: свою вставку заводить не будем. Показы Weborama снимем по ссылке
+                  клиента на отчёт (ниже, можно вписать и позже); без ссылки — руками на сверке.
                 </span>
                 <textarea value={tag} onChange={e => setTag(e.target.value)} rows={4}
                   placeholder="https://wcm.weborama-tech.ru/…&a.ra=[RANDOM]"
@@ -388,6 +393,17 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
                       background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }} />
                   <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
                     по нему сверяемся с их отчётом</span>
+                </span>
+                {/* Ссылка на отчёт одной кампании — сервер проверит до сохранения (05.11.2026) */}
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Ссылка на отчёт Weborama · необязательно</span>
+                  <input value={reportUrl} onChange={e => setReportUrl(e.target.value)}
+                    placeholder="https://adap-interface.wbrm.ru/…/reportcenter/permalink/link/hash/…"
+                    style={{ height: 32, fontFamily: MONO, fontSize: 11.5, padding: '0 9px', borderRadius: 8,
+                      border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+                      color: 'var(--text-primary)', outline: 'none' }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    постоянная ссылка клиента на отчёт ОДНОЙ кампании; РК ещё не собрана — впишете после сборки</span>
                 </span>
               </>
             )}

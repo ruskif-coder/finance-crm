@@ -646,6 +646,8 @@ app.include_router(final_recon.router, prefix="/api/final-recon", tags=["final-r
 # Мастер-сделки (15.10.2026): развилка «Отправить в ДО» и конструктор закрытия. Логика — пакет `app/master_deal`.
 from app.routers import master_deals  # noqa: E402
 app.include_router(master_deals.router, prefix="/api/master-deals", tags=["master-deals"])
+from app.routers import onec_desk  # noqa: E402
+app.include_router(onec_desk.router, prefix="/api/onec-desk", tags=["onec-desk"])
 # Приоритезация (19.10.2026): сборка запроса в карточке сделки. Логика — пакет `app/prio`.
 from app.routers import prio  # noqa: E402
 app.include_router(prio.router, prefix="/api/prio", tags=["prio"])

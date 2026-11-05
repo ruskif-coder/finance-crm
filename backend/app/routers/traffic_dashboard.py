@@ -39,7 +39,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp.client import MsClient
-from app.ad.stat_sources import (VERIFIER, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
+from app.ad.stat_sources import (VERIFIER, manual_superseded_sql, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
                                  mismatch_pct)
 from app.traffic import urgency
 from app.audit import log_action
@@ -146,6 +146,7 @@ def _verifier(db: Session, campaign_ids: List[int], until: Optional[date] = None
         "SELECT campaign_id, placement_id, sum(shows) AS shows "
         "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
         "AND (CAST(:u AS date) IS NULL OR date <= :u OR source = 'weborama_manual') "
+        "AND " + manual_superseded_sql() + " "
         "GROUP BY campaign_id, placement_id"),
         {"i": campaign_ids, "src": list(VERIFIER), "u": until}).mappings().all()
     out: dict = {}
@@ -1060,6 +1061,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         # Лог РК (05.11.2026): счётчик для плитки — без загрузки самого лога; писать — ответственные сделки и админ.
         "notes_count": rk_notes.count_for(db, c.id),
         "can_write_notes": rk_notes.can_write(db, deal, user),
+        # Отчёт Weborama по ссылке (внешний пиксель, 05.11.2026): поле — у внешнего пикселя или если ссылка уже есть
+        "wr_link": _wr_link_view(db, c, deal),
         # KPI приёмки из медиаплана — рядом с фактом, чтобы трафик видел, к чему его
         # открутку будут принимать, не открывая карточку сделки (владелец 05.09.2026).
         "goals": build.deal_goals(db, deal.id),
@@ -1111,6 +1114,55 @@ def _owners(db: Session, deal, user: User) -> dict:
 
 class TrafficManagerIn(BaseModel):
     user_id: Optional[int] = None                 # None — снять назначение
+
+
+def _wr_link_view(db: Session, c, deal) -> Optional[dict]:
+    from app.weborama import permalink as WL
+    external = bool(deal.weborama_pixel and (deal.weborama_pixel_mode or "own") == "external")
+    if not (external or c.wr_report_url):
+        return None
+    return {"url": c.wr_report_url, **(WL.state(db, c.id) if c.wr_report_url else {})}
+
+
+class WrLinkIn(BaseModel):
+    url: Optional[str] = None
+
+
+@router.put("/campaign/{campaign_id}/wr-link")
+def set_wr_link(campaign_id: int, payload: WrLinkIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Ссылка на отчёт Weborama у РК с внешним пикселем (05.11.2026). Сохранили — сразу снимаем показы за флайт;
+    убрали или поменяли — показы прежней ссылки удаляются, иначе остались бы в сверке навсегда."""
+    from app.weborama import permalink as WL
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    url = (payload.url or "").strip()
+    if url:
+        try:
+            url = WL.check_url(url)
+            if url != (c.wr_report_url or ""):
+                WL.probe(url)          # отчёт одной кампании? — до сохранения, а не ночью
+        except WL.LinkError as e:
+            raise HTTPException(400, str(e))
+    if url != (c.wr_report_url or ""):
+        WL.clear(db, c.id)
+    c.wr_report_url = url or None
+    db.commit()
+    log_action(db, user, "rk_wr_link", "ad_campaign", c.id,
+               f"{deal.code}: ссылка на отчёт Weborama {'задана' if url else 'убрана'}")
+    res = WL.sync_campaign(db, c) if url else None
+    return {"wr_link": _wr_link_view(db, c, deal), "result": res}
+
+
+@router.post("/campaign/{campaign_id}/wr-link/sync")
+def sync_wr_link(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Снять показы по ссылке сейчас, не дожидаясь ночи. Читающая операция снаружи — в Weborama не пишет ничего."""
+    from app.weborama import permalink as WL
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    if not c.wr_report_url:
+        raise HTTPException(400, "У РК нет ссылки на отчёт Weborama")
+    res = WL.sync_campaign(db, c)
+    if not res["ok"]:
+        raise HTTPException(400, res["error"])
+    return {"wr_link": _wr_link_view(db, c, deal), "result": res}
 
 
 class NoteIn(BaseModel):
@@ -1222,7 +1274,7 @@ def campaign_stat(campaign_id: int, grain: str = "day",
     ver_rows = db.execute(text(
         "SELECT date, placement_id, source, sum(shows) AS shows, sum(clicks) AS clicks "
         "FROM ad_campaign_stat WHERE campaign_id = :c AND source = ANY(:src) "
-        "AND (date <= :u OR source = 'weborama_manual') "
+        "AND (date <= :u OR source = 'weborama_manual') AND " + manual_superseded_sql() + " "
         "GROUP BY date, placement_id, source"),
         {"c": c.id, "src": list(VERIFIER), "u": today}).mappings().all()
     own_rows = db.execute(text(
@@ -2056,6 +2108,9 @@ def weborama_stats_pull(days: int = 3, db: Session = Depends(get_db),
         out = daily.run(start=start, end=end)
     except (WcmError, RuntimeError) as e:
         raise HTTPException(400, str(e))
+    # Отчёты по ссылкам (внешний пиксель, 05.11.2026) — тем же нажатием; их сбой не роняет основной съём
+    from app.weborama import permalink as WL
+    out["links"] = WL.sync_all(db)
     log_action(db, user, "weborama_stats_pull", "ad_campaign", None,
                f"Weborama {out['start']}..{out['end']}: строк {out['rows']}, "
                f"на дашборд легло {out['written']}, без соответствия {out['skipped']}")

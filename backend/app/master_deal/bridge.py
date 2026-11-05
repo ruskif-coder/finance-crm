@@ -64,13 +64,15 @@ def sync_kit(db: Session, m, k):
         return op
     a = db.get(SalesAnnex, k.annex_id)
     c = db.get(Contract, m.contract_id)
-    model = (tpl_doc.model_of(db, a, c, [r[0] for r in db.execute(
-        text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})]) or {}).get("model") or {}
+    model = tpl_doc.basis_model(db, a, c, [r[0] for r in db.execute(
+        text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})])
     basis = tpl_doc.upd_closing(model, k, a.rows, db)["text"] if model else None
     vat = float(a.vat_rate or 0)
-    income = round(float(k.gross or 0), 2)
+    income = round(float(k.onec_gross if k.onec_gross is not None else (k.gross or 0)), 2)   # вернувшаяся из 1С сумма — факт (решение 42)
     fields = {"date": k.onec_invoice_date or date.today(), "status": PLANNED, "income": income, "expense": 0.0, "period": m.period,
-              "vat_rate": vat, "vat_fact": compute_vat_fact(income, 0.0, vat), "article_id": _article(db, a, k),
+              # НДС из 1С — тоже факт (решение 42, ревью 05.11.2026); до 1С — расчёт от ставки ДС
+              "vat_rate": vat, "vat_fact": round(float(k.onec_vat), 2) if k.onec_vat is not None else compute_vat_fact(income, 0.0, vat),
+              "article_id": _article(db, a, k),
               "counterparty_id": m.payer_counterparty_id or (c.counterparty_id if c else None),
               "own_company_id": own_company.for_contract_id(db, c), "ds_num": a.number, "invoice": k.onec_invoice_no,
               "invoice_date": k.onec_invoice_date, "description": basis, "master_deal_upd_id": k.id}

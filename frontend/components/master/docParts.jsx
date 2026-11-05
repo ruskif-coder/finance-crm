@@ -20,20 +20,66 @@ const Svg = ({ d, size = 11, w = 2.2 }) => (
 )
 
 // §6: рамка карточки по подписанию; у УПД «не выпущен / не подписан» — --accent-border
-/** Скачать скан документа пакета (было собрано вручную в восьми местах). */
-export const downloadScan = (code, scan, setErr) => downloadFile(`/master-deals/${code}/files/${scan.id}`, scan.filename, setErr)
+/** Скачать файл пакета — скан или PDF из 1С (было собрано вручную в восьми местах). Имя даёт сервер: пакет, контрагент, период
+ * и документ (владелец 05.11.2026), а не имя, под которым файл загрузили. */
+export const downloadScan = (code, scan, setErr) => downloadFile(`/master-deals/${code}/files/${scan.id}`, null, setErr)
 
-/** Колонка документов комплекта УПД: «электрон. | скан» — Счёт, УПД (+ скан у бумаги), Отчёт; номера из 1С на кнопках. */
-export function KitDocs({ kit, upd_no, paper, code, onPick, setErr }) {
-  const off = !kit?.onec
+/** Колонка документов комплекта УПД: «электрон. | скан» — Счёт, УПД (+ скан у бумаги), Отчёт; номера, даты и PDF из 1С
+ * (с 05.11.2026 их вносит бухгалтер в «Документах для 1С»). Бухгалтер вернула комплект — красная строка и «Исправлено». */
+export function KitDocs({ kit, upd_no, paper, code, onPick, setErr, canEdit, onDone }) {
+  const f = kit?.onec_files || {}
+  const pdf = (file, no) => (file ? { off: false, onDoc: () => downloadScan(code, file, setErr) } : { off: true, offText: no ? 'PDF нет' : 'ждём 1С' })
+  const dated = (no, d) => (no ? ` № ${no}${d ? ` от ${String(d).slice(8, 10)}.${String(d).slice(5, 7)}` : ''}` : '')
   return (
     <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingLeft: 12, borderLeft: '1px solid var(--accent-border)', alignSelf: 'start' }}>
       <span style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 8, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '0 2px' }}>
         <span>электрон.</span><span>{paper ? 'скан · обязательно' : ''}</span></span>
-      <DocButton label={kit?.invoice_no ? `Счёт № ${kit.invoice_no}` : 'Счёт'} off={off} wide />
-      <DocButton label={kit?.upd_doc_no ? `УПД № ${kit.upd_doc_no}` : 'УПД'} off={off} wide paper={paper && !!kit} scan={kit?.scan}
+      <DocButton label={`Счёт${dated(kit?.invoice_no, kit?.invoice_date)}`} wide {...pdf(f.invoice, kit?.invoice_no)} />
+      <DocButton label={`УПД${dated(kit?.upd_doc_no, kit?.upd_doc_date)}`} wide paper={paper && !!kit} scan={kit?.scan} {...pdf(f.upd, kit?.upd_doc_no)}
         onScan={() => downloadScan(code, kit.scan, setErr)} onPick={() => onPick(`u${upd_no}`)} />
-      <DocButton label="Отчёт" off={off} wide />
+      <DocButton label="Отчёт" off wide />
+      {kit?.desk?.state === 'возвращён' && <DeskReturned kit={kit} upd_no={upd_no} code={code} canEdit={canEdit} onDone={onDone} setErr={setErr} />}
+      {!!kit?.desk?.question && <DeskQuestion kit={kit} upd_no={upd_no} code={code} canEdit={canEdit} onDone={onDone} setErr={setErr} />}
+    </span>
+  )
+}
+
+/** Бухгалтер вернула комплект из «Документов для 1С»: что не так и «Исправлено» — комплект снова у неё в очереди. */
+function DeskReturned({ kit, upd_no, code, canEdit, onDone, setErr }) {
+  const [busy, setBusy] = useState(false)
+  const fixed = async () => {
+    const text = window.prompt('Что исправили? (можно оставить пустым)')
+    if (text === null) return
+    setBusy(true); setErr?.('')
+    try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-fixed`, { text: text || null }, auth())).data) }
+    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+  }
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 220, padding: '6px 8px', borderRadius: 7, background: 'var(--danger-tint)' }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger-fg)' }}>Бухгалтер вернул: {kit.desk.returned || '—'}</span>
+      {canEdit && <button type="button" disabled={busy} onClick={fixed}
+        style={{ alignSelf: 'flex-start', height: 22, padding: '0 9px', borderRadius: 7, border: '1px solid var(--danger-border)', background: 'var(--bg-card)',
+          color: 'var(--danger-fg)', fontFamily: UI, fontSize: 10.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer' }}>Исправлено</button>}
+    </span>
+  )
+}
+
+/** Бухгалтер спросила в «Документах для бухгалтерии», не возвращая комплект: вопрос и «Ответить» — у неё в очереди будет «ответ». */
+function DeskQuestion({ kit, upd_no, code, canEdit, onDone, setErr }) {
+  const [busy, setBusy] = useState(false)
+  const reply = async () => {
+    const text = window.prompt(`Ответ бухгалтеру на «${kit.desk.question}»`)
+    if (!text || !text.trim()) return
+    setBusy(true); setErr?.('')
+    try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-reply`, { text: text.trim() }, auth())).data) }
+    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось ответить') } finally { setBusy(false) }
+  }
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 220, padding: '6px 8px', borderRadius: 7, background: 'var(--accent-tint)' }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-fg)' }}>Бухгалтер спрашивает: {kit.desk.question}</span>
+      {canEdit && <button type="button" disabled={busy} onClick={reply}
+        style={{ alignSelf: 'flex-start', height: 22, padding: '0 9px', borderRadius: 7, border: '1px solid var(--accent-border)', background: 'var(--bg-card)',
+          color: 'var(--accent-fg)', fontFamily: UI, fontSize: 10.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer' }}>Ответить</button>}
     </span>
   )
 }

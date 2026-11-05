@@ -181,6 +181,18 @@ def model_of(db: Session, annex, contract, deal_ids) -> dict:
             "reason": None, "template_state": template_state(db, contract, annex), "choice": pick_}
 
 
+def basis_model(db: Session, annex, contract, deal_ids) -> dict:
+    """Модель ДС для основания УПД. Свой ДС — его модель (`model_of`). ДС, подписанный вне системы, своей модели не имеет (текст —
+    чужой файл), и основание собирается по ближайшему шаблону той же цепочкой, что в конструкторе: память бренда → основной
+    договора → базовый формата; правленое основание прошлых ДС договора наследуется (владелец 05.11.2026: «генерим по шаблону
+    наиболее близкому — если есть прикреплённый к бренду — или исторически который был»). Шаблона нет — пусто."""
+    model = (model_of(db, annex, contract, deal_ids) or {}).get("model") or {}
+    if model or getattr(annex, "origin", None) != "загружен":
+        return model
+    version, _ = resolve(db, contract, annex)
+    return jsonable_encoder(live(db, contract, version, annex, deal_ids)) if version is not None else {}
+
+
 def version_row(db: Session, version_id: Optional[int]) -> Optional[AnnexTplVersion]:
     return db.query(AnnexTplVersion).filter_by(id=version_id).first() if version_id else None
 

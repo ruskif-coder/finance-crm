@@ -50,7 +50,7 @@ def _contract_channel(db: Session, doc) -> Optional[str]:
 def _scan_id(db: Session, doc) -> Optional[int]:
     if is_annex(doc):
         return db.execute(text("SELECT id FROM master_deal_files WHERE annex_id = :a"), {"a": doc.id}).scalar()
-    return db.execute(text("SELECT id FROM master_deal_files WHERE master_deal_id = :m AND upd_no = :u"),
+    return db.execute(text("SELECT id FROM master_deal_files WHERE master_deal_id = :m AND upd_no = :u AND kind = 'скан УПД'"),
                       {"m": doc.master_deal_id, "u": doc.upd_no}).scalar()
 
 

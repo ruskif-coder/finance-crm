@@ -53,7 +53,17 @@ OWN = ("adfox", "demo", "dsp", "manual", "ms", "prio")
 # `weborama_demo` — демо-наполнение стенда (скрипт 2026-09-27_demo_weborama), как `demo`
 # у нашего счётчика: отдельный источник, чтобы демо-цифры не смешались с настоящими и
 # убирались одним DELETE по источнику.
-VERIFIER = ("weborama", "weborama_manual", "weborama_demo")
+# `weborama_link`   — снято нами по «постоянной ссылке» клиента на отчёт (внешний пиксель, 05.11.2026,
+#                     `app/weborama/permalink.py`): суточные показы без площадки, одной суммой по РК.
+VERIFIER = ("weborama", "weborama_manual", "weborama_demo", "weborama_link")
+
+
+def manual_superseded_sql(table: str = "ad_campaign_stat") -> str:
+    """Условие для запросов сверки: ручной итог (`weborama_manual`) не берётся, если по РК есть показы со ссылки
+    (`weborama_link`) — это то же число из того же отчёта, и сложенные вместе они удвоили бы WR (05.11.2026).
+    Ручная строка при этом не удаляется: убрали ссылку — ручной итог снова в сверке."""
+    return (f"NOT ({table}.source = 'weborama_manual' AND EXISTS (SELECT 1 FROM ad_campaign_stat _wl "
+            f"WHERE _wl.campaign_id = {table}.campaign_id AND _wl.source = 'weborama_link'))")
 
 KNOWN = tuple(sorted(set(OWN) | set(VERIFIER)))
 

@@ -69,7 +69,8 @@ UPDATE sales_annexes a SET sign_state = 'подписан', sign_channel = 'бу
 -- УПД со сканом — подписан (бумага)
 UPDATE master_deal_upds u SET sign_state = 'подписан', sign_channel = 'бумага'
   FROM master_deal_files f
- WHERE f.master_deal_id = u.master_deal_id AND f.upd_no = u.upd_no AND u.sign_state IS NULL;
+ WHERE f.master_deal_id = u.master_deal_id AND f.upd_no = u.upd_no AND u.sign_state IS NULL
+   AND f.kind = 'скан УПД';   -- с 05.11.2026 рядом лежат PDF из 1С с тем же upd_no — они не подпись
 -- Документы пакета закрыты (`docs_closed_at`): у ЭДО до 02.11.2026 их закрывала сама отправка, у бумаги — сканы. Это
 -- прочтение «подписан» сохраняем: иначе отправленные ЭДО-пакеты не дошли бы до архива без ручной отметки каждого документа,
 -- а архивные потеряли бы дату «документы закрыты» (ревью 02.11.2026).

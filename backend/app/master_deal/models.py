@@ -73,6 +73,17 @@ class MasterDealUpd(Base):
     onec_invoice_no = Column(String(40))     # № счёта, выпущенного 1С (2026-10-19_master_deal_upd_onec_numbers.sql)
     onec_upd_no = Column(String(40))         # № УПД, выпущенного 1С
     onec_invoice_date = Column(Date)         # дата счёта в 1С (2026-10-20_master_deal_operation_bridge.sql)
+    # «Документы для 1С» (2026-11-05_onec_desk.sql): ответ 1С вносит бухгалтер, пока моста нет
+    onec_upd_date = Column(Date)
+    onec_vat = Column(Float)
+    onec_gross = Column(Float)
+    onec_by = Column(Integer, ForeignKey("users.id"))
+    onec_state = Column(String(20))          # пусто — ждёт бухгалтера · «возвращён» · «внесён»; правит только app/onec_desk
+    # черновик бухгалтера и «прочитано» (2026-11-05_onec_desk_v2.sql)
+    onec_draft = Column(JSONB)
+    onec_draft_at = Column(DateTime)
+    onec_draft_by = Column(Integer, ForeignKey("users.id"))
+    onec_seen_at = Column(DateTime)
     sign_state = Column(String(20))            # где УПД у клиента — правит только app/master_deal/doc_sign.py
     sign_channel = Column(String(10))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -109,3 +120,18 @@ class DocSignEvent(Base):
     file_id = Column(Integer, ForeignKey("master_deal_files.id", ondelete="SET NULL"))
     by_user = Column(Integer, ForeignKey("users.id"))
     at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class OnecDeskEvent(Base):
+    """Лента комплекта у бухгалтерии (2026-11-05_onec_desk.sql): возврат аккаунту, исправлено, комментарий (вопрос бухгалтера),
+    ответ (аккаунта, 2026-11-05_onec_desk_v2.sql), внесено, правка. source — «вручную»; позже комментарии бухгалтера из 1С
+    (правка 8 к ТЗ v2.2) лягут сюда с «1С»."""
+    __tablename__ = "onec_desk_events"
+    id = Column(Integer, primary_key=True)
+    upd_id = Column(Integer, ForeignKey("master_deal_upds.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String(20), nullable=False)
+    text = Column(Text)
+    source = Column(String(10), nullable=False, default="вручную", server_default="вручную")
+    by_user = Column(Integer, ForeignKey("users.id"))
+    at = Column(DateTime, nullable=False, server_default=func.now())
+    snapshot = Column(JSONB)                 # у возврата — заявка на тот момент: «было → стало» при повторной отправке

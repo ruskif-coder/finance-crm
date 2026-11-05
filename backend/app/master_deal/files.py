@@ -44,6 +44,12 @@ def _target(db: Session, m, annex_id: Optional[int], upd_no: Optional[int]) -> d
     return target
 
 
+def scan_of(db: Session, m, annex_id: Optional[int], upd_no: Optional[int]) -> Optional[MasterDealFile]:
+    """Скан документа — только видами сканов: рядом с ними с 05.11.2026 лежат PDF из 1С с тем же upd_no (`app/onec_desk/files.py`)."""
+    q = db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id, MasterDealFile.kind.in_(IS.SCAN_KINDS))
+    return q.filter((MasterDealFile.annex_id == annex_id) if annex_id is not None else (MasterDealFile.upd_no == upd_no)).first()
+
+
 def save_scan(db: Session, m, user, *, filename: str, content: bytes, annex_id: Optional[int], upd_no: Optional[int]) -> dict:
     """Записать скан к документу; скан ушедшей клиенту бумаги — это и есть отметка «подписан». Возвращает
     {target, replaced, old_path} — прежний файл удаляет вызывающий ПОСЛЕ коммита (иначе при сбое коммита строка осталась бы без файла)."""
@@ -64,8 +70,7 @@ def save_scan(db: Session, m, user, *, filename: str, content: bytes, annex_id: 
     rel = os.path.join(SUBDIR, f"{m.id}_{uuid.uuid4().hex[:8]}_{safe}")
     with open(os.path.join(ROOT, rel), "wb") as fh:
         fh.write(content)
-    old = db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id,
-                                          (MasterDealFile.annex_id == annex_id) if annex_id is not None else (MasterDealFile.upd_no == upd_no)).first()
+    old = scan_of(db, m, annex_id, upd_no)
     old_path = old.path if old is not None else None
     if old is not None:
         db.delete(old)
@@ -88,6 +93,8 @@ def get(db: Session, m, file_id: int) -> MasterDealFile:
 def delete(db: Session, m, file_id: int, user) -> tuple:
     """Убрать скан. В архиве нельзя — пакет держится на сканах. Возвращает (имя, путь) — файл с диска убирает вызывающий после коммита."""
     f = get(db, m, file_id)
+    if f.kind not in IS.SCAN_KINDS:
+        raise MasterError(409, "Это файл из 1С, а не скан — он убирается в «Документах для 1С»")
     if m.status == MST.ARCHIVE:
         raise MasterError(409, "Пакет в архиве держится на подписанных документах — сначала верните его в «ждём сканы»")
     name, path = f.filename, f.path

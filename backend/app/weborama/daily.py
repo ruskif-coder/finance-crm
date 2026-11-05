@@ -104,8 +104,21 @@ if __name__ == "__main__":
     ap.add_argument("--from", dest="since", type=_day, help="начало отрезка YYYY-MM-DD")
     ap.add_argument("--to", dest="until", type=_day, help="конец отрезка YYYY-MM-DD")
     a = ap.parse_args()
+    failed = False
     try:
         print(_report(run(start=a.since, end=a.until, dry_run=a.dry_run)))
     except (WcmError, RuntimeError) as e:
         print(f"Съём Weborama не состоялся: {e}", file=sys.stderr)
+        failed = True
+    # Отчёты по ссылкам клиентов (внешний пиксель, 05.11.2026) — отдельно от нашего аккаунта: сбой API не мешает им
+    if not a.dry_run:
+        from app.weborama import permalink
+        _db = SessionLocal()
+        try:
+            res = permalink.sync_all(_db)
+            print(f"Weborama по ссылкам: РК {res['campaigns']}, удачно {res['ok']}, показов {res['shows']}"
+                  + "".join(f"; РК {f['campaign_id']}: {f['error']}" for f in res["failed"]))
+        finally:
+            _db.close()
+    if failed:
         sys.exit(1)

@@ -32,6 +32,9 @@ class AdCampaign(Base):
     plan_budget = Column(Float)
     ms_campaign_xxhash = Column(String(64))    # id кампании в DSP
     ms_synced_at = Column(DateTime)
+    # Ссылка на отчёт Weborama у внешнего пикселя (05.11.2026, миграция 2026-11-05_ad_campaign_wr_report_url):
+    # источник суточных показов в сверку, `app/weborama/permalink.py`
+    wr_report_url = Column(Text)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(),
                         onupdate=func.now())

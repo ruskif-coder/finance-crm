@@ -55,6 +55,12 @@
           "perm": "master_deals"
         },
         {
+          "key": "onec_desk",
+          "label": "Закрывающие документы",
+          "href": "/finance/onec-desk",
+          "perm": "onec_desk"
+        },
+        {
           "key": "operations",
           "label": "Операции",
           "href": "/finance/operations",

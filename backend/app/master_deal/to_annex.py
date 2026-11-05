@@ -267,7 +267,7 @@ def upds_of(db: Session, m: MasterDeal) -> list:
         if k.annex_id not in models:
             a = db.get(SalesAnnex, k.annex_id)
             deal_ids = [r[0] for r in db.execute(text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})]
-            models[k.annex_id] = (a, (tpl_doc.model_of(db, a, c, deal_ids) or {}).get("model") or {})
+            models[k.annex_id] = (a, tpl_doc.basis_model(db, a, c, deal_ids))      # внешний ДС — по ближайшему шаблону
         a, model = models[k.annex_id]
         cl = tpl_doc.upd_closing(model, k, a.rows, db) if model else {"text": "", "template": "", "edited": False, "inherited_from": None}
         out.append({"upd_no": k.upd_no, "annex_id": k.annex_id, "annex_number": a.number or model.get("number"),

@@ -131,6 +131,9 @@ register(Event(
 # Всё — в приложении; в телеграм только две просрочки; остальное ещё и дайджестом. Точки вызова — `app/notify/closing.py`.
 _COLLECTOR = [{"type": "resolver", "value": "master_collector"}]
 _FIN = [{"type": "role", "value": "manager"}]
+# «Мастер-сделка ждёт 1С» — ещё и бухгалтеру (владелец 05.11.2026): комплекты вносит она в «Документах для 1С». По праву, не по
+# ключу роли (`test_no_event_is_addressed_to_a_generated_role_key`)
+_FIN_AND_ACCOUNTANT = _FIN + [{"type": "resolver", "value": "onec_desk_editors"}]
 
 register(Event(
     key="recon_arrived", direction="account", group="Закрытие месяца",
@@ -176,7 +179,28 @@ register(Event(
     title="Мастер-сделка ждёт 1С",
     description="ДС пакета подтверждены — нужны счёт и УПД из 1С.",
     tone="info", action="Открыть мастер-сделку", widget_group="Документы",
-    recipients=_FIN, channels={"app": True, "digest": True},
+    recipients=_FIN_AND_ACCOUNTANT, channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_onec_returned", direction="account", group="Закрытие месяца",
+    title="Бухгалтер вернул комплект мастер-сделки",
+    description="В «Документах для 1С» комплект вернули с комментарием — исправить и нажать «Исправлено».",
+    tone="warn", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "tg": True},
+))
+register(Event(
+    key="master_onec_question", direction="account", group="Закрытие месяца",
+    title="Вопрос бухгалтера по комплекту мастер-сделки",
+    description="В «Документах для бухгалтерии» бухгалтер спросила без возврата комплекта — ответьте в карточке мастер-сделки.",
+    tone="info", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "tg": True},
+))
+register(Event(
+    key="master_onec_done", direction="account", group="Закрытие месяца",
+    title="Счёт и УПД из 1С внесены",
+    description="Бухгалтер внесла документы 1С по всем комплектам пакета — можно выставлять клиенту.",
+    tone="ok", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "digest": True},
 ))
 register(Event(
     key="master_closed", direction="account", group="Закрытие месяца",

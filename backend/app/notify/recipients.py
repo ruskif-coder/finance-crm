@@ -65,6 +65,17 @@ def traffic_admins(db: Session, ctx: dict) -> List[int]:
                                                 User.is_active == 1).all()]
 
 
+def onec_desk_editors(db: Session, ctx: dict) -> List[int]:
+    """Кто вносит счёт и УПД из 1С: роли с правкой «Документов для 1С» (`onec_desk`, 05.11.2026) — бухгалтер. По праву, а не
+    по ключу роли — та же причина, что у `traffic_admins`."""
+    from app.models import RolePermission
+    ids = [r.role_id for r in db.query(RolePermission).filter(
+        RolePermission.section == "onec_desk", RolePermission.can_edit == 1).all()]
+    if not ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(ids), User.is_active == 1).all()]
+
+
 # Резолверы `mp_approvers` (роли с правом media_plans:approve) и `mp_stakeholders`
 # (автор + ответственные) удалены 30.08.2026 вместе со стейт-машиной согласования МП:
 # согласующих больше нет как роли в процессе. Автор плана по-прежнему адресуем —
@@ -228,6 +239,7 @@ RESOLVERS = {
     "year_plan_owner": year_plan_owner,
     "master_of_responsible": master_of_responsible,
     "traffic_admins": traffic_admins,
+    "onec_desk_editors": onec_desk_editors,
     "traffic_masters": traffic_masters,
     "account_masters": account_masters,
 }
@@ -271,6 +283,7 @@ RESOLVER_LABELS = {
     "year_plan_owner": "Сейлз годового плана",
     "master_of_responsible": "Мастер ответственного",
     "traffic_admins": "Трафик-админы (право «Особенности площадок»)",
+    "onec_desk_editors": "Бухгалтерия (право правки «Документов для 1С»)",
     "traffic_masters": "Мастера трафика (мастер-роли контура трафика)",
     "account_masters": "Мастера аккаунтов (мастер-роли контура аккаунтов)",
 }

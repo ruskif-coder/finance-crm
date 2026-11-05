@@ -28,6 +28,8 @@ def _channel(monkeypatch):
     # 02.11.2026: условия «ждём оплату» и «архив» — документы пакета; здесь все подписаны, проверяем только право и шаг
     monkeypatch.setattr(IS, "docs", lambda db, m: [NS(sign_state="подписан", sign_channel=m.channel)])
     monkeypatch.setattr(IS, "doc_label", lambda d: "ДС № 1")
+    # 05.11.2026: из «ждём 1С» дальше — когда бухгалтер внесла все комплекты; здесь внесены
+    monkeypatch.setattr(ST, "_desk_pending", lambda db, m: [])
 
 
 def test_order_and_values():
@@ -53,6 +55,14 @@ def test_issue_needs_channel_on_contract():
     with pytest.raises(ST.StatusError) as e:
         ST.move(None, _M("ждём 1С", channel=None), "выставление", _U())
     assert "ЭДО или бумага" in e.value.message
+
+
+def test_issue_by_hand_only_after_accountant_entered_all_kits(monkeypatch):
+    """«УПД из 1С получены» руками больше не ставят (05.11.2026): счёт и УПД вносит бухгалтер, пакет уходит сам."""
+    monkeypatch.setattr(ST, "_desk_pending", lambda db, m: ["УПД № 2"])
+    with pytest.raises(ST.StatusError) as e:
+        ST.move(None, _M("ждём 1С"), "выставление", _U(admin=True))
+    assert e.value.status == 409 and "УПД № 2" in e.value.message
 
 
 @pytest.mark.parametrize("u,ok", [(_U(), False), (_U(master=True), True), (_U(admin=True), True)])
@@ -104,6 +114,8 @@ def _todo(monkeypatch):
     monkeypatch.setattr(ST, "_ready", lambda db, m: st["ready"])
     monkeypatch.setattr(ST, "_open_legal", lambda db, m: st["legal"])
     monkeypatch.setattr(ST, "_drafts", lambda db, m: st["drafts"])
+    st["desk"] = (None, 2, 2)
+    monkeypatch.setattr(ST, "_desk", lambda db, m: st["desk"])
     return st
 
 
@@ -128,7 +140,13 @@ def test_todo_agree_legal_first_then_confirm(_todo):
 
 
 def test_todo_later_steps(_todo):
-    assert ST.todo(None, _M("ждём 1С"))["who"] == "1С"
+    # 05.11.2026: счёт и УПД вносит бухгалтер в «Документах для 1С»
+    assert ST.todo(None, _M("ждём 1С")) == {"text": "ждём счёт и УПД от бухгалтерии", "who": "бухгалтерия", "tone": "info"}
+    _todo["desk"] = (None, 1, 3)
+    assert ST.todo(None, _M("ждём 1С"))["text"] == "бухгалтерия: внесено 2 из 3"
+    _todo["desk"] = ({"upd_no": 2, "text": "КПП не тот"}, 1, 3)
+    assert ST.todo(None, _M("ждём 1С")) == {"text": "бухгалтер вернул УПД № 2: КПП не тот", "who": "аккаунт", "tone": "bad"}
+    _todo["desk"] = (None, 2, 2)
     t = ST.todo(None, _M("ждём 1С", channel=None))
     assert t["tone"] == "bad" and "ЭДО или бумага" in t["text"]
     assert ST.todo(None, _M("выставление", "бумага"))["text"] == "всё выставлено — ждём оплату"   # подробно — test_master_deal_issue

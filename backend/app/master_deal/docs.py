@@ -27,11 +27,35 @@ def _services(rows: list) -> list:
 
 def _files(db: Session, m) -> dict:
     rows = db.execute(text("""SELECT id, annex_id, upd_no, filename, uploaded_at FROM master_deal_files
-                               WHERE master_deal_id = :m"""), {"m": m.id}).all()
+                               WHERE master_deal_id = :m AND kind IN ('скан ДС', 'скан УПД')"""), {"m": m.id}).all()
     out = {}
     for fid, a, u, name, at in rows:
         out[("a", a) if a is not None else ("u", u)] = {"id": fid, "filename": name, "at": at.isoformat(timespec="seconds") if at else None}
     return out
+
+
+def _onec_files(db: Session, m) -> dict:
+    """Файлы из 1С по комплектам (05.11.2026): {upd_no: {invoice|upd|xml: {id, filename}}}."""
+    from app.onec_desk.files import KINDS
+    out: dict = {}
+    for fid, u, kind, name in db.execute(text("""SELECT id, upd_no, kind, filename FROM master_deal_files
+                                                  WHERE master_deal_id = :m AND kind = ANY(:k) ORDER BY id"""),
+                                         {"m": m.id, "k": list(KINDS)}).all():
+        out.setdefault(u, {})[KINDS[kind]] = {"id": fid, "filename": name}
+    return out
+
+
+def _desk(db: Session, upd_no: int, state, u) -> dict:
+    """Где комплект у бухгалтерии: состояние; если вернули — что не так; если бухгалтер спросила и аккаунт ещё не ответил —
+    её вопрос (ответ — из карточки, `onec-reply`)."""
+    if u is None:
+        return {"state": state, "returned": None, "question": None}
+    rows = db.execute(text("""SELECT kind, text FROM onec_desk_events WHERE upd_id = :k AND kind IN ('возврат', 'комментарий', 'ответ')
+                               ORDER BY id"""), {"k": u.id}).all()
+    returned = next((r.text for r in reversed(rows) if r.kind == "возврат"), None) if state == "возвращён" else None
+    last = next((r for r in reversed(rows) if r.kind in ("комментарий", "ответ")), None)
+    question = last.text if last is not None and last.kind == "комментарий" and state != "внесён" else None
+    return {"state": state, "returned": returned, "question": question}
 
 
 def build(db: Session, m) -> dict:
@@ -42,9 +66,11 @@ def build(db: Session, m) -> dict:
     upd_rows = {u.upd_no: u for u in db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id)}
     upd_open = m.status in (ST.ISSUE, ST.WAIT_PAY, ST.WAIT_SCANS)        # УПД отмечают, когда они пришли из 1С
     files = _files(db, m)
+    onec_files = _onec_files(db, m)
     annexes = (db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id)
                .order_by(SalesAnnex.sub_no.isnot(None), SalesAnnex.sub_no, SalesAnnex.id).all())
-    kits = db.execute(text("""SELECT upd_no, annex_id, brand, service, gross, onec_at, onec_invoice_no, onec_upd_no, net FROM master_deal_upds
+    kits = db.execute(text("""SELECT upd_no, annex_id, brand, service, gross, onec_at, onec_invoice_no, onec_upd_no, net,
+                                      onec_invoice_date, onec_upd_date, onec_state, onec_gross FROM master_deal_upds
                                WHERE master_deal_id = :m ORDER BY upd_no"""), {"m": m.id}).all()
     codes = {r[0]: r[1] for r in db.execute(text("""SELECT x.annex_id, string_agg(d.code, ', ' ORDER BY d.code)
                                                      FROM sales_deal_annex_allocation x JOIN sales_deals d ON d.id = x.deal_id
@@ -64,6 +90,8 @@ def build(db: Session, m) -> dict:
             "kits": [{"upd_no": k[0], "group": " · ".join(x for x in (k[2], k[3]) if x) or "весь пакет", "gross": float(k[4] or 0),
                       "net": float(k[8] or 0), "deals": (codes.get(a.id) or "").split(", ") if codes.get(a.id) else [], "onec": bool(k[5]),
                       "invoice_no": k[6], "upd_doc_no": k[7],
+                      "invoice_date": k[9].isoformat() if k[9] else None, "upd_doc_date": k[10].isoformat() if k[10] else None,
+                      "desk": _desk(db, k[0], k[11], upd_rows.get(k[0])), "onec_gross": k[12], "onec_files": onec_files.get(k[0], {}),
                       "scan": files.get(("u", k[0])), "sign": _upd_sign(db, upd_rows.get(k[0]), channel, upd_open)}
                      for k in kits if k[1] == a.id],
         })

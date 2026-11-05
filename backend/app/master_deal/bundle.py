@@ -53,12 +53,14 @@ def build(db: Session, m) -> tuple:
             except Exception as e:  # noqa: BLE001 — причина уходит в «не вошло.txt»
                 skipped.append(f"{a['number']}: {getattr(e, 'detail', None) or e}")
         for fid, fname, path, label in db.execute(text("""
-                SELECT f.id, f.filename, f.path, coalesce(a.number, 'УПД № ' || f.upd_no::text, 'скан')
+                SELECT f.id, f.filename, f.path,
+                       CASE WHEN f.kind IN ('скан ДС', 'скан УПД') THEN 'скан · ' ELSE f.kind || ' · ' END
+                       || coalesce(a.number, 'УПД № ' || f.upd_no::text, 'скан')
                   FROM master_deal_files f LEFT JOIN sales_annexes a ON a.id = f.annex_id
                  WHERE f.master_deal_id = :m ORDER BY f.id"""), {"m": m.id}).all():
             try:
                 with open(existing_upload_path(path), "rb") as fh:
-                    put(z, f"скан · {label} — {fname}", fh.read())
+                    put(z, f"{label} — {fname}", fh.read())
             except Exception:  # noqa: BLE001
                 skipped.append(f"скан «{fname}»: файла нет на диске")
         if skipped or not used:

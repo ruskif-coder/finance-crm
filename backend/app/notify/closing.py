@@ -88,6 +88,18 @@ def status_changed(db: Session, m, was: str, user) -> None:
         _master(db, "master_closed", m, "в архиве", "Пакет закрыт: документы и сканы на месте.", user)
 
 
+@_safe
+def onec_desk(db: Session, key: str, m, user=None, upd_no=None, text=None) -> None:
+    """«Документы для 1С» (05.11.2026): бухгалтер вернула комплект или спросила — сразу; внесены все комплекты — в дайджест."""
+    if key == "master_onec_returned":
+        _master(db, key, m, f"бухгалтер вернул УПД № {upd_no}", f"Что не так: {text}. Исправьте и нажмите «Исправлено».", user,
+                tone="warn")
+    elif key == "master_onec_question":
+        _master(db, key, m, f"вопрос бухгалтера по УПД № {upd_no}", f"{text}. Ответьте в карточке мастер-сделки.", user, tone="info")
+    elif key == "master_onec_done":
+        _master(db, key, m, "счёт и УПД из 1С внесены", "Документы 1С по всем комплектам внесены — можно выставлять клиенту.", user)
+
+
 # ── просрочки (сканер) ────────────────────────────────────────────────────────────────────────────
 
 def recon_overdue_hits(db: Session, Hit, fact_days) -> list:

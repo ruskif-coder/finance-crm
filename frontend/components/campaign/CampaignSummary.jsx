@@ -23,6 +23,8 @@ import { MONO, UI, PortalPopover, Z, btnSm } from '@/components/salesTableKit'
 import Section from '@/components/deal/Section'
 import { Dynamics, GOAL_LABELS, MISMATCH_FG, PaceBar, StatusPill, pctTone } from '@/components/traffic/dashboardKit'
 import { grp } from '@/lib/salesFormat'
+import WrLinkRow from '@/components/traffic/WrLinkRow'
+import { can, getPermissions } from '@/lib/auth'
 import api, { auth } from '@/lib/api'
 
 const DASH = '—'
@@ -180,6 +182,10 @@ const ManualVerifier = ({ d, dealId }) => {
 const Report = ({ d, dealId }) => {
   const [stat, setStat] = useState(null)
   const [grain, setGrain] = useState('day')
+  // Ссылка на отчёт Weborama: править — по праву дашборда трафика (ручки там), смотреть — всем, кто видит карточку
+  const [wrLink, setWrLink] = useState(null)
+  const [mayEditLink, setMayEditLink] = useState(false)
+  useEffect(() => { setMayEditLink(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
 
   useEffect(() => {
     let alive = true
@@ -214,6 +220,10 @@ const Report = ({ d, dealId }) => {
 
         {d.pixel_mode === 'external' && (
           <ManualVerifier d={d} dealId={dealId} />
+        )}
+        {/* Отчёт Weborama по ссылке (05.11.2026) — тот же блок, что в карточке РК на дашборде трафика */}
+        {!!d.wr_link && (
+          <WrLinkRow campaignId={d.campaign_id} link={wrLink || d.wr_link} mayEdit={mayEditLink} onChange={setWrLink} />
         )}
 
         <div style={{ paddingTop: 12, borderTop: '1px solid var(--border-inner)' }}>
@@ -320,6 +330,17 @@ const Headline = ({ d }) => (
   </div>
 )
 
+const LinkOnly = ({ d, cardStyle }) => {
+  const [link, setLink] = useState(null)
+  const [mayEdit, setMayEdit] = useState(false)
+  useEffect(() => { setMayEdit(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
+  return (
+    <div style={cardStyle}>
+      <WrLinkRow campaignId={d.campaign_id} link={link || d.wr_link} mayEdit={mayEdit} onChange={setLink} />
+    </div>
+  )
+}
+
 /** Загрузка сводки РК сделки. `null` — ещё грузится. */
 function useCampaign(dealId) {
   const [data, setData] = useState(null)
@@ -365,7 +386,9 @@ export default function CampaignSummary({ dealId, title = 'Рекламная к
   const data = useCampaign(dealId)
 
   // Блока нет, пока нет статистики. Не «пустой блок», а отсутствие блока: место на
-  // карточке дорогое, и рамка вокруг пяти прочерков ничего не сообщает.
+  // карточке дорогое, и рамка вокруг пяти прочерков ничего не сообщает. Исключение — ссылка на отчёт Weborama у
+  // внешнего пикселя (05.11.2026): её вписывают как раз до первой статистики, поэтому — одна строка, без сводки.
+  if (data && !data.has && data.wr_link) return <LinkOnly d={data} cardStyle={cardStyle} />
   if (!data || !data.has) return null
 
   /* Сводка видна В ОБОИХ состояниях — и свёрнутом, и раскрытом: это не подробности,

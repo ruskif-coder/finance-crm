@@ -1789,6 +1789,8 @@ class CampaignExtraIn(BaseModel):
     mode: Optional[str] = None
     tag: Optional[str] = None
     insertion: Optional[str] = None
+    # Ссылка на отчёт Weborama (внешний пиксель, 05.11.2026): ложится в РК, если она уже собрана
+    report_url: Optional[str] = None
 
 
 @router.put("/deals/{deal_id}/campaign-extra")
@@ -1837,6 +1839,17 @@ def save_deal_campaign_extra(deal_id: int, payload: CampaignExtraIn,
             raise HTTPException(status_code=400, detail=str(e))
     ins = ((payload.insertion or "").strip() or None) if payload.insertion is not None         else deal.weborama_ext_insertion
 
+    # Ссылка на отчёт — проверяется ДО любой записи (05.11.2026): неверная не должна ни лечь в РК, ни зацепить
+    # сохранение тега. Пустая — не трогаем: ссылку можно вписать и позже, в карточке РК или здесь же.
+    from app.weborama import permalink as WL
+    report_url = (payload.report_url or "").strip() if (want and mode == "external") else ""
+    if report_url:
+        try:
+            report_url = WL.check_url(report_url)
+            WL.probe(report_url)
+        except WL.LinkError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     # Проверка «ничего не изменилось» идёт ПОСЛЕ разбора тела, а не до него. Сперва было
     # наоборот, и замер 14.09.2026 показал, чем это кончается: у сделки с уже включённым
     # признаком ручка выходила на первой строке — то есть заведомо кривой тег принимался
@@ -1851,7 +1864,7 @@ def save_deal_campaign_extra(deal_id: int, payload: CampaignExtraIn,
     deal.weborama_pixel_decided_at = datetime.utcnow()
     if was == want and not setup_changed:
         db.commit()
-        return _campaign_extra_out(deal)
+        return {**_campaign_extra_out(deal), **_apply_report_url(db, deal, report_url, current_user)}
 
     deal.weborama_pixel = want
     if want:
@@ -1891,7 +1904,27 @@ def save_deal_campaign_extra(deal_id: int, payload: CampaignExtraIn,
         what = "правка настройки пикселя: " + ("внешний тег" if mode == "external"
                                                else "получаем сами")
     log_action(db, current_user, "deal_weborama_pixel", "sales_deal", deal.id, what)
-    return _campaign_extra_out(deal)
+    return {**_campaign_extra_out(deal), **_apply_report_url(db, deal, report_url, current_user)}
+
+
+def _apply_report_url(db: Session, deal, url: str, user) -> dict:
+    """Ссылку — в РК сделки и сразу снять показы. РК ещё не собрана — сказать словами: колонка у РК, у сделки
+    ссылку не храним (решение 05.11.2026), её впишут после сборки."""
+    if not url:
+        return {}
+    from app.ad.models import AdCampaign
+    from app.weborama import permalink as WL
+    c = db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id).first()
+    if c is None:
+        return {"report_url_note": "РК ещё не собрана — ссылку на отчёт впишите после сборки, в карточке РК или здесь"}
+    if url != (c.wr_report_url or ""):
+        WL.clear(db, c.id)
+    c.wr_report_url = url
+    db.commit()
+    log_action(db, user, "rk_wr_link", "ad_campaign", c.id, f"{deal.code}: ссылка на отчёт Weborama задана на сборке")
+    res = WL.sync_campaign(db, c)
+    return {"report_url_note": res.get("error") or res.get("note")
+            or f"по ссылке снято дней: {res['days']}, показов {res['shows']}"}
 
 
 def _campaign_extra_out(deal) -> dict:
@@ -2013,7 +2046,9 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     facts = td._facts(db, [c.id]).get(c.id, {})
     fact_shows = facts.get("shows")
     if fact_shows is None:
-        return {"has": False, "reason": "Статистика ещё не пришла"}
+        # Ссылку на отчёт Weborama вписывают как раз до первой статистики (05.11.2026) — её строку отдаём и тут
+        return {"has": False, "reason": "Статистика ещё не пришла", "campaign_id": c.id,
+                "wr_link": td._wr_link_view(db, c, deal)}
 
     today = fact_as_of(db)    # дата среза: план и темп — на последний отчитанный день
     fl = flight_of(c.date_start, c.date_end, today)
@@ -2103,6 +2138,9 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
         "pixel_mode": px["mode"] if px["needed"] else None,
         "verifier_manual": ({"shows": manual[0], "period_to": manual[1].isoformat()}
                             if manual else None),
+        # Отчёт Weborama по ссылке (внешний пиксель, 05.11.2026) — тот же блок, что в карточке РК на дашборде трафика.
+        # Пока ссылка даёт показы, ручной итог выше в сверку не идёт (`stat_sources.manual_superseded_sql`).
+        "wr_link": td._wr_link_view(db, c, deal),
         # Строки площадок — для отчёта в модалке: доля, план, факт, недокрут.
         # Строки площадок — для расхлопа: доля, план, факт, недокрут и та же пара
         # «верификатор / расхождение», что в шапке. Считается тем же выражением —
