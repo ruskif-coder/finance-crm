@@ -43,9 +43,31 @@ def is_external(a) -> bool:
     return getattr(a, "origin", None) == ORIGIN
 
 
-def _items(db: Session, items: List[dict]) -> List[dict]:
+def rk_dates(a) -> tuple:
+    """Даты РК по умолчанию для строк внешнего ДС — из строк МП черновика пакета (`rows`, снимок раскладки): самая ранняя
+    «с», самая поздняя «по». Строк с датами нет — месяц пакета (`period_from`/`period_to` ДС)."""
+    def d(v):
+        return date.fromisoformat(v[:10]) if isinstance(v, str) and v else (v if isinstance(v, date) else None)
+    starts = [x for x in (d(r.get("date_from")) for r in (a.rows or [])) if x]
+    ends = [x for x in (d(r.get("date_to")) for r in (a.rows or [])) if x]
+    return (min(starts) if starts else a.period_from, max(ends) if ends else a.period_to)
+
+
+def _date(v, what: str) -> Optional[date]:
+    if v in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except ValueError:
+        raise ExternalError(400, f"{what} — дата")
+
+
+def _items(db: Session, items: List[dict], default: tuple = (None, None), may_change_dates: bool = False) -> List[dict]:
     """Строки ДС: основная услуга (`service_id`) или доп. услуга (`addon_id`), сумма и количество. Единица — снимком из
-    справочника (`app/sales/units.py`): смена модели закупки потом не меняет подписанный документ."""
+    справочника (`app/sales/units.py`): смена модели закупки потом не меняет подписанный документ.
+
+    Даты РК строки (`date_from`/`date_to` → `period_from`/`period_to`): по умолчанию — `default` (`rk_dates`); свои — только с
+    правом «Мастер-сделки · согласование» (мастер аккаунт и админ, владелец 05.11.2026)."""
     out = []
     for it in items or []:
         sid, aid = it.get("service_id"), it.get("addon_id")
@@ -60,18 +82,24 @@ def _items(db: Session, items: List[dict]) -> List[dict]:
             raise ExternalError(400, "Сумма услуги — больше нуля")
         if volume is not None and volume < 0:
             raise ExternalError(400, "Количество не бывает отрицательным")
+        df = _date(it.get("date_from"), "Начало РК") or default[0]
+        dt = _date(it.get("date_to"), "Конец РК") or default[1]
+        if df and dt and df > dt:
+            raise ExternalError(400, "Начало РК позже конца")
+        if (df, dt) != tuple(default) and not may_change_dates:
+            raise ExternalError(403, "Даты РК во внешнем ДС меняет мастер аккаунт или админ (право «Мастер-сделки · согласование»)")
         if sid:
             svc = db.get(SalesService, int(sid))
             if svc is None:
                 raise ExternalError(400, "Такой услуги нет в справочнике")
             out.append({"service_id": svc.id, "addon_id": None, "amount": amount, "volume": volume,
-                        "unit": U.service_unit(svc.calc_form)})
+                        "unit": U.service_unit(svc.calc_form), "period_from": df, "period_to": dt})
         else:
             add = db.get(SalesAddonService, int(aid))
             if add is None:
                 raise ExternalError(400, "Такой доп. услуги нет в справочнике")
             out.append({"service_id": None, "addon_id": add.id, "amount": amount, "volume": volume,
-                        "unit": U.addon_unit(add.period)})
+                        "unit": U.addon_unit(add.period), "period_from": df, "period_to": dt})
     if not out:
         raise ExternalError(400, "Укажите услугу (или услуги) ДС с суммой — под них потом закрываются")
     return out
@@ -121,13 +149,18 @@ def _main_future_no(db: Session, a) -> Optional[int]:
 
 def sign_external(db: Session, a: SalesAnnex, user, *, no: Optional[int], number_text: Optional[str], doc_date: Optional[date],
                   total: Optional[float], items: List[dict], edo_link: Optional[str], file_name: Optional[str],
-                  file_bytes: Optional[bytes], own_number: bool = False) -> dict:
+                  file_bytes: Optional[bytes], own_number: bool = False, may_change_dates: bool = False) -> dict:
     """Черновик ДС пакета → подтверждённый и подписанный внешний ДС. `own_number` — ДС допов подписан отдельным документом
     со своим номером (№ 29), а не суффиксом основного (28-01): владелец 05.11.2026, октябрь АПР Евразии. Возвращает {path, old_path} — прежний файл удаляет
     вызывающий после коммита. Отказ — ExternalError с текстом для человека; до него в базу ничего не пишется."""
     from app.links import validate_link
     if a.no is not None:
-        raise ExternalError(409, "ДС уже подтверждён")
+        # Выпущенный нами ДС можно переписать внешним (клиент подписал свой документ) — до «согласован»: дальше он ушёл
+        # на согласование/подпись, и подмена разошлась бы с тем, что видел клиент (владелец 05.11.2026).
+        if (getattr(a, "origin", None) or "система") != "система":
+            raise ExternalError(409, "ДС уже загружен как подписанный вне системы")
+        if (a.sign_state or "выпущен") != "выпущен":
+            raise ExternalError(409, f"ДС уже «{a.sign_state}» — заменить внешним можно только выпущенный и ещё не согласованный")
     if not a.master_deal_id:
         raise ExternalError(409, "Подписать вне системы можно ДС мастер-сделки — черновик из раскладки пакета")
     if no is None or no <= 0:
@@ -143,7 +176,7 @@ def sign_external(db: Session, a: SalesAnnex, user, *, no: Optional[int], number
         raise ExternalError(400, "Дата ДС — как в подписанном документе")
     if not total or total <= 0:
         raise ExternalError(400, "Сумма ДС с НДС — больше нуля")
-    lines = _items(db, items)
+    lines = _items(db, items, rk_dates(a), may_change_dates)
     link = validate_link(edo_link) if (edo_link or "").strip() else None
     f = _file(file_name, file_bytes)
     if not link and not f:
@@ -164,7 +197,7 @@ def sign_external(db: Session, a: SalesAnnex, user, *, no: Optional[int], number
     a.status, a.confirmed_by, a.confirmed_at = "подтверждён", getattr(user, "id", None), datetime.utcnow()
     db.query(SalesAnnexItem).filter(SalesAnnexItem.annex_id == a.id).delete()
     for ln in lines:
-        db.add(SalesAnnexItem(annex_id=a.id, **ln, period_from=a.period_from, period_to=a.period_to))
+        db.add(SalesAnnexItem(annex_id=a.id, **ln))
     stored = _store(db, a, user, f) if f else {"path": None, "old_path": None, "file_id": None}
     # Подписан — сразу: документ уже подписан сторонами вне системы. Канал — ЭДО, если документ — ссылка оттуда.
     a.sign_state = DS.SIGNED

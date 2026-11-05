@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react'
 import api, { auth } from '../../lib/api'
 import { MONO, Modal, inp, sel, btn, primaryBtn } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
+import { can, getPermissions } from '../../lib/auth'
+import { fmtDate as fmtD } from '../../lib/dates'
 import safeHref from '../../lib/safeHref'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 
@@ -16,10 +18,12 @@ const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransf
 const num = (v) => parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.')) || 0
 
 // Строка — основная услуга («s:ID») или доп. услуга («a:ID»); единица количества — из справочника (сервер: app/sales/units.py).
-function ServiceRow({ row, services, addons, onChange, onRemove }) {
+function ServiceRow({ row, services, addons, onChange, onRemove, mayDates }) {
   const [kind, id] = (row.key || ':').split(':')
   const picked = (kind === 's' ? services : addons).find(x => String(x.id) === id)
+  const dateInp = { ...inp, width: 150, fontFamily: MONO, opacity: mayDates ? 1 : 0.6 }
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 150px 170px 28px', gap: 8, alignItems: 'center' }}>
       <select value={row.key} onChange={e => onChange({ ...row, key: e.target.value })} style={sel}>
         <option value="">— услуга —</option>
@@ -35,10 +39,17 @@ function ServiceRow({ row, services, addons, onChange, onRemove }) {
       </span>
       <span onClick={onRemove} title="убрать строку" style={{ cursor: 'pointer', color: 'var(--text-muted)', textAlign: 'center' }}>✕</span>
     </div>
+    {/* Даты РК строки — из МП пакета; менять — мастер аккаунт и админ (право «Мастер-сделки · согласование», 05.11.2026) */}
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}
+          title={mayDates ? undefined : 'Даты РК меняет мастер аккаунт или админ'}>
+      РК с <input type="date" value={row.from || ''} disabled={!mayDates} onChange={e => onChange({ ...row, from: e.target.value })} style={dateInp} />
+      по <input type="date" value={row.to || ''} disabled={!mayDates} onChange={e => onChange({ ...row, to: e.target.value })} style={dateInp} />
+    </span>
+    </div>
   )
 }
 
-export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, autoOpen }) {
+export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, autoOpen, label = 'Подписан вне системы' }) {
   const [open, setOpen] = useState(false)
   // Пришли из реестра по «Загрузить внешний ДС» (`?external=1`) — форма открывается сразу.
   useEffect(() => { if (autoOpen) setOpen(true) }, [autoOpen])
@@ -48,17 +59,21 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
   const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [mayDates, setMayDates] = useState(false)
+  const [rkFrom, rkTo] = annex.master?.rk_dates || []
+  const blankRow = () => ({ key: '', amount: '', volume: '', from: rkFrom || '', to: rkTo || '' })
 
   useEffect(() => {
     if (!open) return
     setErr('')
+    setMayDates(can(getPermissions(), 'master_deals', 'approve'))
     // Сбой справочника — словами: пустой список читался бы как «услуг нет».
     api.get('/sales/directories/services?only_active=true', auth()).then(r => setServices(r.data?.items || r.data || []))
       .catch(() => setErr('Справочник услуг не загрузился — список пуст не потому, что услуг нет'))
     api.get('/sales/directories/services/addons?only_active=true', auth()).then(r => setAddons(r.data?.items || []))
       .catch(() => setErr('Справочник доп. услуг не загрузился — список пуст не потому, что их нет'))
     setF({ no: defaultNo || '', own: false, number: '', date: defaultDate || '', how: 'file', link: '', total: annex.total_amount ? String(annex.total_amount) : '',
-           rows: [{ key: '', amount: annex.total_amount ? String(annex.total_amount) : '', volume: '' }] })
+           rows: [{ ...blankRow(), amount: annex.total_amount ? String(annex.total_amount) : '' }] })
     setFile(null)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -72,7 +87,8 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
       if (f.own) body.append('own_number', 'true')
       body.append('items', JSON.stringify(f.rows.filter(r => r.key).map(r => {
         const [kind, id] = r.key.split(':')
-        return { [kind === 's' ? 'service_id' : 'addon_id']: Number(id), amount: num(r.amount), volume: r.volume === '' ? null : num(r.volume) }
+        return { [kind === 's' ? 'service_id' : 'addon_id']: Number(id), amount: num(r.amount), volume: r.volume === '' ? null : num(r.volume),
+                 ...(mayDates ? { date_from: r.from || null, date_to: r.to || null } : {}) }   // без права — даты по умолчанию на сервере
       })))
       if (f.how === 'link') body.append('edo_link', f.link)
       else if (file) body.append('file', file)
@@ -85,7 +101,7 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
   return (
     <>
       <button onClick={() => setOpen(true)} title="Клиент подписал свой ДС — загрузить его вместо сборки конструктором"
-              style={{ ...btn(false), height: 36 }}>Подписан вне системы</button>
+              style={{ ...btn(false), height: 36 }}>{label}</button>
       {open && f && (
         <Modal title="ДС подписан вне системы" width={640} onClose={() => setOpen(false)}
                summary="ДС станет подтверждённым и подписанным, как собранный у нас: сделки, УПД и 1С — от него. Документ — файл или ссылка ЭДО."
@@ -124,11 +140,11 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
               <div style={{ ...LBL, marginBottom: 6 }}>Услуги и суммы · под них закрываются</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {f.rows.map((r, i) => (
-                  <ServiceRow key={i} row={r} services={services} addons={addons}
+                  <ServiceRow key={i} row={r} services={services} addons={addons} mayDates={mayDates}
                               onChange={nr => setF(s => ({ ...s, rows: s.rows.map((x, k) => k === i ? nr : x) }))}
                               onRemove={() => setF(s => ({ ...s, rows: s.rows.filter((_, k) => k !== i) }))} />
                 ))}
-                <span onClick={() => setF(s => ({ ...s, rows: [...s.rows, { key: '', amount: '', volume: '' }] }))}
+                <span onClick={() => setF(s => ({ ...s, rows: [...s.rows, blankRow()] }))}
                       style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 }}>+ услуга</span>
               </div>
             </div>
@@ -168,6 +184,7 @@ export function ExternalAnnexView({ annex, ext, section }) {
           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
             <span>{it.service}{it.addon && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-muted)' }}>доп. услуга</span>}</span>
             <span style={{ display: 'flex', gap: 14 }}>
+              {it.date_from && <span style={{ fontFamily: MONO, color: 'var(--text-muted)' }}>{fmtD(it.date_from)}–{fmtD(it.date_to)}</span>}
               {it.volume != null && <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{grp(it.volume)} {it.unit}</span>}
               <span style={{ fontFamily: MONO, fontWeight: 700 }}>{grp(it.amount)}</span>
             </span>

@@ -420,6 +420,13 @@ export default function AnnexAssembly() {
                     {!!a.master && mayEdit && <ExternalSignButton annex={a} defaultNo={a.master.will_be_no ?? no} defaultDate={docDate} onDone={load} autoOpen={router.query.external === '1'} />}
                   </div>
                 )}
+                {/* Выпущенный нами ДС пакета — переписать документом клиента, пока не «согласован» (владелец 05.11.2026) */}
+                {!a.is_draft && !!a.master && mayEdit && a.origin !== 'загружен' && (a.sign?.state || 'выпущен') === 'выпущен' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <ExternalSignButton annex={a} defaultNo={a.no} defaultDate={a.date} onDone={load} label="Заменить подписанным вне системы" />
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>клиент подписал свой документ — до «согласован» его можно поставить вместо нашего</span>
+                  </div>
+                )}
                 {/* Выгрузка в одну строку (владелец 14.10.2026): «Клиентские на согласование» — ДС и основание закрывающих одним файлом,
                     затем разделитель, затем чистовые — только ДС, на подпись. Подписи групп — сверху, как у номера и даты (владелец 28.10.2026). */}
                 {!a.external && (<div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>

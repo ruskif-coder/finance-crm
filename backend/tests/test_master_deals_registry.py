@@ -11,9 +11,10 @@ from app.master_deal import scope as SC
 from app.routers import master_deals as R
 
 
-def test_section_is_finance_with_view_and_edit():
+def test_section_is_finance_with_view_edit_and_approve():
+    """approve — «согласование»: даты РК во внешнем ДС (владелец 05.11.2026: мастер аккаунт и админ)."""
     s = next(x for x in SECTIONS if x["key"] == "master_deals")
-    assert s["group"] == "Финансы" and s["actions"] == ["view", "edit"]
+    assert s["group"] == "Финансы" and s["actions"] == ["view", "edit", "approve"]
 
 
 def test_every_route_is_gated_by_master_deals_permission():

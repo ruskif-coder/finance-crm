@@ -231,3 +231,47 @@ def test_own_number_of_addons_cannot_take_the_main_annex_future_number(ctx):
     with pytest.raises(X.ExternalError) as e:
         _sign(db, a, svc, user, no=987601, own_number=True)
     assert "основн" in e.value.message
+
+
+def test_issued_by_us_can_be_replaced_until_agreed(ctx):
+    """Владелец 05.11.2026: выпущенный нами ДС пакета можно переписать внешним (клиент подписал свой документ) — до стадии
+    «согласован». Номер — прежний или другой свободный; после «согласован» — отказ."""
+    db, a, svc, user, _ = ctx
+    a.no, a.number, a.status, a.origin, a.sign_state = 987610, "ДС № 987610", "подтверждён", "система", "выпущен"
+    db.flush()
+    _sign(db, a, svc, user, no=987610, file_name=None, file_bytes=None, edo_link="https://edo.example/doc/7")
+    assert a.origin == "загружен" and a.no == 987610 and a.sign_state == "подписан"
+
+    a.origin, a.sign_state = "система", "согласован"
+    db.flush()
+    with pytest.raises(X.ExternalError) as e:
+        _sign(db, a, svc, user, no=987611, file_name=None, file_bytes=None, edo_link="https://edo.example/doc/8")
+    assert "согласован" in e.value.message
+
+
+def test_rk_dates_default_to_the_media_plan_of_the_package(ctx):
+    """Владелец 05.11.2026: у строк внешнего ДС — даты РК. По умолчанию — из строк МП черновика пакета (самая ранняя «с»,
+    самая поздняя «по»); без строк — месяц пакета."""
+    db, a, svc, user, _ = ctx
+    a.rows = [{"date_from": "2026-10-03", "date_to": "2026-10-20"}, {"date_from": "2026-10-10", "date_to": "2026-10-28"}]
+    db.flush()
+    assert X.rk_dates(a) == (date(2026, 10, 3), date(2026, 10, 28))
+    _sign(db, a, svc, user)
+    it = db.query(SalesAnnexItem).filter(SalesAnnexItem.annex_id == a.id).one()
+    assert (it.period_from, it.period_to) == (date(2026, 10, 3), date(2026, 10, 28))
+
+
+def test_changing_rk_dates_needs_the_right(ctx):
+    """Менять даты РК во внешнем ДС — мастер аккаунт и админ (право «Мастер-сделки · согласование»), владелец 05.11.2026."""
+    db, a, svc, user, _ = ctx
+    a.rows = [{"date_from": "2026-10-03", "date_to": "2026-10-28"}]
+    db.flush()
+    own = [{"service_id": svc, "amount": 120000.0, "date_from": "2026-10-05", "date_to": "2026-10-25"}]
+    with pytest.raises(X.ExternalError) as e:
+        _sign(db, a, svc, user, items=own)
+    assert e.value.status == 403
+    _sign(db, a, svc, user, items=own, may_change_dates=True)
+    it = db.query(SalesAnnexItem).filter(SalesAnnexItem.annex_id == a.id).one()
+    assert (it.period_from, it.period_to) == (date(2026, 10, 5), date(2026, 10, 25))
+    with pytest.raises(X.ExternalError):
+        X._items(db, [{**own[0], "date_from": "2026-10-25", "date_to": "2026-10-05"}], (date(2026, 10, 3), date(2026, 10, 28)), True)

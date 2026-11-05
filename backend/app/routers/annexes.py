@@ -796,6 +796,12 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
             "external": _external_view(db, a) if X.is_external(a) else None}
 
 
+def _may_change_rk(db: Session, user) -> bool:
+    """Даты РК во внешнем ДС — право «Мастер-сделки · согласование» (мастер аккаунт; админ — всегда)."""
+    from app.permissions import get_permissions_for_user
+    return bool((get_permissions_for_user(db, user).get("master_deals") or {}).get("approve"))
+
+
 def _external_view(db: Session, a) -> dict:
     from app.master_deal.models import MasterDealFile
     from app.sales.models import SalesAddonService, SalesAnnexItem, SalesService
@@ -806,7 +812,8 @@ def _external_view(db: Session, a) -> dict:
              .filter(SalesAnnexItem.annex_id == a.id).order_by(SalesAnnexItem.id).all())
     return {"edo_link": a.edo_link, "file": {"id": f.id, "name": f.filename} if f else None,
             "items": [{"service_id": it.service_id, "addon_id": it.addon_id, "service": sname or aname,
-                       "addon": it.addon_id is not None, "amount": it.amount, "volume": it.volume, "unit": it.unit}
+                       "addon": it.addon_id is not None, "amount": it.amount, "volume": it.volume, "unit": it.unit,
+                       "date_from": it.period_from, "date_to": it.period_to}
                       for it, sname, aname in items]}
 
 
@@ -829,7 +836,7 @@ async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = For
     def work():
         stored.update(X.sign_external(db, a, user, no=no, number_text=number, doc_date=doc_date, total=total, items=lines,
                                       edo_link=edo_link, file_name=file.filename if file is not None else None,
-                                      file_bytes=content, own_number=own_number))
+                                      file_bytes=content, own_number=own_number, may_change_dates=_may_change_rk(db, user)))
         from app.master_deal import to_annex as TA
         from app.master_deal.models import MasterDeal
         m = db.get(MasterDeal, a.master_deal_id)
@@ -912,7 +919,9 @@ def _master_ref(db: Session, a) -> Optional[dict]:
     return {"code": m.code, "kind": a.kind, "siblings": siblings,
             "will_be": (f"ДС № {will}" + (f"-{a.sub_no}" if a.sub_no else "")) if will is not None else None,
             # Номер раскладки числом — подсказка формы «Подписан вне системы» (03.11.2026); у клиента он может быть своим.
-            "will_be_no": will}
+            "will_be_no": will,
+            # Даты РК строк внешнего ДС по умолчанию — из МП пакета; менять — право «Мастер-сделки · согласование» (05.11.2026)
+            "rk_dates": X.rk_dates(a)}
 
 
 # Символы, запрещённые в именах файлов Windows. Слэш приходит сюда штатно: бренд
