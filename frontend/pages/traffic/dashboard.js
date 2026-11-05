@@ -19,7 +19,7 @@
  * Пока коннектор не подключён (этап 2c), факта нет ни у одной РК: факт, процент, прогноз
  * и недокрут показываются ПРОЧЕРКОМ, а не нулём. Это норма экрана, а не поломка.
  */
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
@@ -43,8 +43,11 @@ import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import { fmtDateTime, todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import RkLog, { RkLogTile } from '@/components/traffic/RkLog'
+import CulpritsWidget from '@/components/traffic/platforms/CulpritsWidget'
+import { toReport } from '@/lib/platformsReport'
+import { downloadFile } from '@/lib/download'
 import {
-  CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
+  CreativeCounts, CreativeRows, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
   GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, RkReportLink, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
   VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
@@ -382,6 +385,20 @@ export default function TrafficDashboard() {
     return null
   }, [scope, archive, fail])
   useEffect(() => { load() }, [load])
+  // Виджет «Площадки-виновники» кормится отчётом «Площадки × РК» (хендофф 05.11.2026) — тем же фильтром трафика.
+  const [platRaw, setPlatRaw] = useState(null)
+  const [platErr, setPlatErr] = useState('')
+  const loadPlat = useCallback(() => {
+    if (!widgets) return
+    const p = new URLSearchParams()
+    if (scope) p.set('scope', scope)
+    api.get(`/traffic-dashboard/platforms?${p}`, auth())
+      .then(r => { setPlatRaw(r.data); setPlatErr('') })
+      .catch(e => setPlatErr(e?.response?.data?.detail || 'Не удалось загрузить площадки-виновники'))
+  }, [scope, widgets])
+  useEffect(() => { loadPlat() }, [loadPlat])
+  useRefreshOnReturn(loadPlat)
+  const platData = useMemo(() => toReport(platRaw), [platRaw])
 
   // Сверка с верификатором. Отдельным запросом, а не полем в дашборде: она НЕ про
   // кампании — состояние одно на весь аккаунт Weborama, и тащить его в ответ,
@@ -906,18 +923,20 @@ export default function TrafficDashboard() {
             прокрутки у обоих виджетов одной высоты `WIDGET_BODY`, поэтому растягивать
             нечего — низы сходятся сами. */}
         {widgets && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.25fr)',
+          // Виджет виновников по макету шире (≈1090 px, хендофф 05.11.2026) — левая колонка больше; уже — прокрутка внутри.
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr)',
             gap: 14, marginBottom: 14 }}>
-            <div style={{ ...card, padding: '16px 18px' }}>
-              {/* Отступ такой же, как у шапки соседнего виджета: разница в шесть
-                  пикселей сдвигает низы карточек, а они стоят рядом. */}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-                <span style={{ ...CAP, marginBottom: 0 }}>площадки-виновники</span>
-                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                  поперёк всех видимых РК · недокрут в показах</span>
-              </div>
-              <Culprits rows={data?.culprits || []} />
-            </div>
+            {/* «Площадки-виновники» — компонент хендоффа (05.11.2026) на том же ответе, что отчёт «Площадки × РК»:
+                один запрос кормит и виджет, и экран, числа не расходятся. */}
+            {platData ? (
+              <div style={{ minWidth: 0, overflowX: 'auto' }}><CulpritsWidget data={platData}
+                onOpenReport={code => router.push(`/traffic/platforms?scope=${encodeURIComponent(scope || data?.scope || 'mine')}${code ? `&p=${encodeURIComponent(code)}` : ''}`)}
+                onOpenRk={code => router.push(`/traffic/dashboard?open=${encodeURIComponent(code)}`, undefined, { shallow: true })}
+                onExcel={() => downloadFile(`/traffic-dashboard/platforms.xlsx?scope=${encodeURIComponent(scope || data?.scope || 'mine')}`)} /></div>
+            ) : (
+              <div style={{ ...card, padding: '16px 18px', fontSize: 12, color: platErr ? 'var(--danger-fg)' : 'var(--text-faint)' }}>
+                Площадки-виновники · {platErr || 'загрузка…'}</div>
+            )}
 
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>

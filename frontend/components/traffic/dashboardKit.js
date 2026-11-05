@@ -468,38 +468,6 @@ export const WALL_LEGEND = [
   ['провал', 'var(--danger)'], ['нет данных', 'var(--border-inner)'],
 ]
 
-/* ── площадки-виновники ───────────────────────────────────────────────────── */
-
-export const Culprits = ({ rows }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, ...SCROLL_PAD,
-    height: WIDGET_BODY, overflowY: 'auto', overflowX: 'hidden' }}>
-    {rows.map(r => (
-      <div key={r.publisher_id || r.domain} style={{ display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) 34px minmax(90px,1.1fr) 92px 92px',
-        gap: 10, alignItems: 'center', padding: '7px 0',
-        borderTop: '1px solid var(--border-row)' }}>
-        <span style={{ fontFamily: MONO, fontSize: 11.5, overflow: 'hidden',
-          textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.domain}</span>
-        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)',
-          textAlign: 'center' }}>{r.campaigns}</span>
-        <span style={{ height: 7, borderRadius: 3, background: 'var(--bg-subtle)' }}>
-          <span style={{ display: 'block', height: 7, borderRadius: 3,
-            width: `${Math.round((r.share || 0) * 100)}%`, background: 'var(--warning-text)' }} />
-        </span>
-        <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
-          color: 'var(--danger)' }}>−{grp(r.under)}</span>
-        <span style={{ justifySelf: 'end' }}><StatusPill value={r.status} /></span>
-      </div>
-    ))}
-    {!rows.length && (
-      <span style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.45 }}>
-        Недокрута по площадкам нет. Он появится, когда коннектор принесёт суточный срез
-        с разрезом по площадкам.
-      </span>
-    )}
-  </div>
-)
-
 /* ── динамика показов: план светлым, факт поверх ──────────────────────────── */
 
 const BAR_ROWS = 18

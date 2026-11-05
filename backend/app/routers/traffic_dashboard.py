@@ -35,7 +35,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY, PLACEMENT_RETURN,
                            as_placement_scale, best_chain_status, can_start_placement, holds,
-                           creative_counts, culprits, daily_buckets,
+                           creative_counts, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp.client import MsClient
@@ -673,10 +673,39 @@ def _traffic_archive_stage_ids(db: Session) -> list:
             if term or lost or (recon is not None and (ph, so) >= recon)]
 
 
-@router.get("/dashboard")
-def dashboard(scope: Optional[str] = None, archive: bool = False,
-              db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    """Реестр РК в области видимости + сводка. Синк РК делает отдельная ручка `/sync`."""
+def _distribution(db: Session, pairs, facts: dict, today: date, places: dict, cr_all: dict) -> dict:
+    """Распределение по площадкам КАЖДОЙ РК — {id РК: строки `distribute`}. Одно на реестр дашборда, виджет виновников
+    и отчёт «Площадки × РК» (05.11.2026): три места, считающие недокрут по-своему, разошлись бы на первой правке.
+    Статус площадки в `places` дописывается здесь же — из её креативов (см. комментарий ниже)."""
+    dist_by_camp: dict = {}
+    cap = balance.share_cap(db)   # один раз на запрос, а не на каждую РК
+    manual = balance.manual_scopes(db)
+    surf_of = build.surfaces_by_deal(db, {c.deal_id for c, _d in pairs})
+    for c, d in pairs:
+        pls = places.get(c.id, [])
+        by_pl = cr_all.get(c.id, {})
+        for p in pls:
+            # Статус площадки собирается ИЗ ЕЁ КРЕАТИВОВ — ровно тем же выражением, что
+            # в расхлопе. До 04.09.2026 реестр считал его от ПАР, а расхлоп от креативов,
+            # и один и тот же ряд мог показывать в двух местах разное. Пары остались
+            # источником для самих креативов (`build.sync_creatives`), но не для площадки.
+            p["status"] = effective_status(p["status"], best_chain_status(
+                _as_placement_scale(x) for x in by_pl.get(p["id"], [])))
+        fl = flight_of(c.date_start, c.date_end, today)
+        # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
+        # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
+        balance.mark_capless(db, pls, surf_of.get(c.deal_id, []), manual)
+        dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
+                                        fl, pls, cap=cap,
+                                        # план — записанный ночью, ровно лимиты DSP (05.10.2026)
+                                        use_stored=True,
+                                        hold_fl=flight_of(c.date_start, c.date_end, date.today()))["rows"]
+    return dist_by_camp
+
+
+def _visible(db: Session, user: User, scope: Optional[str], archive: bool):
+    """РК дашборда в области видимости и фильтре «Мои / все / не распределено» — `(запрос, scope, число в архиве)`.
+    Одна выборка на реестр и на отчёт «Площадки × РК» (05.11.2026)."""
     rep_id, scope = _scope_for(db, user, scope)
     q = (db.query(AdCampaign, SalesDeal)
          .join(SalesDeal, SalesDeal.id == AdCampaign.deal_id))
@@ -694,6 +723,54 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
         # почти весь список (замерено 04.09.2026: 0 назначений на 57 РК), и именно
         # поэтому пункт нужен — иначе непонятно, что «Мои» пусты не по ошибке.
         q = q.filter(SalesDeal.traffic_manager_id.is_(None))
+    return q, scope, archived
+
+
+def _day_facts(db: Session, campaign_ids: List[int], day: date) -> dict:
+    """Факт площадок за сутки среза и ДО них — {(РК, площадка): (до дня, за день)}, одним запросом на все РК.
+    Для плана дня площадки (`platform_report.day_goal`), источники — те же, что у факта (`fact_sources`)."""
+    if not campaign_ids or day is None:
+        return {}
+    rows = db.execute(text(
+        "SELECT campaign_id, placement_id, "
+        "       coalesce(sum(shows) FILTER (WHERE date < :d), 0) AS before, "
+        "       coalesce(sum(shows) FILTER (WHERE date = :d), 0) AS on_day "
+        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) AND placement_id IS NOT NULL "
+        "AND date <= :d GROUP BY campaign_id, placement_id"),
+        {"i": campaign_ids, "src": fact_sources(), "d": day}).mappings().all()
+    return {(r["campaign_id"], r["placement_id"]): (r["before"], r["on_day"]) for r in rows}
+
+
+def _platform_cells(pairs, dist_by_camp: dict, uploaded: set, ver_all: dict, goals_by_deal: dict, traf_name: dict,
+                    today: date, day_facts: Optional[dict] = None) -> list:
+    """Пары «площадка × РК» отчёта (`traffic/platform_report.cell`) из уже посчитанного: распределение, WR, цели,
+    сутки среза (план дня и факт дня, владелец 05.11.2026)."""
+    from app.traffic import platform_report as PR
+    day_facts = day_facts or {}
+    out = []
+    for c, d in pairs:
+        by_pl = (ver_all.get(c.id) or {}).get("by_placement") or {}
+        rk = {"campaign_id": c.id, "deal_id": d.id, "deal_code": d.code, "deal_title": d.title,
+              "traffic": traf_name.get(d.traffic_manager_id), "product": d.product,
+              "date_start": c.date_start.isoformat() if c.date_start else None,
+              "date_end": c.date_end.isoformat() if c.date_end else None,
+              "wr_threshold": goal_limit(goals_by_deal.get(d.id))}
+        left = (c.date_end - today).days if c.date_end else None
+        # Сутки среза входят во флайт — у площадки есть план дня; до старта и после конца — нет.
+        in_flight = bool(today and c.date_start and c.date_end and c.date_start <= today <= c.date_end)
+        for r in dist_by_camp.get(c.id, []):
+            before, on_day = day_facts.get((c.id, r["id"]), (0, 0))
+            out.append(PR.cell(rk=rk, row=r, in_dsp=r["id"] in uploaded, wr=by_pl.get(r["id"]),
+                               wr_limit=goal_limit(goals_by_deal.get(d.id)), days_left=left if left and left > 0 else None,
+                               day={"before": before, "on_day": on_day, "days": left + 1} if in_flight else None))
+    return out
+
+
+@router.get("/dashboard")
+def dashboard(scope: Optional[str] = None, archive: bool = False,
+              db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Реестр РК в области видимости + сводка. Синк РК делает отдельная ручка `/sync`."""
+    q, scope, archived = _visible(db, user, scope, archive)
     pairs = q.order_by(AdCampaign.month.desc().nullslast(), SalesDeal.code).all()
 
     ids = [c.id for c, _ in pairs]
@@ -723,31 +800,7 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
     # Покрытие внешними системами — ОДНИМ расчётом на весь экран (четыре запроса на любое
     # число РК). По одной РК за раз это было бы под двести запросов на реестре из 57.
     ext_totals = ext_mod.totals_by_campaign(db, ids)
-    culprit_rows = []
-    dist_by_camp: dict = {}
-    cap = balance.share_cap(db)   # один раз на запрос, а не на каждую РК
-    manual = balance.manual_scopes(db)
-    surf_of = build.surfaces_by_deal(db, {c.deal_id for c, _d in pairs})
-    for c, d in pairs:
-        pls = places.get(c.id, [])
-        by_pl = cr_all.get(c.id, {})
-        for p in pls:
-            # Статус площадки собирается ИЗ ЕЁ КРЕАТИВОВ — ровно тем же выражением, что
-            # в расхлопе. До 04.09.2026 реестр считал его от ПАР, а расхлоп от креативов,
-            # и один и тот же ряд мог показывать в двух местах разное. Пары остались
-            # источником для самих креативов (`build.sync_creatives`), но не для площадки.
-            p["status"] = effective_status(p["status"], best_chain_status(
-                _as_placement_scale(x) for x in by_pl.get(p["id"], [])))
-        fl = flight_of(c.date_start, c.date_end, today)
-        # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
-        # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
-        balance.mark_capless(db, pls, surf_of.get(c.deal_id, []), manual)
-        dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
-                                        fl, pls, cap=cap,
-                                        # план — записанный ночью, ровно лимиты DSP (05.10.2026)
-                                        use_stored=True,
-                                        hold_fl=flight_of(c.date_start, c.date_end, date.today()))["rows"]
-        culprit_rows += dist_by_camp[c.id]
+    dist_by_camp = _distribution(db, pairs, facts, today, places, cr_all)
 
     # Креативы с материалом по сделкам страницы — для «↓ креативы» в раскрытии РК
     # (владелец 27.09.2026): одним запросом, тем же счётом, что и документы сделки.
@@ -883,7 +936,6 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
             "no_stat": sum(1 for r in rows if r["plan_show"] and r["fact_shows"] is None),
             "queue": _queue_badge(db),
         },
-        "culprits": culprits(culprit_rows),
         "wall": _day_wall(rows, _stat_by_day(db, ids), today, boost_mod_windows(db, ids)),
         "is_master": _is_master(user),
         # Кнопка «Обновить данные в DSP» — Администратор и «Админ Трафик» (02.10.2026).
@@ -2152,3 +2204,54 @@ def dsp_refresh_done(campaign_id: int, payload: RefreshDoneIn,
                f"{rk_label(db, c.id)}: прогон обновления завершён, пунктов {int(payload.applied)}"
                + (f"; не принято: {'; '.join(failed)}" if failed else ""))
     return {"ok": True}
+
+
+# ── отчёт «Площадки × РК» (владелец 05.11.2026) ─────────────────────────────
+
+def _platform_report(db: Session, user: User, scope: Optional[str]) -> dict:
+    """Идущие РК («запущенные, но не завершенные», владелец 05.11.2026) в фильтре дашборда — клетки и сводка."""
+    from app.traffic import platform_report as PR
+    q, scope, _arch = _visible(db, user, scope, archive=False)
+    now = date.today()
+    pairs = (q.filter(AdCampaign.date_start.isnot(None), AdCampaign.date_start <= now,
+                      AdCampaign.date_end.isnot(None), AdCampaign.date_end >= now)
+             .order_by(AdCampaign.date_start, SalesDeal.code).all())
+    ids = [c.id for c, _ in pairs]
+    today = fact_as_of(db)
+    traf_ids = {d.traffic_manager_id for _c, d in pairs if d.traffic_manager_id}
+    traf_name = dict(db.query(SalesRep.id, SalesRep.name)
+                     .filter(SalesRep.id.in_(traf_ids)).all()) if traf_ids else {}
+    places = _placements_of(db, ids)
+    dist = _distribution(db, pairs, _facts(db, ids), today, places, _creatives_all(db, ids))
+    goals = build.deal_goals_many(db, {d.id for _, d in pairs})
+    cells = _platform_cells(pairs, dist, _uploaded_placements(db, ids), _verifier(db, ids, until=today),
+                            goals, traf_name, today, _day_facts(db, ids, today))
+    return {"as_of": today.isoformat() if today else None, "scope": scope,
+            # Выбор трафика — тем же списком, что у дашборда (`staff_users`), чтобы фильтр был один и тот же.
+            "reps": staff_users(db, "traffic"), "my_user_id": user.id,
+            # «Факта ещё нет»: ни одна пара не открутила ни показа — РК начались после последнего среза.
+            "no_fact": bool(cells) and not any(c.get("fact") for c in cells),
+            "thresholds": {"fail": PR.FAIL, "under": PR.UNDER},
+            "rks": [{"campaign_id": c.id, "deal_code": d.code, "deal_title": d.title, "traffic": traf_name.get(d.traffic_manager_id),
+                     "product": d.product, "date_start": c.date_start.isoformat(), "date_end": c.date_end.isoformat(),
+                     "wr_threshold": goal_limit(goals.get(d.id))}
+                    for c, d in pairs],
+            "platforms": PR.summarize(cells), "cells": cells}
+
+
+@router.get("/platforms")
+def platform_report(scope: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    return _platform_report(db, user, scope)
+
+
+@router.get("/platforms.xlsx")
+def platform_report_xlsx(scope: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    from urllib.parse import quote
+    from fastapi import Response
+    from app.traffic import platform_report as PR
+    rep = _platform_report(db, user, scope)
+    as_of = ".".join(reversed((rep["as_of"] or "").split("-")))
+    name = f"Площадки × РК {as_of}.xlsx"
+    return Response(content=PR.to_xlsx(rep["platforms"], rep["cells"], as_of),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=\"platforms.xlsx\"; filename*=UTF-8''{quote(name)}"})
