@@ -279,6 +279,10 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     kind = DK.resolve(doc.get("kind"), None, is_master=bool(doc.get("is_master")))
     doc["clauses"] = clauses_of(model, kind)
     doc["preamble"] = preamble_of(model, kind)
+    # Заголовок и «место и дата», если их правили (05.11.2026); иначе файл рисует их как раньше.
+    for key, field in (("head", "head_text"), ("place", "place_text")):
+        b = model.get(key) or {}
+        doc[field] = DK.rebrand(b["text"].strip(), kind) if b.get("custom") and (b.get("text") or "").strip() else None
     doc["closing_basis"] = DK.rebrand(doc.get("closing_basis") or "", kind)
     return with_words(doc)
 

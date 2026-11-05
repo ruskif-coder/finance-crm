@@ -37,7 +37,7 @@ from app.annex_tpl import doc_kind as DK
 from app.master_deal import doc_sign as DSG
 from app.sales import annex_signed
 from app.sales import annex_external as X
-from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
+from app.annex_tpl.assemble import (CLOSING_KEY, HEAD_KEY, PLACE_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
 from app.annex_tpl.service import AnnexTplError
 from app.annex_tpl.service import remember as tpl_remember
@@ -404,6 +404,9 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     if frozen and _sent_to_onec(a):
         raise HTTPException(409, "Приложение уже ушло в 1С — править его нельзя")
     key = payload.key
+    if key in (HEAD_KEY, PLACE_KEY) and not _may_change_rk(db, user):
+        # Заголовок и «место и дата» — мастер аккаунт и админ (тот же ромб «Мастер-сделки · согласование», владелец 05.11.2026)
+        raise HTTPException(403, "Заголовок и «место и дату» правит мастер аккаунт или админ (право «Мастер-сделки · согласование»)")
     if payload.text is not None:
         if frozen:
             blocks = a.blocks["blocks"]                      # зоны и системные блоки читаются из самого замороженного документа

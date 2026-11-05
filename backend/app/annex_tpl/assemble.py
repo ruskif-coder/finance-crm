@@ -158,6 +158,7 @@ def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, ad
         "ндс_ставка": f"{rate:g}", "ндс_сумма": _num(vat), "ндс_сумма_прописью": rub_phrase(vat),
         "номер_дс": number_value(no), "договор_номер": contract.contract_number or "", "договор_дата": _date(contract.contract_date),
         "дата_дс": _date(doc_date),
+        "дата_дс_полностью": _long(doc_date), "договор_дата_полностью": _long(contract.contract_date),
         # Первый рекламодатель — без номера, второй и далее — `юр_название_2`, `_3` …
         # Объявить их списком в SUBS нельзя (у одного плательщика 116 рекламодателей),
         # поэтому проверка шаблона понимает образец имени — `check.NUMBERED`.
@@ -165,6 +166,12 @@ def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, ad
            for i, v in enumerate(legal_names or [])},
         **DK.values(kind),
     }
+
+
+def _long(d) -> str:
+    """Дата словами — той же функцией, что шапка файла («31» мая 2026 г.). Нет даты — пусто (тег назовёт, где заполнить)."""
+    from app.sales.annex_docx import _long_date
+    return _long_date(d) if d else ""
 
 
 def number_value(no) -> str:
@@ -219,6 +226,12 @@ def _parts(text: str, values: dict) -> list:
 
 # Основание в закрывающих документах (УПД и счёт) — формулировка по образцу владельца 14.10.2026; правится на экране ДС.
 CLOSING_KEY = "closing_basis"
+# Заголовок и «место и дата» — системные блоки без текста в шаблоне; правятся в конструкторе ДС правом «Мастер-сделки ·
+# согласование» (мастер аккаунт и админ, 05.11.2026). Ключи постоянные, а не id пункта шаблона: правка переходит на ВСЕ
+# последующие ДС договора, даже если сменится шаблон. Без правки файл печатает их как раньше.
+HEAD_KEY, PLACE_KEY = "sys_head", "sys_place"
+HEAD_DEFAULT = "{вид_документа} {номер_дс}\nк Договору № {договор_номер} об оказании услуг от {договор_дата_полностью}"
+PLACE_DEFAULT = "{место} | {дата_дс_полностью}"         # «|» делит строку: слева место, справа дата
 CLOSING_DEFAULT = ("Размещение рекламных материалов бренда «{бренд_название}», в сети {сеть}, согласно {вид_документа_дат} {номер_дс} "
                    "от {дата_дс_кратко} к Договору {договор_номер} от {договор_дата_кратко}г., с {период_с} по {период_по}г.")
 # Начало основания по составу ДС (владелец 21.10.2026): допы — «оказание дополнительных услуг ({услуга})», смешанный — и то, и другое.
@@ -269,6 +282,14 @@ def service_text(db: Session, deal_ids, rows) -> str:
     return ", ".join(dict.fromkeys(x for x in out if x))
 
 
+def _sys_text(key: str, default: str, edits: dict, defaults: dict, values: dict) -> dict:
+    """Заголовок / «место и дата»: своя правка, унаследованная из прошлого ДС или шаблон по умолчанию. `custom` — печатать
+    этот текст; без него файл рисует блок как раньше (по умолчанию ничего не меняется)."""
+    own, prev = edits.get(key), defaults.get(key)
+    out = closing_resolve(own or (prev["text"] if prev else default), values, bool(own), prev["from"] if prev and not own else None)
+    return {**out, "custom": bool(own or prev)}
+
+
 def closing_resolve(template: str, values: dict, edited: bool, inherited_from: Optional[str] = None) -> dict:
     parts = _parts(template, values)
     return {"template": template, "text": "".join(p["t"] for p in parts), "parts": parts, "edited": edited,
@@ -284,7 +305,7 @@ def validate_edit(blocks: list, key: str, text) -> Optional[str]:
     bad = unknown_keys(text)
     if bad:
         return "Неизвестная подстановка " + ", ".join("{" + k + "}" for k in bad)
-    if key == CLOSING_KEY:
+    if key in (CLOSING_KEY, HEAD_KEY, PLACE_KEY):
         return None
     for i, b in enumerate(blocks):
         if b.get("id") == key and not b.get("sys"):
@@ -399,6 +420,7 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     ex["legal_name"], cu["legal_name"] = legal_name(ex.get("name")), legal_name(cu.get("name"))
     # Стороны целиком — для преамбулы из шаблона; та же функция, что у прежней формулы.
     values["заказчик"], values["исполнитель"] = party_line(cu, "Заказчик"), party_line(ex, "Исполнитель")
+    values["место"] = getattr(us, "signed_place", None) or "г. Москва"
     blocks, empties = _blocks(version.blocks, values, edits, defaults)
     closing_text = edits.get(CLOSING_KEY)
     closing_default = defaults.get(CLOSING_KEY)
@@ -420,12 +442,15 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
         "vat_rate": rate, "amount": gross, "amount_words": rub_phrase(gross), "vat": vat, "vat_words": rub_phrase(vat),
         "values": values, "blocks": blocks, "table": {"groups": groups, "totals": _totals(rows)},
         # `edits` — ЭФФЕКТИВНЫЕ правки (свои и унаследованные): их и замораживает подтверждение, чтобы следующий ДС наследовал по цепочке.
-        "edits": {**{k: v["text"] for k, v in defaults.items() if k in {b["id"] for b in blocks if b.get("zone") == "acc"} or k == CLOSING_KEY},
+        "edits": {**{k: v["text"] for k, v in defaults.items()
+                     if k in {b["id"] for b in blocks if b.get("zone") == "acc"} or k in (CLOSING_KEY, HEAD_KEY, PLACE_KEY)},
                   **edits,
                   # явный сброс «по шаблону» тоже замораживается — иначе следующий ДС снова унаследует текст из-за этого ДС
                   **{k: None for k in reset}},
         "closing_basis": closing_resolve(closing_text or (closing_default["text"] if closing_default else closing_template_for(rows)), values, bool(closing_text),
                                          closing_default["from"] if closing_default and not closing_text else None),
+        "head": _sys_text(HEAD_KEY, HEAD_DEFAULT, edits, defaults, values),
+        "place": _sys_text(PLACE_KEY, PLACE_DEFAULT, edits, defaults, values),
         # договор и реквизиты сторон — то, без чего документ неликвиден (21.10.2026); подписанта проверяет `party` выше
         "missing": _missing(empties, ex, cu, rows, values["бренд"]) + contract_gaps(db, contract),
         "consistency": consistency(gross, vat, rows),

@@ -102,6 +102,14 @@ function Sheet({ model }) {
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 6, padding: '30px 38px', fontFamily: SERIF, fontSize: 14, lineHeight: 1.5, color: 'var(--text-primary)', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {model.blocks.map(b => {
+        if (b.sys === 'head' && model.head?.custom) {
+          const [first, ...rest] = (model.head.text || '').split('\n')
+          return <span key={b.id} style={{ textAlign: 'center', whiteSpace: 'pre-line' }}><b>{first}</b>{rest.length ? <><br />{rest.join('\n')}</> : null}</span>
+        }
+        if (b.sys === 'place' && model.place?.custom) {
+          const [left, right] = (model.place.text || '').split('|')
+          return <span key={b.id} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{(left || '').trim()}</span><span>{(right || '').trim()}</span></span>
+        }
         if (b.sys === 'head') {
           return <span key={b.id} style={{ textAlign: 'center' }}><b>{model.number}</b><br />к Договору № {c.number || '____'} от {fmtDateFull(c.date)}</span>
         }

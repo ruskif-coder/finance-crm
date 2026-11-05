@@ -202,3 +202,52 @@ def test_bonus_row_has_dashes_in_every_money_column_of_the_word_file():
     cells = [c.text.strip() for c in table.rows[2].cells]            # строка 0 — шапка, 1 — еФарм, 2 — Sales-Lift
     assert cells[9:13] == ["—", "—", "—", "—"], cells
     assert [c.text.strip() for c in table.rows[1].cells][9] == "345,00"
+
+
+def test_head_and_place_are_editable_and_inherited(db, stub_plan):
+    """Владелец 05.11.2026: «заголовок» и «место и дата» правятся в конструкторе ДС (мастер аккаунт и админ) — в этом ДС и во всех
+    последующих ДС договора (постоянные ключи, наследование как у основания закрывающих)."""
+    m = _model(db)
+    assert m["head"]["edited"] is False and "{номер_дс}" in m["head"]["template"]
+    assert m["place"]["template"] == AS.PLACE_DEFAULT
+    assert AS.validate_edit(SAMPLE, AS.HEAD_KEY, "Дополнительное соглашение {номер_дс}\nк Договору № {договор_номер}") is None
+    assert AS.validate_edit(SAMPLE, AS.PLACE_KEY, "г. Санкт-Петербург | {дата_дс_полностью}") is None
+
+    edited = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30), deal_ids=[1, 2], no=7,
+                         edits={AS.PLACE_KEY: "г. Санкт-Петербург | {дата_дс_полностью}"})
+    assert edited["place"]["edited"] and edited["place"]["text"].startswith("г. Санкт-Петербург | «")
+    assert edited["edits"][AS.PLACE_KEY], "правка замораживается — следующий ДС наследует её"
+
+    later = AS.assemble(db, _contract(db), _version(), period_from=date(2026, 12, 1), period_to=date(2026, 12, 31), deal_ids=[1, 2], no=8,
+                        defaults={AS.HEAD_KEY: {"text": "ДС {номер_дс}\nк договору {договор_номер}", "from": "ДС № 7"}})
+    assert later["head"]["inherited_from"] == "ДС № 7" and later["head"]["text"].startswith("ДС №8")
+    assert later["edits"][AS.HEAD_KEY], "унаследованная правка тоже уходит дальше по цепочке"
+
+
+def test_word_file_prints_the_edited_head_and_place():
+    import io
+
+    from docx import Document
+
+    from app.sales import annex_docx
+    doc = {"number": "Приложение № 1", "contract": {"number": "Т-1", "date": date(2026, 1, 1)}, "date": date(2026, 9, 30),
+           "period_from": date(2026, 10, 1), "period_to": date(2026, 10, 31), "executor": {"name": "Мы"}, "customer": {"name": "Они"},
+           "body": "Текст.", "rows": [], "vat_rate": 22, "amount_words": "x", "vat_words": "y",
+           "head_text": "Дополнительное соглашение №1\nк Договору оказания услуг № Т-1", "place_text": "г. Казань | «30» сентября 2026 г."}
+    paras = [p.text for p in Document(io.BytesIO(annex_docx.build_docx(doc))).paragraphs][:4]
+    assert paras[0] == "Дополнительное соглашение №1" and paras[1] == "к Договору оказания услуг № Т-1"
+    assert paras[2] == "г. Казань\t«30» сентября 2026 г."
+
+
+def test_head_edit_needs_the_master_deals_approve_right(db, monkeypatch):
+    """Править заголовок и место — право «Мастер-сделки · согласование» (мастер аккаунт и админ); у прочих пунктов правило прежнее."""
+    from fastapi import HTTPException
+    a = db.query(SalesAnnex).filter(SalesAnnex.no.is_(None)).order_by(SalesAnnex.id.desc()).first()
+    if a is None:
+        pytest.skip("нужен черновик ДС")
+    monkeypatch.setattr(A, "_may_change_rk", lambda db_, u: False)
+    user = SimpleNamespace(id=None, name="тест", role=SimpleNamespace(key="role_8"), role_id=None)
+    monkeypatch.setattr(A, "_annex", lambda db_, aid, u: a)
+    with pytest.raises(HTTPException) as e:
+        A.edit_block(a.id, A.EditIn(key=AS.HEAD_KEY, text="Заголовок {номер_дс}"), db=db, user=user)
+    assert e.value.status_code == 403

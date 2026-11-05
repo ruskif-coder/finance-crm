@@ -32,7 +32,7 @@ function Preview({ text, values }) {
   )
 }
 
-export default function AnnexQuickEdit({ title, hint, source, defaultText, edited, inheritedFrom, values, canEdit, copy, onSave, aside }) {
+export default function AnnexQuickEdit({ title, hint, source, defaultText, edited, inheritedFrom, values, canEdit, copy, onSave, aside, editedLabel = 'изменено аккаунтом' }) {
   const [text, setText] = useState(source || '')
   const [subs, setSubs] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -69,7 +69,7 @@ export default function AnnexQuickEdit({ title, hint, source, defaultText, edite
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={CAP}>{title}</span>
-        {edited && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderRadius: 6, padding: '2px 8px' }}>изменено аккаунтом</span>}
+        {edited && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderRadius: 6, padding: '2px 8px' }}>{editedLabel}</span>}
         {!edited && !!inheritedFrom && <span title="По умолчанию берётся текст прошлого ДС этого договора" style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--violet-fg)', background: 'var(--violet-tint)', borderRadius: 6, padding: '2px 8px' }}>взято из прошлого ДС · {inheritedFrom}</span>}
         {hint && <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{hint}</span>}
         {aside}

@@ -95,18 +95,18 @@ export const SCH = {
     { k: 'name', l: 'ФИО', w: 'minmax(170px,1.3fr)', ph: 'ФИО полностью' },
     { k: 'role', l: 'должность', w: 'minmax(140px,1fr)' },
     { k: 'basis', l: 'основание', w: '160px', ph: 'Устав / Доверенность № …' },
-    { k: 'poa_until', l: 'доверенность до', mono: true, w: '110px', ph: 'дд.мм.гггг', need: 'none' },
+    { k: 'poa_until', l: 'доверенность до', mono: true, w: '150px', ph: 'дд.мм.гггг', need: 'none', date: true },
   ],
 
   /* 3. Договор — группы полей (contracts, contract_signers). Документ — отдельной строкой «ссылка + скрепка». */
   ct: [
     ['Реквизиты договора', [
       { k: 'number', l: 'номер', mono: true, from: 'юрист: подписанный договор', ph: 'РМ-03/26' },
-      { k: 'date', l: 'дата', mono: true, from: 'юрист: подписанный договор', ph: 'дд.мм.гггг' },
+      { k: 'date', l: 'дата', mono: true, from: 'юрист: подписанный договор', ph: 'дд.мм.гггг', date: true },
       { k: 'marketing_name', l: 'маркетинговое имя', span: true, from: 'сейлз', need: 'none', emptyTone: 'none', emptyText: '—' },
     ]],
     ['Стороны и предмет', [
-      { k: 'own_company', l: 'наше юрлицо', sys: '—', roWhy: 'единственное наше — выбирать не из чего; экран появится со вторым юрлицом', hint: 'own_company.for_contract' },
+      { k: 'own_company', l: 'наше юрлицо', sys: '—', roWhy: 'единственное наше — выбирать не из чего; экран появится со вторым юрлицом', hint: 'юрлицо договора, а если не указано — единственное наше' },
       { k: 'own_legal_role', l: 'наша роль', sys: '—', roWhy: 'ручка договора её не пишет — только показ', from: 'юрист' },
       { k: 'format', l: 'формат сотрудничества', opts: COOPERATION_FORMATS, from: 'сейлз', emptyText: 'не указан', hint: 'от него подберётся шаблон ДС' },
       { k: 'services', l: 'услуги', from: 'сейлз', need: 'none' },
@@ -122,7 +122,7 @@ export const SCH = {
       { k: 'term_cond', l: 'условие отсрочки', opts: PAYMENT_TERM_CONDITIONS, from: 'сейлз: условия', need: 'ops' },
     ]],
     ['Срок и документы', [
-      { k: 'valid_until', l: 'действует до', mono: true, from: 'юрист: подписанный договор', need: 'none', ph: 'дд.мм.гггг', hint: 'свободный текст, как в договоре' },
+      { k: 'valid_until', l: 'действует до', mono: true, from: 'юрист: подписанный договор', need: 'none', ph: 'дд.мм.гггг', date: true, hint: 'дата — календариком; не дата («бессрочно») — текстом, как в договоре' },
       { k: 'prolongation', l: 'пролонгация', opts: PROLONGATION_OPTIONS, from: 'юрист', need: 'none' },
       { k: 'channel', l: 'канал выдачи', opts: ISSUE_CHANNELS, from: 'клиент' },
       { k: 'edo_status', l: 'статус ЭДО · подписан', sys: '—', roWhy: 'приходит из ЭДО' },
@@ -137,7 +137,7 @@ export const SCH = {
   /* 5. Агентство (sales_agencies) */
   ag: [
     ['Наименование', [
-      { k: 'short_name', l: 'короткое имя', from: 'сейлз', hint: 'short_name — так в интерфейсе' },
+      { k: 'short_name', l: 'короткое имя', from: 'сейлз', hint: 'так агентство называется в интерфейсе и отчётах' },
       { k: 'holding', l: 'холдинг', from: 'сейлз', need: 'none' },
       { k: 'name_en', l: 'название EN', from: 'сейлз', need: 'none' },
       { k: 'name_ru', l: 'название RU', from: 'сейлз', need: 'none' },
@@ -174,8 +174,8 @@ export const SCH = {
     { k: 'recipient', l: 'получатель', w: 'minmax(110px,1fr)', fixed: true },
     { k: 'mode', l: 'режим', w: '110px', ph: 'постоплата', opts: SK_MODES },
     { k: 'percent', l: 'процент', mono: true, w: '70px', ph: '20 %', align: 'right' },
-    { k: 'from', l: 'с', mono: true, w: '90px', ph: 'дд.мм.гггг' },
-    { k: 'till', l: 'по', mono: true, w: '90px', ph: 'дд.мм.гггг' },
+    { k: 'from', l: 'с', mono: true, w: '150px', ph: 'дд.мм.гггг', date: true },
+    { k: 'till', l: 'по', mono: true, w: '150px', ph: 'дд.мм.гггг', date: true },
     { k: 'kind', l: 'вид', w: 'minmax(120px,1fr)', ph: 'основная', fixed: true },
   ],
 

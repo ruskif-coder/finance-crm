@@ -190,21 +190,27 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
     cust, ex = d.get("customer") or {}, d.get("executor") or {}
     contract = d.get("contract") or {}
 
+    # Заголовок: правленый в конструкторе ДС (05.11.2026) — первая строка жирным, остальные под ней; иначе — как всегда.
+    head = [x for x in (d.get("head_text") or "").split("\n") if x.strip()]
     h = doc.add_paragraph()
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _run(h, d.get("number") or DK.forms(_kind(d))["nom"], bold=True, size=12)
+    _run(h, head[0] if head else (d.get("number") or DK.forms(_kind(d))["nom"]), bold=True, size=12)
 
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     sub.paragraph_format.space_after = Pt(12)
-    _run(sub, f"к Договору {_nb('№ ' + (contract.get('number') or '________'))} "
-              f"об оказании услуг от {_long_date(contract.get('date'))}")
+    _run(sub, "\n".join(head[1:]) if head else (f"к Договору {_nb('№ ' + (contract.get('number') or '________'))} "
+                                                f"об оказании услуг от {_long_date(contract.get('date'))}"))
 
     # Место слева, дата справа — одной строкой через табуляцию по правому краю полосы.
     row = doc.add_paragraph()
     row.paragraph_format.space_after = Pt(12)
     row.paragraph_format.tab_stops.add_tab_stop(Cm(USABLE), WD_ALIGN_PARAGRAPH.RIGHT)
-    _run(row, f"{d.get('signed_place') or 'г. Москва'}\t{_long_date(d.get('date'))}")
+    if d.get("place_text"):                  # правленое «место и дата»: «|» делит на левую и правую часть
+        left, _, right = d["place_text"].partition("|")
+        _run(row, f"{left.strip()}\t{right.strip()}" if right.strip() else left.strip())
+    else:
+        _run(row, f"{d.get('signed_place') or 'г. Москва'}\t{_long_date(d.get('date'))}")
 
     pre = doc.add_paragraph()
     pre.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY

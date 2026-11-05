@@ -27,11 +27,13 @@
  * шрифты — `MONO`/`UI`. Локально остались только обёртки над ними под размеры макета (30 px).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import ValuePopover from '@/components/ValuePopover';
 import { MONO, Modal, UI as SANS, btnSm, card, inp } from '@/components/salesTableKit';
 import { plural as pluralWord } from '@/components/notify/kit';
 import safeHref from '@/lib/safeHref';
+import { dmy, iso } from '@/lib/readinessApi.mjs';
 import { SCH, BLOCKS, KINDS, NEED_TAG, TONE, blocksForKind, blocksForKinds } from './readinessSchema';
 
 const EASE = 'cubic-bezier(0.22,1,0.36,1)';
@@ -54,6 +56,17 @@ const inputStyle = (mono, hl, err) => ({
 const Input = ({ value, onChange, mono, hl, err, ph, autoFocus, style }) => (
   <input value={value ?? ''} placeholder={ph} autoFocus={autoFocus} onChange={e => onChange(e.target.value)} style={{ ...inputStyle(mono, hl, err), ...style }} />
 );
+/** Дата — календарь браузера (как в агентских условиях и ДС); в данных окна она «дд.мм.гггг» — так её ждут проверка и
+ *  сохранение. Не дата («бессрочно» в «действует до») — остаётся текстом, иначе календарь стёр бы её молча. */
+const DateInput = ({ value, onChange, hl, err, ph, autoFocus, style }) => {
+  const isoValue = iso(value);
+  if (value && !/^\d{4}-\d{2}-\d{2}$/.test(isoValue || '')) {
+    return <Input value={value} onChange={onChange} mono hl={hl} err={err} ph={ph} autoFocus={autoFocus} style={style} />;
+  }
+  return <input type="date" value={isoValue || ''} autoFocus={autoFocus} onChange={e => onChange(e.target.value ? dmy(e.target.value) : null)}
+    style={{ ...inputStyle(true, hl, err), ...style }} />;
+};
+
 /** Выбор из списка — ValuePopover у места клика: значения сравниваются буквально, свободного ввода нет. */
 function Choice({ value, opts, onChange, hl, err, autoFocus, title }) {
   const [rect, setRect] = useState(null);
@@ -65,8 +78,10 @@ function Choice({ value, opts, onChange, hl, err, autoFocus, title }) {
         style={{ ...inputStyle(false, hl, err), cursor: 'pointer', textAlign: 'left', color: value ? 'var(--text-primary)' : 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {value || '— выбрать —'}
       </button>
-      {rect && <ValuePopover anchor={rect} title={title} value={value ?? null} options={opts.map(o => ({ value: o, label: o }))}
-        clearLabel="— не выбрано —" onPick={v => { onChange(v || null); setRect(null); }} onClose={() => setRect(null)} />}
+      {/* В <body>: у обёртки блока после анимации появления остаётся transform, и position:fixed внутри неё отсчитывается
+          от блока, а не от окна — поповер уезжал за экран, автофокус докручивал страницу, и он закрывался своей же прокруткой. */}
+      {rect && createPortal(<ValuePopover anchor={rect} title={title} value={value ?? null} options={opts.map(o => ({ value: o, label: o }))}
+        clearLabel="— не выбрано —" onPick={v => { onChange(v || null); setRect(null); }} onClose={() => setRect(null)} />, document.body)}
     </>
   );
 }
@@ -105,6 +120,7 @@ function SchemaField({ it, value, editing, onChange, hl, err, data }) {
       <Cap>{it.l}</Cap>
       {editing && !ro ? (
         opts ? <Choice value={value} opts={opts} onChange={onChange} hl={hl} err={err} autoFocus={hl} title={it.l} />
+             : it.date ? <DateInput value={value} onChange={onChange} hl={hl} err={err} ph={it.ph} autoFocus={hl} />
              : <Input value={value} onChange={onChange} mono={it.mono} hl={hl} err={err} ph={it.ph} autoFocus={hl} />
       ) : (
         <span title={ro && editing ? it.roWhy : v ?? ''} style={{ minHeight: editing ? 30 : 19, display: 'flex', alignItems: 'center', fontFamily: it.mono ? MONO : SANS, fontSize: 12.5, fontWeight: it.mono ? 500 : 600,
@@ -160,7 +176,9 @@ function SchemaTable({ cols, rows, editing, setCell, extra, minWidth = 760, hl, 
               {cols.map(c => (
                 <span key={c.k} style={{ minWidth: 0, textAlign: c.align || 'left' }}>
                   {rowEdit && !c.fixed && (!c.ro || r._new) ? (   /* ro — правится только новая строка, fixed — никогда: писателя нет */
-                    <Input value={r[c.k]} onChange={v => setCell(i, c.k, v)} mono={c.mono} ph={c.ph || c.l} hl={hl === `${r.id}.${c.k}`} err={errs?.[`${i}.${c.k}`]} autoFocus={hl === `${r.id}.${c.k}`} style={{ height: 28 }} />
+                    c.date
+                      ? <DateInput value={r[c.k]} onChange={v => setCell(i, c.k, v)} ph={c.ph} hl={hl === `${r.id}.${c.k}`} err={errs?.[`${i}.${c.k}`]} autoFocus={hl === `${r.id}.${c.k}`} style={{ height: 28 }} />
+                      : <Input value={r[c.k]} onChange={v => setCell(i, c.k, v)} mono={c.mono} ph={c.ph || c.l} hl={hl === `${r.id}.${c.k}`} err={errs?.[`${i}.${c.k}`]} autoFocus={hl === `${r.id}.${c.k}`} style={{ height: 28 }} />
                   ) : (
                     <span title={show(r[c.k]) ?? ''} style={{ display: 'block', fontFamily: c.mono ? MONO : SANS, fontSize: 12.5, fontWeight: c.mono ? 500 : (c === cols[0] ? 700 : 600), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       color: show(r[c.k]) ? (rowTone?.(r, c.k) || 'var(--text-primary)') : (rowTone?.(r, c.k, true) || 'var(--text-disabled)') }}>
@@ -944,7 +962,9 @@ function OnboardingView({ data, onCreate, onCancel, onLookupInn, onRequestClient
                     {it.map(x => (
                       <div key={x.key} style={{ gridColumn: spanOf(x), display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
                         <Cap>{x.l}</Cap>
-                        {resolveOpts(x.opts, data) ? <Choice value={v[x.key]} opts={resolveOpts(x.opts, data)} onChange={val => set(x.key, val)} title={x.l} /> : <Input value={v[x.key]} onChange={val => set(x.key, val)} mono={x.mono} ph={x.ph} />}
+                        {resolveOpts(x.opts, data) ? <Choice value={v[x.key]} opts={resolveOpts(x.opts, data)} onChange={val => set(x.key, val)} title={x.l} />
+                          : x.date ? <DateInput value={v[x.key]} onChange={val => set(x.key, val)} ph={x.ph} />
+                          : <Input value={v[x.key]} onChange={val => set(x.key, val)} mono={x.mono} ph={x.ph} />}
                         {x.hint && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{x.hint}</span>}
                       </div>
                     ))}

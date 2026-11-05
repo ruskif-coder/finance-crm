@@ -136,3 +136,24 @@ def test_a_brand_outside_the_contract_is_refused_with_a_reason(ctx):
     with pytest.raises(HTTPException) as e:
         _fork(db, user, contract_id, "Проверка чужого бренда 31-10", brand_id=missing)
     assert e.value.status_code == 400 and "бренд" in str(e.value.detail).lower()
+
+
+def test_every_way_of_creating_a_template_lands_in_the_registry(ctx):
+    """Владелец 05.11.2026: «все создаваемые шаблоны нормально падают в реестр». Три пути создания — базовый (копия базового),
+    именованный из карточки договора (выше) и «сохранить как шаблон» из конструктора ДС (блоки + источник) — все видны в реестре,
+    кастомный — со своим договором и юрлицом."""
+    from app.annex_tpl import service as S
+    from app.annex_tpl.models import AnnexTplTemplate
+    from app.models import Contract
+    from app.routers.annex_templates import BaseIn, create_base
+    db, contract_id, _brand, user = ctx
+    base = db.query(AnnexTplTemplate).filter_by(scope="base").order_by(AnnexTplTemplate.id).first()
+    b = create_base(BaseIn(title="Проверка реестра · базовый 05-11", copy_from=base.id), db=db, user=user)
+    assert _row_of(db, user, b["id"])["scope"] == "base"
+
+    named = _fork(db, user, contract_id, "Проверка реестра · источник 05-11")
+    blocks = S.current(db, named["id"]).blocks
+    v = S.fork_custom(db, db.get(Contract, contract_id), user, title="Проверка реестра · из конструктора 05-11",
+                      source_id=named["id"], blocks=blocks)
+    r = _row_of(db, user, v.template_id)
+    assert r["scope"] == "custom" and r["contract"]["id"] == contract_id and r["entity"]["name"]
