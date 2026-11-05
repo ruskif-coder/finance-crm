@@ -146,6 +146,22 @@ def _short(d) -> str:
     return d.strftime("%d.%m.%y") if d else ""
 
 
+def placement_span(rows: list, period_from, period_to) -> tuple:
+    """Период размещения для текста ДС ({период_с}/{период_по}) — по датам строк таблицы (05.11.2026).
+
+    Период документа у мастер-ДС — весь финансовый месяц (`to_annex._bounds`), и текст печатал «с 01.11»
+    при строках «с 07.11». Строки без дат (скидка, доп. услуги) границы не двигают; дат нет ни у одной —
+    период документа."""
+    from datetime import date as _d
+
+    def _as_date(v):
+        return _d.fromisoformat(v[:10]) if isinstance(v, str) and v else v
+
+    starts = [d for d in (_as_date(r.get("date_from")) for r in rows or []) if d]
+    ends = [d for d in (_as_date(r.get("date_to")) for r in rows or []) if d]
+    return (min(starts) if starts else period_from), (max(ends) if ends else period_to)
+
+
 def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, advertisers, brand_only="", doc_date=None,
             service: str = "", legal_names=(), kind=None) -> dict:
     return {
@@ -408,7 +424,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
 
     doc_date = doc_date or A.annex_date(period_from)
     no_text = f"{n}-{sub_no}" if sub_no else n
-    values = _values(no=no_text, contract=contract, period_from=period_from, period_to=period_to, rate=rate, gross=gross, vat=vat,
+    text_from, text_to = placement_span(rows, period_from, period_to)    # в тексте — даты РК из строк, не месяц
+    values = _values(no=no_text, contract=contract, period_from=text_from, period_to=text_to, rate=rate, gross=gross, vat=vat,
                      brand=A.deal_brand(db, deal_ids), advertisers=_advertisers(db, deal_ids),
                      brand_only=_brands_only(db, deal_ids), doc_date=doc_date, service=service_text(db, deal_ids, rows),
                      legal_names=_legal_names(db, deal_ids), kind=kind)

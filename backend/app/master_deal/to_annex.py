@@ -32,6 +32,15 @@ def _bounds(period: str) -> tuple:
     return date(y, mth, 1), date(y, mth, calendar.monthrange(y, mth)[1])
 
 
+def default_date(rows: list, period_from, period_to):
+    """Дата ДС мастер-сделки по умолчанию — НАЧАЛО РК по строкам (владелец 05.11.2026), как правило `annex_date` от 14.10.
+    Период документа — весь финансовый месяц, и до 05.11 дата вставала 1-м числом при РК «с 07.11».
+    Аккаунт меняет дату на экране ДС, как и прежде."""
+    from app.annex_tpl.assemble import placement_span
+    from app.sales.annex import annex_date
+    return annex_date(placement_span(rows, period_from, period_to)[0])
+
+
 def number_label(no, sub_no, kind: str = "дс") -> str:
     """Номер ДС мастер-сделки — тем же словом, что его документ («синхронизировать», 31.10.2026).
 
@@ -97,7 +106,6 @@ def create(db: Session, m: MasterDeal, user) -> list:
     """Создать черновики ДС пакета из СОХРАНЁННОЙ раскладки. Возвращает [{id, kind, number}]."""
     from app.annex_tpl import document as tpl_doc
     from app.models import Contract
-    from app.sales.annex import annex_date
     from app.sales.models import SalesAnnex, SalesDealAnnexAllocation
     PK._editable(db, m)
     why = ready(db, m)
@@ -131,7 +139,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
             a.vat_rate = lay["vat_rate"]
             db.query(SalesDealAnnexAllocation).filter(SalesDealAnnexAllocation.annex_id == a.id).delete(synchronize_session=False)
         else:
-            a = SalesAnnex(contract_id=c.id, period_from=pf, period_to=pt, date=annex_date(pf), total_amount=ds["gross"],
+            a = SalesAnnex(contract_id=c.id, period_from=pf, period_to=pt, date=default_date(_snapshot(ds), pf, pt), total_amount=ds["gross"],
                            vat_rate=lay["vat_rate"], status="черновик", template_version_id=version.id,
                            created_by=getattr(user, "id", None), master_deal_id=m.id, kind=ds["kind"], sub_no=sub, rows=_snapshot(ds),
                            issue_kind=issue_kind)
