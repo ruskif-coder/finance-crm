@@ -180,16 +180,19 @@ def detail(db: Session, publisher_id: int, period: str, today: Optional[date] = 
     row = next((r for r in month_rows(db, period, today) if r["publisher_id"] == publisher_id), None)
     if row is None:
         return None
-    places = _placements(db, period, publisher_id)
-    colors = _service_colors(db, [p["placement_id"] for p in places])
-    camps = [{**{k: p[k] for k in ("placement_id", "brand", "service", "surface", "erid", "status")},
-              "service_color": colors.get(p["placement_id"]),
-              "date_from": p["date_from"].isoformat() if p["date_from"] else None,
-              "date_to": p["date_to"].isoformat() if p["date_to"] else None,
-              "plan": int(p["plan"] or 0), "fact": int(p["fact"] or 0), "amount": _amount(int(p["fact"] or 0), p["cpm"])}
-             for p in places]
-    return {"row": row, "campaigns": camps,
+    return {"row": row, "campaigns": campaigns(db, _placements(db, period, publisher_id)),
             "thread": thread(db, row["request_id"]) if row["request_id"] else []}
+
+
+def campaigns(db: Session, places: List[dict]) -> List[dict]:
+    """Кампании месяца для модалки и выгрузки — одна сборка на оба места."""
+    colors = _service_colors(db, [p["placement_id"] for p in places])
+    return [{**{k: p[k] for k in ("placement_id", "brand", "service", "surface", "erid", "status")},
+             "service_color": colors.get(p["placement_id"]),
+             "date_from": p["date_from"].isoformat() if p["date_from"] else None,
+             "date_to": p["date_to"].isoformat() if p["date_to"] else None,
+             "plan": int(p["plan"] or 0), "fact": int(p["fact"] or 0), "amount": _amount(int(p["fact"] or 0), p["cpm"])}
+            for p in places]
 
 
 def _service_colors(db: Session, target_ids: List[int]) -> Dict[int, Optional[str]]:

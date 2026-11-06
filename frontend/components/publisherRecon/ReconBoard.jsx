@@ -8,7 +8,8 @@ import { grpDash, monthLabel, rub2 } from '@/lib/salesFormat'
 import { counts, deltaOf, passes, plural, shiftMonth, toneOf } from '@/lib/publisherRecon.mjs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ReconModal from './ReconModal'
-import { CAPS, Dot, MonthSwitch, StatusPill, Toast, useToast } from './reconKit'
+import { downloadFile } from '@/lib/download'
+import { CAPS, Dot, MonthSwitch, StatusPill, Toast, actBtn, useToast } from './reconKit'
 
 const COLS = 'minmax(150px,0.9fr) minmax(100px,0.6fr) minmax(110px,0.6fr) minmax(110px,0.6fr) minmax(90px,0.5fr) minmax(104px,0.6fr) minmax(168px,0.8fr) minmax(76px,0.4fr) minmax(140px,0.8fr) 112px'
 const TILES = [
@@ -104,6 +105,11 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
               canNext={month < current} onPrev={() => setMonth(shiftMonth(month, -1))} onNext={() => setMonth(shiftMonth(month, 1))} />
             {month !== current && (
               <span onClick={() => setMonth(current)} style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>к текущему</span>)}
+            {/* Выгрузка месяца на экране (владелец 06.11.2026): сводная + площадка на своей вкладке */}
+            <span onClick={() => downloadFile(`/publisher-recon/export.xlsx?period=${month}`, null, flash)}
+              title="Сводная на первой вкладке, дальше каждая площадка с кампаниями"
+              style={{ ...actBtn('g', false), fontSize: 12.5 }}>
+              Выгрузить в Excel ↓</span>
             {canEdit && (
               <span onClick={sendAll} title={c.ready ? 'Активировать карточки в кабинетах всех готовых площадок' : 'Готовых сверок нет'}
                 style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: 'var(--on-accent)', whiteSpace: 'nowrap',

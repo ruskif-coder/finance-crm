@@ -231,6 +231,7 @@ ACTION_LABELS = {
     "publisher_recon_reply": "Ответ площадке по сверке",
     "publisher_recon_remind": "Напоминание площадке о сверке",
     "publisher_recon_agree": "Итог сверки согласован",
+    "publisher_recon_withdraw": "Сверка отозвана",
     "delete_creative_set": "Комплект креативов удалён",
     "upload_creative_file": "Файл креатива загружен",
     "import_operations": "Первичный импорт операций",

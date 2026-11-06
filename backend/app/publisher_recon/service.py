@@ -284,3 +284,25 @@ def save_file(db: Session, message: PublisherRequestMessage, original: str, cont
     db.add(f)
     db.flush()
     return f
+
+
+# ── отзыв ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def withdraw(db: Session, req: Optional[PublisherRequest], user) -> dict:
+    """«Отозвать» (владелец 06.11.2026: «на случай корявых пальцев»): сверка стирается целиком — цифры, переписка, файлы, —
+    и строка месяца снова «готово», можно отправить исправленную. Согласованную — нельзя: под неё уже посчитана разаллокация
+    и закрывающие. Кто и когда отозвал — в журнале действий (пишет ручка). Файлы с диска удаляет ручка ПОСЛЕ коммита:
+    сорвись коммит, строки остались бы без файлов. Возвращает то, что нужно уведомлению и ручке."""
+    if req is None or req.kind != "сверка":
+        raise ReconError(404, "Сверка не найдена")
+    if req.verdict == B.AGREED:
+        raise ReconError(409, "Сверка уже согласована — отозвать нельзя: по ней посчитана разаллокация")
+    files = [f.path for f in db.query(PublisherRequestFile).join(
+        PublisherRequestMessage, PublisherRequestMessage.id == PublisherRequestFile.message_id)
+        .filter(PublisherRequestMessage.request_id == req.id)]
+    out = {"publisher_id": req.publisher_id, "period": req.period,
+           "our_volume": int(req.recon.our_volume) if req.recon and req.recon.our_volume is not None else None,
+           "files": files}
+    db.delete(req)
+    db.flush()
+    return out

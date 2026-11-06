@@ -165,6 +165,43 @@ def agree(request_id: int, payload: AgreeIn, db: Session = Depends(get_db), user
     return {"status": B.DONE}
 
 
+@router.get("/export.xlsx")
+def export_xlsx(period: str, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Сверки месяца в Excel (владелец 06.11.2026): сводная + площадка на своей вкладке — тот месяц, что на экране."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    from app.publisher_recon import export as E
+    period = _period(period)
+    return Response(E.export_xlsx(db, period),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=\"recon_{period}.xlsx\"; "
+                                                    f"filename*=UTF-8''{quote(f'Сверки площадок {period}.xlsx')}"})
+
+
+@router.post("/{request_id}/withdraw")
+def withdraw(request_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Отозвать сверку «на корявые пальцы» (владелец 06.11.2026): пока не согласована. Сверка стирается, строка снова
+    «готово»; площадке — «сверка отозвана»."""
+    from types import SimpleNamespace
+
+    from app.files_safe import remove_upload
+    req = _req(db, request_id)
+    label = _label(db, req)
+    try:
+        out = S.withdraw(db, req, user)
+    except S.ReconError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    vol = f", наши {out['our_volume']}" if out["our_volume"] is not None else ""
+    log_action(db, user, "publisher_recon_withdraw", "publisher_request", request_id, f"{label}: сверка отозвана{vol}")
+    db.commit()
+    for path in out["files"]:
+        remove_upload(path, subdir=S.FILE_DIR)
+    N.to_site(db, SimpleNamespace(id=request_id, publisher_id=out["publisher_id"], period=out["period"],
+                                  due_at=None, recon=None), "отозвана")
+    return {"status": B.READY}
+
+
 @router.get("/{request_id}/razaloc")
 def razaloc(request_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Разаллокация согласованной сверки для экрана: строки по договорам ОРД и сделки, которым договора не хватает."""

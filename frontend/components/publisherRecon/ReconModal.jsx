@@ -33,6 +33,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   const [final, setFinal] = useState('')
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState(false)
+  const [askWithdraw, setAskWithdraw] = useState(false)   // отзыв — вторым нажатием: стирает сверку целиком
 
   const latest = useLatest()
   const finalSet = useRef(false)     // итог подставляем один раз: после «Ответить» перечитывание стирало набранную цифру
@@ -81,6 +82,13 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
 
   const send = () => run(() => api.post('/publisher-recon/send', { publisher_id: r.publisher_id, period }, auth()), `${r.site}: сверка отправлена`)
   const remind = () => run(() => api.post(`/publisher-recon/${rid}/remind`, {}, auth()), 'Напоминание отправлено')
+  // Отзыв «на корявые пальцы» (владелец 06.11.2026): пока не согласована; площадке — «сверка отозвана».
+  const withdraw = () => {
+    if (!askWithdraw) { setAskWithdraw(true); return }
+    setAskWithdraw(false)
+    run(() => api.post(`/publisher-recon/${rid}/withdraw`, {}, auth()), `${r.site}: сверка отозвана — можно отправить заново`)
+  }
+  const withdrawBtn = [askWithdraw ? 'Точно отозвать? Переписка сотрётся' : 'Отозвать сверку', withdraw, 'g']
   const agree = () => {
     if (fin == null) { setErr('Укажите итог показов'); return }
     run(() => api.post(`/publisher-recon/${rid}/agree`, { volume: fin }, auth()), `${r.site}: итог ${grpDash(fin)} зафиксирован`)
@@ -94,8 +102,8 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   }
 
   const actions = !canEdit ? [] : k === 'ready' ? [['Отправить площадке', send, 'p']]
-    : (k === 'wait' || k === 'late') ? [['Напомнить', remind, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
-      : k === 'answer' ? [['Ответить площадке', answer, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
+    : (k === 'wait' || k === 'late') ? [withdrawBtn, ['Напомнить', remind, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
+      : k === 'answer' ? [withdrawBtn, ['Ответить площадке', answer, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
         : k === 'closing' ? [['Отправить', null, 'off']] : []
   const buttons = k === 'done' && rid
     ? [...actions, ['Разаллокация ↓', () => downloadFile(`/publisher-recon/${rid}/razaloc.xlsx`, null, setErr), 'p']] : actions
