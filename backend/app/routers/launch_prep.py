@@ -2921,7 +2921,7 @@ def _url_request_values(db: Session, deal, pub, user, body_text: str) -> dict:
         "сделка": " · ".join(x for x in (brand, period) if x),
         "бренд": brand,
         "период": period,
-        "сотрудник": (user.full_name or user.email or ""),
+        "сотрудник": (user.name or user.email or ""),     # у User нет full_name — с 23.09 до 06.11.2026 отправка падала 500
         "текст": body_text,
     }
 
