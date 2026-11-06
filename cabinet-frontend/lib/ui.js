@@ -116,8 +116,11 @@ export const chip = (bg, fg, bd) => ({
 
 /* Суммы выводятся ПОЛНОСТЬЮ в рублях, не в миллионах: не всякая площадка получает
    миллионы за месяц, и «0,6 млн» вместо «624 753 ₽» скрывает от неё копейки. */
-export const rub = (n) => (n || n === 0
-  ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽' : '—')
+export const rub = (n) => (n || n === 0     /* до копейки (владелец 06.11.2026): площадка выставляет документы по этой сумме */
+  ? new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₽' : '—')
+/* Деньги без знака ₽ — для колонок «Сумма, ₽»: тоже до копейки (06.11.2026) */
+export const kop = (n) => (n || n === 0
+  ? new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) : '—')
 export const num = (n) => (n || n === 0 ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—')
 
 export const dm = (s) => (s ? String(s).slice(8, 10) + '.' + String(s).slice(5, 7) : '—')

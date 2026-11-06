@@ -71,6 +71,27 @@ def _snapshot(ds: dict) -> list:
     return jsonable_encoder(out)
 
 
+def allocate(db: Session, a, ds: dict, vat_rate) -> list:
+    """Разнесение суммы ДС по сделкам (с НДС) — из групп раскладки. Прежнее разнесение ДС заменяется. Возвращает id сделок."""
+    from app.sales.models import SalesDealAnnexAllocation
+    db.query(SalesDealAnnexAllocation).filter(SalesDealAnnexAllocation.annex_id == a.id).delete(synchronize_session=False)
+    by_deal: dict = {}
+    for g in ds["groups"]:
+        for r in g["rows"]:
+            by_deal[r["deal_id"]] = by_deal.get(r["deal_id"], 0.0) + r["net"]
+    rate = (vat_rate or 0) / 100.0
+    for deal_id, net in by_deal.items():
+        db.add(SalesDealAnnexAllocation(deal_id=deal_id, annex_id=a.id, amount=round(net * (1 + rate), 2)))
+    return list(by_deal)
+
+
+def write_kits(db: Session, m: MasterDeal, ds: dict, annex_id: int) -> None:
+    """Комплекты УПД одного ДС раскладки."""
+    for k in ds["upds"]:
+        db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=annex_id, brand=k["brand"], service=k["service"],
+                             net=k["net"], vat=k["vat"], gross=k["gross"]))
+
+
 def ready(db: Session, m: MasterDeal) -> list:
     """Почему нельзя в конструктор ДС — список причин (пусто — можно)."""
     from app.master_deal import start as SP
@@ -106,7 +127,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
     """Создать черновики ДС пакета из СОХРАНЁННОЙ раскладки. Возвращает [{id, kind, number}]."""
     from app.annex_tpl import document as tpl_doc
     from app.models import Contract
-    from app.sales.models import SalesAnnex, SalesDealAnnexAllocation
+    from app.sales.models import SalesAnnex
     PK._editable(db, m)
     why = ready(db, m)
     if why:
@@ -137,7 +158,6 @@ def create(db: Session, m: MasterDeal, user) -> list:
             # Вид остаётся «первичный» (так видно происхождение), снимок строк — по факту: у подписанного первичного снимка нет.
             a.rows, a.kind, a.master_deal_id, a.sub_no = _snapshot(ds), ds["kind"], m.id, None
             a.vat_rate = lay["vat_rate"]
-            db.query(SalesDealAnnexAllocation).filter(SalesDealAnnexAllocation.annex_id == a.id).delete(synchronize_session=False)
         else:
             a = SalesAnnex(contract_id=c.id, period_from=pf, period_to=pt, date=default_date(_snapshot(ds), pf, pt), total_amount=ds["gross"],
                            vat_rate=lay["vat_rate"], status="черновик", template_version_id=version.id,
@@ -145,20 +165,13 @@ def create(db: Session, m: MasterDeal, user) -> list:
                            issue_kind=issue_kind)
             db.add(a)
         db.flush()
-        by_deal: dict = {}
-        for g in ds["groups"]:
-            for r in g["rows"]:
-                by_deal[r["deal_id"]] = by_deal.get(r["deal_id"], 0.0) + r["net"]
-        rate = (lay["vat_rate"] or 0) / 100.0
-        for deal_id, net in by_deal.items():
-            db.add(SalesDealAnnexAllocation(deal_id=deal_id, annex_id=a.id, amount=round(net * (1 + rate), 2)))
-        for k in ([] if issue_kind == "primary" else ds["upds"]):     # на старте УПД нет — они по факту, на закрытии
-            db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=a.id, brand=k["brand"], service=k["service"],
-                                 net=k["net"], vat=k["vat"], gross=k["gross"]))
+        deal_ids = allocate(db, a, ds, lay["vat_rate"])
+        if issue_kind != "primary":                  # на старте УПД нет — они по факту, на закрытии
+            write_kits(db, m, ds, a.id)
         base = prim.no if (prim is not None and prim.no is not None) else (m.start_no or 0) + 1
         made.append({"id": a.id, "kind": ds["kind"],
                      "number": number_label(base, sub, DK.resolve(None, getattr(c, "annex_word", None), is_master=True)),
-                     "deal_ids": list(by_deal),
+                     "deal_ids": deal_ids,
                      "rebuilt": a is prim})
     db.flush()
     # Сумма документа — как её соберёт конструктор (НДС по строкам): иначе подтверждение отказало бы на копейке.
@@ -185,9 +198,7 @@ def _close_on_signed(db: Session, m: MasterDeal, prim, lay: dict) -> list:
         raise MS.MasterError(409, f"Закрываем {total:,.2f} — больше подписанного ДС {float(prim.total_amount or 0):,.2f}; сверх ДС — бонус"
                              .replace(",", " "))
     for ds in lay["ds"]:
-        for k in ds["upds"]:
-            db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=prim.id, brand=k["brand"], service=k["service"],
-                                 net=k["net"], vat=k["vat"], gross=k["gross"]))
+        write_kits(db, m, ds, prim.id)
     prim.master_deal_id = m.id                          # ДС остаётся первичным, без снимка строк — печатается как был подписан
     m.status, m.updated_at = "согласование", datetime.utcnow()
     db.flush()
@@ -273,7 +284,8 @@ def upds_of(db: Session, m: MasterDeal) -> list:
         out.append({"upd_no": k.upd_no, "annex_id": k.annex_id, "annex_number": a.number or model.get("number"),
                     "brand": k.brand, "service": k.service, "gross": k.gross,
                     "basis": cl["text"], "basis_template": cl["template"], "basis_custom": bool(k.basis_text),
-                    "basis_inherited_from": cl.get("inherited_from"), "values": cl.get("values") or model.get("values") or {}})
+                    "basis_inherited_from": cl.get("inherited_from"), "values": cl.get("values") or model.get("values") or {},
+                    "lines": cl.get("lines") or []})       # основание каждой строки УПД (06.11.2026)
     return out
 
 

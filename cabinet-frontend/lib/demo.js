@@ -157,7 +157,7 @@ export const camp = (c) => ({
 })
 
 /** Сумма строки: факт ÷ 1000 × CPM. От CPM же будем считать и на живых данных. */
-export const sum = (c) => Math.round(c.fact / 1000 * c.cpm)
+export const sum = (c) => Math.round(c.fact / 1000 * c.cpm * 100) / 100   // до копейки (06.11.2026), как billing()
 
 /** РК в архиве без открутки — отказ до старта: в счёт и в план не идёт (правило 1.3). */
 export const inBill = (c) => !(c.state === 'архив' && !c.fact)

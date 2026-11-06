@@ -131,7 +131,10 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
         lines = [{"service": k.service or "", "net": float(k.net or 0), "vat_rate": rate, "vat": float(k.vat or 0), "gross": float(k.gross or 0)}]
     basis = kit.get("basis") or ""
     if basis:              # в строку УПД идёт согласованное основание, а не позиция ДС (владелец 05.11.2026)
-        lines = [{**x, "service": basis} for x in lines]
+        own = {x.get("row_id"): x["text"] for x in kit.get("lines") or []}
+        lines = [{**x, "service": own.get(x.get("row_id")) or basis} for x in lines]
+        if len(lines) > 1:     # строки со своим основанием (06.11.2026, «вариант 3»): в 1С — столько же строк с этими текстами
+            basis = "\n".join(x["service"] for x in lines)
     pf = (a.period_from if a is not None and a.period_from else None)
     pt = (a.period_to if a is not None and a.period_to else None)
     if pf is None or pt is None:

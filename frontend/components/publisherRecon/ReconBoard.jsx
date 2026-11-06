@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import useLatest from '@/lib/useLatest'
 import api, { auth } from '@/lib/http'
 import { MONO, card } from '@/components/salesTableKit'
-import { grpDash, monthLabel } from '@/lib/salesFormat'
+import { grpDash, monthLabel, rub2 } from '@/lib/salesFormat'
 import { counts, deltaOf, passes, plural, shiftMonth, toneOf } from '@/lib/publisherRecon.mjs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ReconModal from './ReconModal'
@@ -175,7 +175,7 @@ function Row({ r, canEdit, busy, onOpen, onSend }) {
         <span style={{ fontFamily: MONO, fontSize: 9.5, color: dFg }}>{d.pct}</span>
       </span>
       <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, textAlign: 'right', color: r.cpm ? 'var(--text-primary)' : 'var(--warning-fg)' }}>
-        {r.cpm ? grpDash(r.amount) : 'нет CPM'}</span>
+        {r.cpm ? rub2(r.amount) : 'нет CPM'}</span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
         <StatusPill t={T} />
         {r.changed && <span title={`После итога наш факт сейчас ${grpDash(r.fact_now)}; итог не пересчитывается`}

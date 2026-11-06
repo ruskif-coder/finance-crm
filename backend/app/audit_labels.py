@@ -55,6 +55,7 @@ ACTION_LABELS = {
     "onec_desk_file_delete": "Документы для 1С: файл убран",
     "master_deal_onec_fixed": "Документы для 1С: аккаунт исправил",
     "master_deal_onec_reply": "Документы для 1С: ответ аккаунта бухгалтеру",
+    "master_deal_rows_synced": "Мастер-сделка: строки ДС подтянуты из сделок",
     "onec_desk_close": "Документы для 1С: срок закрытия месяца",
     "annex_sign": "Подпись ДС: отметка",
     "master_deal_start": "ДС на старте: мастер-сделка заведена",

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import api, { auth } from '@/lib/http'
 import { MONO, card } from '@/components/salesTableKit'
-import { MONTHS_FULL, grpDash, monthLabel } from '@/lib/salesFormat'
+import { MONTHS_FULL, grpDash, monthLabel, rub2 } from '@/lib/salesFormat'
 import { ST } from '@/lib/publisherRecon.mjs'
 import { CAPS, Dot, MonthSwitch } from './reconKit'
 
@@ -30,7 +30,7 @@ export default function ReconPivot({ year, setYear, current, onOpenRecon }) {
   const val = (c) => (!c ? null : mode === 'money' ? c.amount : c.shows)
   const foot = months.map(m => (data?.rows || []).reduce((a, r) => a + (val(r.cells[m]) || 0), 0))
   const cols = `minmax(160px,1.2fr) repeat(${months.length},minmax(104px,1fr)) minmax(130px,1fr)`
-  const fmt = (v) => (v ? grpDash(v) : '—')
+  const fmt = (v) => (v ? (mode === 'money' ? rub2(v) : grpDash(v)) : '—')   // деньги — до копейки (06.11.2026)
 
   const pd = sel && data ? (() => {
     const r = data.rows.find(x => x.publisher_id === sel.pid), c = r?.cells[sel.m]
@@ -81,7 +81,7 @@ export default function ReconPivot({ year, setYear, current, onOpenRecon }) {
                       {c && <Dot c={dotOf(c)} />}
                       <span style={{ fontFamily: MONO, fontSize: 12, whiteSpace: 'nowrap', fontWeight: agreed ? 700 : 500,
                         color: !v ? 'var(--text-disabled)' : agreed ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                        {!c ? '' : v ? grpDash(v) : (mode === 'money' && c.no_cpm && c.shows ? 'нет CPM' : '—')}</span>
+                        {!c ? '' : v ? fmt(v) : (mode === 'money' && c.no_cpm && c.shows ? 'нет CPM' : '—')}</span>
                     </span>
                   )
                 }),
@@ -102,7 +102,7 @@ export default function ReconPivot({ year, setYear, current, onOpenRecon }) {
               <Dot c={dotOf(pd.c)} />{monthLabel(sel.m)} · {pd.c.status || 'до сверок'}</span>
           </span>
           {[['Показы · наши', grpDash(pd.c.ours)], ['Показы · площадки', pd.c.theirs != null ? grpDash(pd.c.theirs) : '—'],
-            ['Итог', pd.agreed ? grpDash(pd.c.shows) : 'не согласован'], ['Сумма до НДС', pd.c.amount != null ? grpDash(pd.c.amount) + ' ₽' : 'нет CPM'],
+            ['Итог', pd.agreed ? grpDash(pd.c.shows) : 'не согласован'], ['Сумма до НДС', pd.c.amount != null ? rub2(pd.c.amount) + ' ₽' : 'нет CPM'],
             ['Кампаний', String(pd.c.total ?? '—')]].map(([k, v]) => (
             <span key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ ...CAPS, fontSize: 8.5, fontWeight: 400, letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>{k}</span>

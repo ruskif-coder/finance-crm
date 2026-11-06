@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useLatest from '@/lib/useLatest'
 import api, { auth } from '@/lib/http'
 import { MONO, Modal } from '@/components/salesTableKit'
-import { grpDash, monthLabel } from '@/lib/salesFormat'
+import { grpDash, monthLabel, rub2 } from '@/lib/salesFormat'
 import { downloadFile } from '@/lib/download'
 import { fmtDayOfMoment, fmtDayTime } from '@/lib/dates'
 import { SVC_DOT } from '@/lib/masterStatus'
@@ -13,7 +13,8 @@ import { CAPS, Dot, StatusPill, actBtn } from './reconKit'
 
 const CAMP = 'minmax(160px,1.5fr) minmax(104px,0.8fr) 50px 98px 96px 92px 92px'
 const dm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '')
-const rub = (v) => (v == null ? 'нет CPM' : `${grpDash(v)} ₽`)
+// Деньги сверки — до копейки (владелец 06.11.2026): по ним площадка выставляет документы и идёт разаллокация
+const rub = (v) => (v == null ? 'нет CPM' : `${rub2(v)} ₽`)
 
 const HINT = {
   ready: (r) => `Карточка появится в кабинете площадки; срок ответа — 2 рабочих дня.`,
@@ -165,12 +166,12 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
               <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary)' }}>{dm(c.date_from)} — {dm(c.date_to)}</span>
               <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.erid || '—'}</span>
               <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{grpDash(c.fact)}</span>
-              <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{c.amount == null ? '—' : grpDash(c.amount)}</span>
+              <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{c.amount == null ? '—' : rub2(c.amount)}</span>
             </div>))}
           <div style={{ display: 'grid', gridTemplateColumns: CAMP, gap: 10, padding: '8px 4px 0', fontWeight: 700 }}>
             <span style={{ ...CAPS, fontSize: 9, letterSpacing: '0.08em' }}>Итого · {d.campaigns.length} РК</span><span /><span /><span /><span />
             <span style={{ fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>{grpDash(r.ours)}</span>
-            <span style={{ fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>{r.cpm ? grpDash(money(r.ours, r.cpm)) : '—'}</span>
+            <span style={{ fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>{r.cpm ? rub2(money(r.ours, r.cpm)) : '—'}</span>
           </div>
         </div>
 

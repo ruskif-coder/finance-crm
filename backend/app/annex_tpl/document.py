@@ -336,10 +336,15 @@ def _closing_template_for(rows) -> str:
     return closing_template_for(rows)
 
 
-def upd_rows(rows, brand_of: dict, brand, service, *, by_service: bool) -> list:
+def upd_rows(rows, brand_of: dict, brand, service, *, by_service: bool, service_of: dict | None = None) -> list:
     """Строки снимка ДС, которые закрывает этот комплект УПД, — тем же ключом, что раскладка (`layout._key`): бренд сделки, а при
     «УПД по услугам» размещение и допы бренда — разные комплекты (у допов услуга не делит). Строка без денег (бонус 0 ₽) комплекта
-    не образует — и в его основание не попадает (владелец 03.11.2026)."""
+    не образует — и в его основание не попадает (владелец 03.11.2026).
+
+    При «УПД по услугам» размещение берётся только СВОЕЙ услуги — «услуга сделки · площадка строки» (`layout.service_label`):
+    «еФарм · WEB» и «еФарм · APP» — разные УПД (28.10.2026). Без этого в обе УПД M-0001 попадали обе строки — и сумма, и основание
+    УПД считались по чужой площадке (06.11.2026). `service_of` — услуга сделки по deal_id; нет — проверка как раньше."""
+    from app.master_deal.layout import service_label
     out = []
     for r in rows or []:
         if not r.get("amount") or r.get("kind") == "discount":
@@ -347,6 +352,9 @@ def upd_rows(rows, brand_of: dict, brand, service, *, by_service: bool) -> list:
         if brand and (brand_of.get(r.get("deal_id")) or "без бренда") != brand:
             continue
         if by_service and (r.get("kind") == "extra") != (service is None):
+            continue
+        own = (service_of or {}).get(r.get("deal_id"))      # услуга сделки неизвестна — по услуге не делим (как до 06.11.2026)
+        if by_service and service is not None and own and service_label(own, r.get("device")) != service:
             continue
         out.append(r)
     return out
@@ -364,8 +372,15 @@ def _upd_own(db, k, rows, values: dict) -> list:
     from app.master_deal.models import MasterDeal
     from app.sales.annex import deal_brand
     m = db.get(MasterDeal, k.master_deal_id)
-    brand_of = {i: deal_brand(db, [i]) for i in dict.fromkeys(r.get("deal_id") for r in rows or []) if i}
-    own = upd_rows(rows, brand_of, k.brand, k.service, by_service=bool(getattr(m, "upd_by_service", False)))
+    from app.sales.models import SalesDeal, SalesService
+    ids = [i for i in dict.fromkeys(r.get("deal_id") for r in rows or []) if i]
+    brand_of = {i: deal_brand(db, [i]) for i in ids}
+    service_of = {}
+    for i in ids:                       # через get, как бренд: тесты зовут с поддельной базой без query
+        d = db.get(SalesDeal, i)
+        sv = db.get(SalesService, d.service_id) if d is not None and getattr(d, "service_id", None) else None
+        service_of[i] = getattr(sv, "name", None)
+    own = upd_rows(rows, brand_of, k.brand, k.service, by_service=bool(getattr(m, "upd_by_service", False)), service_of=service_of)
     values["услуга"] = service_text(db, None, own)
     names = _brands_only(db, list(dict.fromkeys(r.get("deal_id") for r in own)))
     if names:
@@ -382,13 +397,18 @@ def upd_closing(model: dict, k, rows=None, db=None) -> dict:
     cb = model.get("closing_basis") or {}
     values = dict(model.get("values") or {})
     rows = _upd_own(db, k, rows, values)
+    sep = separate_price(db)
+    values = with_device(values, rows, sep)    # один девайс у всей УПД — он в основании (06.11.2026)
     if getattr(k, "basis_text", None):
         out = closing_resolve(k.basis_text, values, True)
     elif cb.get("edited") or cb.get("inherited_from"):
         out = closing_resolve(cb["template"], values, False, cb.get("inherited_from") or "основание этого ДС")
     else:
         out = closing_resolve(_closing_template_for(rows), values, False)
-    return {**out, "values": values}       # подстановки этой УПД — экрану пакета, чтобы подсказка правки совпадала с печатью
+    # строки УПД — каждая со своим основанием (06.11.2026); у УПД из одной строки оно и есть основание УПД
+    lines = line_bases(out["template"], values, rows, sep) if len(rows or []) > 1 else \
+        [{"row_id": r.get("row_id"), "text": out["text"]} for r in rows or []]
+    return {**out, "values": values, "lines": lines}   # подстановки этой УПД — экрану пакета, чтобы подсказка правки совпадала с печатью
 
 
 def fixed_kind(annex, contract, model_kind: Optional[str]) -> Optional[str]:
@@ -420,3 +440,43 @@ def with_words(doc: dict) -> dict:
     # слово перед номером приводится к виду, иначе заголовок и пункты разошлись бы (ревью 31.10.2026).
     number = DK.renumber(doc.get("number"), kind)
     return {**doc, "kind": kind, "number": number, "words": DK.forms(kind), "number_dat": DK.to_dative(number, kind)}
+
+
+DEVICES = ("WEB", "APP")
+
+
+def _device_of(r: dict, separate) -> str:
+    """WEB/APP строки ДС — только у услуг с раздельным прайсом (то же правило, что метка в имени сделки, 03.09.2026); иначе пусто."""
+    dev = r.get("device")
+    return dev if dev in DEVICES and (r.get("position") or "").strip() in (separate or ()) else ""
+
+
+def with_device(values: dict, rows, separate) -> dict:
+    """{сеть} с девайсом (владелец 06.11.2026: «в сети SIMB-AD (WEB)»), когда у всех строк УПД один девайс; разные — без метки:
+    тогда девайс назовёт основание своей строки (`line_bases`)."""
+    devs = {_device_of(r, separate) for r in rows or []}
+    if len(devs) != 1 or "" in devs:
+        return values
+    return {**values, "сеть": f"{values.get('сеть') or 'SIMB-AD'} ({devs.pop()})"}
+
+
+def line_bases(template: str, values: dict, rows, separate) -> list:
+    """Основание каждой строки УПД (владелец 06.11.2026, «вариант 3»): тот же шаблон, подстановки — по своей строке: девайс в
+    {сеть} и период строки. Строка без дат (доп) берёт период УПД."""
+    from app.annex_tpl.assemble import _date, closing_resolve, placement_span
+    out = []
+    for r in rows or []:
+        v = with_device(values, [r], separate)
+        f, t = placement_span([r], None, None)
+        if f and t:
+            v = {**v, "период_с": _date(f), "период_по": _date(t)}
+        out.append({"row_id": r.get("row_id"), "text": closing_resolve(template, v, False)["text"]})
+    return out
+
+
+def separate_price(db) -> set:
+    """Услуги с раздельным прайсом WEB/APP — по справочнику услуг."""
+    if db is None or not hasattr(db, "query"):       # поддельная база тестов — услуг с раздельным прайсом нет
+        return set()
+    from app.sales.models import SalesService
+    return {n for (n,) in db.query(SalesService.name).filter(SalesService.separate_price.is_(True)).all()}

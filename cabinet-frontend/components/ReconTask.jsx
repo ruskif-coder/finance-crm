@@ -12,7 +12,7 @@ import { createPortal } from 'react-dom'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
 import { downloadFile, downloadRazaloc } from '../lib/download'
-import { C, CAP, MONO, UI, btn, chip, dm, num, rub, soft } from '../lib/ui'
+import { C, CAP, MONO, UI, btn, chip, dm, kop, num, rub, soft } from '../lib/ui'
 
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
 const monthOf = (p) => `${MONTHS[Number(p.slice(5, 7)) - 1]} ${p.slice(0, 4)}`
@@ -241,12 +241,12 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
                   <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.secondary }}>{dm(c.date_from)} — {dm(c.date_to)}</span>
                   <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.secondary, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.erid || '—'}</span>
                   <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{num(c.fact)}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{r.cpm ? num(c.fact * r.cpm / 1000) : '—'}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{r.cpm ? kop(c.fact * r.cpm / 1000) : '—'}</span>
                 </div>))}
               <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 10, padding: '8px 4px 0', fontFamily: MONO, fontWeight: 700 }}>
                 <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.muted }}>Итого · {r.campaigns.length}</span><span /><span /><span /><span />
                 <span style={{ fontSize: 12, textAlign: 'right' }}>{num(ours)}</span>
-                <span style={{ fontSize: 12, textAlign: 'right' }}>{r.cpm ? num(ours * r.cpm / 1000) : '—'}</span>
+                <span style={{ fontSize: 12, textAlign: 'right' }}>{r.cpm ? kop(ours * r.cpm / 1000) : '—'}</span>
               </div>
             </div></div>
           </div>

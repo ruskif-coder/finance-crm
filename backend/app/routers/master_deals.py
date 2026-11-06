@@ -154,8 +154,12 @@ def master_registry(db: Session = Depends(get_db), user: User = Depends(MD_VIEW)
 
 @router.get("/{code}")
 def master_view(code: str, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
-    """Карточка пакета: шапка и сделки, раскладка, номера ДС договора, документы, выставление, «что нужно сейчас»."""
-    return _view(db, _master(db, code, user), user)
+    """Карточка пакета: шапка и сделки, раскладка, номера ДС договора, документы, выставление, «что нужно сейчас».
+    Черновые ДС пакета подтягивают строки из сделок (06.11.2026) — правка МП после «Создать ДС» видна сразу."""
+    from app.master_deal import sync_rows as SR
+    m = _master(db, code, user)
+    SR.on_open(db, m, user)
+    return _view(db, m, user)
 
 
 @router.get("/{code}/efficiency")

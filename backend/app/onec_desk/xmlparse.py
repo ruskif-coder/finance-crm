@@ -113,6 +113,12 @@ def text_key(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[«»“”„\"']", '"', s or "")).strip().lower()
 
 
+def _all_found(basis: Optional[str], services: list) -> bool:
+    want = [b for b in (basis or "").split("\n") if b.strip()]
+    keys = {text_key(n) for n in services}
+    return bool(want) and all(text_key(b) in keys for b in want)
+
+
 def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str] = None) -> dict:
     """→ {number, date, net, vat, gross, buyer: {inn, kpp}, contract, contract_1c, basis}. Принимает и XML, и архив ЭДО.
     contract_no — № договора сделки: если среди оснований есть он (в написании 1С — «Договор РМ 30-02-2025»), отдаём НАШ
@@ -155,5 +161,6 @@ def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str
         "contract_1c": raw,
         # наименование услуги в строке УПД = согласованное основание (владелец 05.11.2026: «они должны идти в документы»);
         # совпало без оформления — отдаём НАШ текст (экран сравнивает строки), иначе — как в УПД
-        "basis": (basis if basis and any(text_key(n) == text_key(basis) for n in services) else (services[0] if services else "")),
+        # у УПД из нескольких строк основания строк идут через перевод строки — каждое должно найтись (06.11.2026)
+        "basis": (basis if _all_found(basis, services) else "\n".join(services)),
     }

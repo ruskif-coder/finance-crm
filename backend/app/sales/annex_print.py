@@ -31,6 +31,11 @@ def annex_of(db: Session, annex_id: int, user=None) -> SalesAnnex:
     if user is not None:
         from app.sales import scope as SC
         SC.annex_in_scope(db, user, a)
+        if getattr(a, "master_deal_id", None) and a.no is None:   # черновой ДС пакета — строки из сделок (06.11.2026)
+            from app.master_deal import sync_rows as SR
+            from app.master_deal.models import MasterDeal
+            SR.on_open(db, db.get(MasterDeal, a.master_deal_id), user)
+            db.refresh(a)
     return a
 
 

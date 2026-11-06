@@ -290,7 +290,8 @@ def test_request_lines_carry_agreed_basis(env):
     db, m, k, *_ = env
     r = _req(db, m, k)
     if r["basis"]:
-        assert all(x["service"] == r["basis"] for x in r["lines"]), "в строку УПД идёт согласованное основание"
+        # строка УПД — согласованное основание; у УПД из нескольких строк — своё у каждой (06.11.2026)
+        assert all(x["service"] in r["basis"].split("\n") for x in r["lines"]), "в строку УПД идёт согласованное основание"
 
 
 def test_xml_with_other_service_name_blocks_submit(env, monkeypatch):
