@@ -407,6 +407,16 @@ def _apply_verdict(db: Session, pair, s, target, pub, deal,
     return f"{deal.code}-{pub.code if pub else '?'} комплект №{s.no}: {verdict}"
 
 
+def url_ask(db, set_id: int, target) -> Optional[str]:
+    """Текст запроса посадочной у пары «креатив × площадка», если ссылку ждут от площадки; иначе None."""
+    from app.launch_prep.models import LaunchPrepSetTarget
+    m = (db.query(LaunchPrepSetTarget)
+         .filter(LaunchPrepSetTarget.set_id == set_id, LaunchPrepSetTarget.target_id == target.id).first())
+    if url_state(m, getattr(target, "surface_kind", None)) != "запрошена":
+        return None
+    return (m.url_request_text or "").strip() or "ссылка на посадочную страницу"
+
+
 def _tell_publisher(db, pair, s, target, pub, deal) -> None:
     """Сказать площадке, что материал ждёт её решения.
 
@@ -434,13 +444,20 @@ def _tell_publisher(db, pair, s, target, pub, deal) -> None:
     period = deal_period_text(deal)
     # НАШЕГО кода сделки здесь нет: площадка знает бренд, услугу и период.
     context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
+    body = ("Материал прошёл нашу проверку и ждёт вашего решения. "
+            "Посмотрите дисклеймер, вес архива и соответствие техрегламенту.")
+    facts = [("комплект", f"№{s.no}"), ("услуга", deal.product or "—")]
+    # Запрос посадочной — приписка к ЭТОМУ уведомлению, а не отдельное письмо (владелец 06.11.2026: «не два отдельных»).
+    ask = url_ask(db, s.id, target)
+    if ask is not None:
+        body += f" Нужна посадочная ссылка: {ask}. Пришлите её в кабинете — без неё креатив не согласовать."
+        facts.append(("посадочная", "нужна ссылка"))
     try:
         notify_publisher(
             db, "новый креатив", pub.id,
             title="Новый креатив на согласование",
-            body="Материал прошёл нашу проверку и ждёт вашего решения. "
-                 "Посмотрите дисклеймер, вес архива и соответствие техрегламенту.",
-            facts=[("комплект", f"№{s.no}"), ("услуга", deal.product or "—")],
+            body=body,
+            facts=facts,
             context=context, link="/", entity_type="launch_prep_pair", entity_id=pair.id,
             values={"бренд": brand, "период": period})
     except Exception as e:                                   # noqa: BLE001

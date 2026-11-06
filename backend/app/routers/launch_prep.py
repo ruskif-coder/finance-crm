@@ -2896,93 +2896,15 @@ def request_member_url(set_id: int, target_id: int, payload: UrlRequestIn,
     db.commit()
     db.refresh(m)
 
-    mail_state = _mail_url_request(db, t, deal, text, current_user)
+    # Отдельного письма нет (владелец 06.11.2026): запрос — приписка к уведомлению о креативе. Креатив ещё не у площадки —
+    # приписка уйдёт с ним; уже у площадки — запрос виден ей в кабинете.
+    pair = (db.query(LaunchPrepPair)
+            .filter(LaunchPrepPair.set_id == s.id, LaunchPrepPair.target_id == t.id).first())
+    mail_state = "cabinet" if (pair is not None and pair.sent_at) else "with_creative"
 
     log_action(db, current_user, "request_target_url", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: запрошена ссылка ({mail_state})")
     return {"url_state": url_state(m, t.surface_kind), "text": text, "mail": mail_state}
-
-
-
-
-def _url_request_values(db: Session, deal, pub, user, body_text: str) -> dict:
-    """Подстановки письма-запроса посадочной ПЛОЩАДКЕ.
-
-    НАШИХ идентификаторов и названий в письме площадке нет (правило владельца
-    14.09.2026): ни кода сделки, ни номера, ни НАЗВАНИЯ. Поле «сделка» оставлено ради
-    шаблонов, где оно уже вписано, но несёт бренд и период — то, чем размещение видно
-    площадке. До 23.09.2026 здесь стоял `deal.title` (аудит, 5.L10).
-    """
-    brand = _deal_brand_name(db, deal)
-    period = deal_period_text(deal)
-    return {
-        "площадка": (pub.name if pub else "") or "",
-        "домен": (getattr(pub, "domain", "") or "") if pub else "",
-        "сделка": " · ".join(x for x in (brand, period) if x),
-        "бренд": brand,
-        "период": period,
-        "сотрудник": (user.name or user.email or ""),     # у User нет full_name — с 23.09 до 06.11.2026 отправка падала 500
-        "текст": body_text,
-    }
-
-
-
-
-def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
-    """Отправить запрос ссылки почтой. Возвращает одно слово для ответа ручки.
-
-    Ошибку наружу НЕ поднимаем: запрос уже записан, и падение отправки не должно
-    отменять зафиксированный факт. Человек узнает исход из ответа, а подробность — из
-    журнала писем.
-    """
-    from app.mail import client as mailc
-    from app.mail import send as gate
-    from app.mail.models import KIND_URL_REQUEST
-
-    if not mailc.configured():
-        return "off"
-    row = db.execute(sa_text("""
-        SELECT c.email, c.name FROM sales_publisher_contacts c
-         WHERE c.publisher_id = :p AND coalesce(c.email, '') <> ''
-         ORDER BY c.is_primary DESC, c.id LIMIT 1"""),
-        {"p": t.publisher_id}).first()
-    if row is None or not mailc.valid_address(row[0] or ""):
-        return "no_address"
-
-    pub = db.query(SalesPublisher).filter(SalesPublisher.id == t.publisher_id).first()
-
-    # Тема и обёртка письма — ИЗ ШАБЛОНА, который правится на «Настройки → Почта». До
-    # 13.09.2026 тема собиралась здесь строкой: человек правил шаблон, сохранял, письмо
-    # уходило с другим текстом, и узнать об этом можно было только от получателя.
-    #
-    # Тело: шаблон — конверт, а сам вопрос площадке подставляется как `{текст}`. Если в
-    # шаблоне этого места НЕТ, отправляем одну фразу без конверта: потерять то, что мы
-    # записали как «что мы спросили», нельзя ни при какой правке шаблона.
-    from app.mail import templates as mail_tpl
-    from app.mail.models import MailTemplate
-    values = _url_request_values(db, deal, pub, user, body_text)
-    tpl = db.query(MailTemplate).filter(MailTemplate.key == KIND_URL_REQUEST).first()
-    subject = (mail_tpl.render(tpl.subject, values).strip() if tpl and tpl.subject
-               else f"Посадочная страница для размещения: {values['бренд']}")
-    if tpl and tpl.body and "текст" in mail_tpl.placeholders(tpl.body):
-        body_text = mail_tpl.render(tpl.body, values)
-    try:
-        sent = gate.send_and_log(
-            db, to=row[0], to_name=row[1],
-            subject=subject,
-            # Тело — ТОТ ЖЕ текст, что видит человек на экране и что записан в запрос.
-            # Собирать письмо отдельно значит завести вторую формулировку, и однажды
-            # площадке уйдёт не то, что мы у себя записали.
-            body=body_text,
-            kind=KIND_URL_REQUEST,
-            # Ответ площадки должен прийти живому человеку, а не в ящик системы.
-            reply_to=(user.email or None),
-            entity_type="launch_prep_target", entity_id=t.id, user_id=user.id)
-    except Exception as e:                                  # noqa: BLE001
-        log.warning("Запрос ссылки: письмо не отправлено (%s): %s",
-                    pub.name if pub else t.publisher_id, e)
-        return "failed"
-    return gate.outcome(sent)
 
 
 @router.get("/refusal-reasons")

@@ -42,13 +42,6 @@ def test_brand_fallback_never_returns_our_deal_title():
     assert got == "Рекламодатель"
 
 
-def test_url_request_values_carry_no_deal_title():
-    vals = lp._url_request_values(_Db(brand="Бренд"), _deal(brand_id=1),
-                                  SimpleNamespace(name="Сайт", domain="site.test"),
-                                  SimpleNamespace(full_name="Трафик", email=None), "текст")
-    assert not any(TITLE in str(v) for v in vals.values()), vals
-
-
 def test_fallback_subject_does_not_name_the_deal():
     src = io.open(Path(lp.__file__), encoding="utf-8").read()
     assert "values['сделка']" not in src
