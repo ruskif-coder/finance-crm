@@ -97,3 +97,23 @@ def test_changing_final_contract_drops_confirmation(deal_db, monkeypatch):
     assert CL._rec(db, d.id).confirmed_at is not None
     ORD.set_final(d.id, ORD.SetFinal(contract_id=None), db=db, current_user=SimpleNamespace(id=None))
     assert CL._rec(db, d.id).confirmed_at is None
+
+
+def test_client_discount_unlike_sk_is_legit(deal_db, monkeypatch):
+    """Владелец 06.11.2026: 10 % в МП — скидка клиенту к CGV, 45 % — комиссия агентства. Разные проценты —
+    законная пара: предупреждение, не блок. Двойная — когда в МП вписана сама СК (% в пределах ±1 п.п. от правила)."""
+    db, d, plan_id = deal_db
+    _discount_rows(db, plan_id, 0.10)
+    monkeypatch.setattr(SK, "of_deal", lambda db, deal: _sk("rule", 45.0))
+    st = CL.compute(db, d)
+    assert st["sk"]["mp_discount"] == [10.0] and st["sk"]["double"] is False
+    CL.set_mode(db, d, "plan", None, _U(), privileged=True)
+    assert CL.confirm(db, d, True, _U())["confirmed"]
+
+
+def test_mp_discount_near_sk_percent_is_double(deal_db, monkeypatch):
+    """Прод 06.11.2026: в МП 45,8 %, по правилу 44,8 % — та же СК с опечаткой, всё равно двойная."""
+    db, d, plan_id = deal_db
+    _discount_rows(db, plan_id, 0.458)
+    monkeypatch.setattr(SK, "of_deal", lambda db, deal: _sk("rule", 44.8))
+    assert CL.compute(db, d)["sk"]["double"] is True
