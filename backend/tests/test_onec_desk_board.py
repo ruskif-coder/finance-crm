@@ -308,3 +308,13 @@ def test_xml_with_other_service_name_blocks_submit(env, monkeypatch):
     with pytest.raises(SV.DeskError) as e:
         SV.submit(db, m, k, _form(req), req, user)
     assert "основание" in e.value.message
+
+
+def test_request_shows_issue_channel_of_the_contract(env):
+    """Бухгалтеру видно, как выставляем (владелец 06.11.2026): признак договора; бумажный — «бумага», не задан — None."""
+    db, m, k, *_ = env
+    from sqlalchemy import text as _t
+    db.execute(_t("UPDATE contracts SET issue_channel = 'бумага' WHERE id = :c"), {"c": m.contract_id})
+    assert _req(db, m, k)["channel"] == "бумага"
+    db.execute(_t("UPDATE contracts SET issue_channel = NULL WHERE id = :c"), {"c": m.contract_id})
+    assert _req(db, m, k)["channel"] is None

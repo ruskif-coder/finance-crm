@@ -157,6 +157,8 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
         "ds_scan_url": "scan" if a is not None and Q._ds_scan(db, a) else None,
         "draft": None, "files": _files(files), "seen": True, "resent": None, "returned": None, "done": None,
         "thread": _thread(evs, k.onec_seen_at), "edo": None,
+        # Как выставляем (владелец 06.11.2026: «забыли буху показать»): признак договора, а ушедшее клиенту — по своему каналу
+        "channel": _channel(db, m),
     }
     unseen_fix = False
     if status == "wait":
@@ -176,6 +178,14 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
                        "upd": {"no": k.onec_upd_no, "date": _ru(k.onec_upd_date), "pdf": fl.get("updPdf"), "xml": fl.get("updXml")},
                        "sums": {"net": k.onec_net, "vat": k.onec_vat, "gross": k.onec_gross}}
     return req
+
+
+def _channel(db: Session, m) -> Optional[str]:
+    """«ЭДО» / «бумага» / None (у договора не задан — пакет сам в «выставление» не уйдёт)."""
+    from app.master_deal import status as ST
+    if ST.is_paper(db, m):
+        return ST.PAPER
+    return ST.channel_of(db, m) or None
 
 
 def _iso_day(v, end: bool = False) -> Optional[str]:

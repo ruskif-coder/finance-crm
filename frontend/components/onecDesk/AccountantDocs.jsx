@@ -224,7 +224,12 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
           <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent-fg)' }}>{req.code}</span>
           <span title={req.buyer.name} style={{ fontSize: 13.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grouped ? req.annex.short : short(req.buyer.name)}</span>
         </span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grouped ? req.brand : req.annex.short + ' · ' + req.brand}</span>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grouped ? req.brand : req.annex.short + ' · ' + req.brand}</span>
+          {/* бумага — в строке очереди словом (владелец 06.11.2026); ЭДО — обычный случай, без пометки */}
+          {req.channel === 'бумага' && <span title="Выставляем на бумаге — печать и скан подписанного" style={{ marginLeft: 'auto', flex: '0 0 auto', fontSize: 12, fontWeight: 700, color: 'var(--warning-fg)' }}>бумага</span>}
+          {!req.channel && <span title="У договора не задан канал выдачи" style={{ marginLeft: 'auto', flex: '0 0 auto', fontSize: 12, fontWeight: 700, color: 'var(--danger-fg)' }}>канал не задан</span>}
+        </span>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
         <Sum v={exp.gross} />
@@ -243,6 +248,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
   const h = workHours(Date.parse(r.since), nowMs, cal), tone = ageTone(h);
   const st = r.status === 'done' ? ['внесено', 'ok'] : r.status === 'returned' ? ['возвращено аккаунту', 'warn'] : ev.ready ? ['готово к внесению', 'ok'] : ['ждёт бухгалтера', 'info'];
   const exp = ev.exp, line = r.lines[0], allCp = lastCopy === r.code + ':all';
+  const paper = r.channel === 'бумага';   // выставляем на бумаге — XML для ЭДО не нужен (06.11.2026)
   const c1done = ['inn', 'ct', 'basis', 'svc', 'net', 'vat', 'gross'].every(k => cstate(k)) || cstate('all');
   const S = ev.sum, sumTone = S.state === 'bad' ? 'bad' : S.state === 'diff' ? 'warn' : S.state === 'match' ? 'ok' : 'need';
   const verdict = (f.fromXml && !S.anyEmpty ? 'Из XML · ' : '') + ({ bad: 'Сумма не распознана — проверьте ввод', empty: 'Введите суммы из УПД в 1С — сверим с ДС', partial: 'Заполните все три суммы',
@@ -261,6 +267,9 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>ИНН {r.buyer.inn} · КПП {r.buyer.kpp}</span>
         <Chip tone={st[1]}>{st[0]}</Chip>
         <Chip tone={r.ds_signed ? 'ok' : 'warn'}>{r.ds_signed ? 'ДС подписан' : 'ДС создан, не подписан'}</Chip>
+        {/* как выставляем (владелец 06.11.2026): признак договора; бумага — печать и сканы, не задан — пакет сам не уйдёт в «выставление» */}
+        {r.channel ? <Chip tone={r.channel === 'бумага' ? 'warn' : 'info'} title="Канал выдачи из договора">выставляем: {r.channel}</Chip>
+          : <Chip tone="bad" title="У договора не задан канал выдачи — заполните в окне «Добавить данные» или в карточке договора">канал выдачи не задан</Chip>}
         {r.status === 'done' && <EdoChip edo={r.edo} />}
         <span style={{ fontFamily: MONO, fontSize: 12, color: r.status === 'wait' ? (tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg) : 'var(--text-muted)' }}>
           {r.status === 'wait' ? `ждёт ${ageLabel(h)} (рабочих) · с ${msk(r.since).dm}` : r.status === 'returned' ? `возвращено ${r.returned ? msk(r.returned.at).dm : ''}` : `внесено ${msk(r.done.at).dm}`}</span>
@@ -328,8 +337,11 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
           </Card>
 
           <Card style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderColor: ev.updOk ? 'var(--income-border)' : 'var(--border-card)' }}>
-            <StepHead n="3" done={ev.updOk} title="УПД" sub={ev.updOk ? `№ ${f.updNo} от ${f.updDate}` : 'XML заполнит номер, дату и суммы'} />
-            <FileRow kind="XML" label="УПД · XML для ЭДО" file={f.updXml} note="приложите — номер, дата и суммы заполнятся из файла" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updXml')} onRemove={() => removeFile('updXml', { updXml: null, xml: null, fromXml: false })} />
+            <StepHead n="3" done={ev.updOk} title="УПД" sub={ev.updOk ? `№ ${f.updNo} от ${f.updDate}` : paper ? 'номер, дата, суммы и PDF для печати' : 'XML заполнит номер, дату и суммы'} />
+            {/* бумага (владелец 06.11.2026, вариант 1): XML для ЭДО не нужен — только PDF УПД; уже приложенный XML остаётся виден */}
+            {paper && !f.updXml
+              ? <div style={{ padding: '9px 12px', borderRadius: 12, border: '1px dashed var(--border-card)', fontSize: 12.5, color: 'var(--text-muted)' }}>Бумага — XML для ЭДО не нужен</div>
+              : <FileRow kind="XML" label="УПД · XML для ЭДО" file={f.updXml} note="приложите — номер, дата и суммы заполнятся из файла" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updXml')} onRemove={() => removeFile('updXml', { updXml: null, xml: null, fromXml: false })} />}
             {ev.xml.on && !readOnly && (() => { const t = ev.xml.err ? TONE.bad : TONE.ok; return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: t.fg }}>{ev.xml.err ? 'XML не совпадает со сделкой — внести нельзя, проверьте УПД или верните аккаунту' : 'XML сверен со сделкой'}</span>
@@ -355,7 +367,12 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
               <span style={{ fontSize: 12.5, fontWeight: 700, color: sumTone === 'need' ? 'var(--text-muted)' : TONE[sumTone].fg }}>{verdict}</span>
               {S.needComment && <Input value={f.comment} onChange={e => setF({ comment: e.target.value })} readOnly={readOnly} placeholder="Почему сумма отличается от ДС — обязательно, увидит аккаунт" style={{ borderColor: f.comment.trim() ? 'var(--border-card)' : 'var(--warning)' }} />}
             </div>
-            <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />
+            {paper ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, borderRadius: 14, background: 'var(--warning-tint)', border: '1px solid var(--warning-border)' }}>
+                <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно — по нему печатают" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />
+                <span style={{ fontSize: 12, color: 'var(--warning-fg)', padding: '0 6px 2px' }}>Бумага: этот PDF распечатают и подпишут у клиента — скан подписанного приложит аккаунт в мастер-сделке</span>
+              </div>)
+              : <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />}
           </Card>
         </div>
 
