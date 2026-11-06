@@ -289,6 +289,7 @@ def plan_rows(db: Session, deal_ids) -> list:
             "date_from": r["date_from"], "date_to": r["date_to"],
             "unit_price": price or None,
             "amount": net,
+            "discount": disc,           # скидка строки МП долей — сверка ловит её поверх «скидки в счёт» по условиям СК
             # Бонус (полная скидка) или строка без цены: в документе деньги — прочерки, в том числе цена за единицу (владелец 14.10.2026).
             "bonus": str(r["model"] or "").strip().lower() == "бонус" or not net,
         })

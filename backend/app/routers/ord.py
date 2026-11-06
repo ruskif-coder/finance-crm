@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.audit import log_action
 from app.database import get_db
+from app.final_recon import closing as CL
 from app.models import Contract, Counterparty, User
 from app import own_company
 from app.ord import importer
@@ -958,6 +959,7 @@ def set_payer(deal_id: int, payload: SetPayer, db: Session = Depends(get_db),
         prev = db.query(Contract).filter(Contract.id == deal.ord_final_contract_id).first()
         if prev is None or prev.counterparty_id != cp.id:
             deal.ord_final_contract_id = None
+    CL.drop_confirmation(db, deal.id)          # другой плательщик — другой договор и СК
     db.commit()
     log_action(db, current_user, "ord_set_payer", "sales_deal", deal.id,
                f"плательщик {cp.name}" + (" (привязан к агентству)" if linked else ""))
@@ -999,6 +1001,7 @@ def create_payer(deal_id: int, payload: NewCounterparty, db: Session = Depends(g
         db.add(SalesAgencyCounterparty(agency_id=deal.agency_id, counterparty_id=cp.id))
     deal.payer_counterparty_id = cp.id
     deal.ord_final_contract_id = None      # у нового юрлица договоров ещё нет
+    CL.drop_confirmation(db, deal.id)          # другой плательщик — другой договор и СК
     db.commit()
     log_action(db, current_user, "ord_create_payer", "counterparty", cp.id,
                f"{name}, ИНН {inn} — заведён со сборки ОРД сделки {deal.code or deal.id}")
@@ -1032,6 +1035,7 @@ def set_final(deal_id: int, payload: SetFinal, db: Session = Depends(get_db),
     deal = _deal_or_404(db, current_user, deal_id)
     if payload.contract_id is None:
         deal.ord_final_contract_id = None
+        CL.drop_confirmation(db, deal.id)      # договор — источник СК: сумма ДС могла смениться
         db.commit()
         log_action(db, current_user, "ord_set_final", "sales_deal", deal.id,
                    "выбор доходного договора снят")
@@ -1046,6 +1050,8 @@ def set_final(deal_id: int, payload: SetFinal, db: Session = Depends(get_db),
     if fr.payer is None or c.counterparty_id != fr.payer.id:
         raise HTTPException(status_code=400,
                             detail="Этот договор принадлежит другому юрлицу, не плательщику сделки")
+    if deal.ord_final_contract_id != c.id:
+        CL.drop_confirmation(db, deal.id)
     deal.ord_final_contract_id = c.id
     db.commit()
     log_action(db, current_user, "ord_set_final", "sales_deal", deal.id,
@@ -1095,6 +1101,7 @@ def create_final(deal_id: int, payload: NewFinalContract, db: Session = Depends(
                  own_company_id=own_company.sole_id(db))
     db.add(c)
     db.flush()
+    CL.drop_confirmation(db, deal.id)          # новый доходный договор — СК и сумма ДС могли смениться
     deal.ord_final_contract_id = c.id
     db.commit()
     log_action(db, current_user, "ord_create_final", "contract", c.id,

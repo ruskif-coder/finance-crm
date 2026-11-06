@@ -309,6 +309,7 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras
     sk_net = _r2(total_net * float(sk["percent"] or 0) / 100.0) if (total_net is not None and sk["mode"] and sk["percent"]) else 0.0
     if sk["mode"] == "скидка в счёт" and total_net is not None:
         total_net = _r2(total_net - sk_net)
+    mp_disc, double = double_sk(base, sk)
     # НДС — по строкам, как в ДС и УПД (владелец 22.10.2026): строки базы под сумму сверки, платные допы, скидка в счёт строкой.
     total_vat = None
     if total_net is not None:
@@ -318,8 +319,36 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras
         total_vat = M.doc_vat(nets, vat)
     return {"mode": mode, "amounts": amounts, "base_ds": base_ds, "paid_extras": paid_extras, "vat": vat, "total_net": total_net,
             "total_vat": total_vat,
-            "sk": {**sk, "amount_net": sk_net,
+            "sk": {**sk, "amount_net": sk_net, "mp_discount": mp_disc, "double": double,
                    "before_net": _r2(total_net + sk_net) if (total_net is not None and sk["mode"] == "скидка в счёт") else total_net}}
+
+
+DOUBLE_SK = ("Скидка вычтется дважды: в строках медиаплана уже скидка {mp} %, а по агентским условиям — «скидка в счёт» {sk} %. "
+             "Уберите скидку из медиаплана (она войдёт в ДС строкой «Скидка СК») или поправьте СК по этой сделке")
+
+
+def double_sk(base: list, sk: dict) -> tuple:
+    """Скидка в строках МП поверх «скидки в счёт» по правилу (прод 06.11.2026: скидка и в МП, и по условиям).
+    Двойной вычет — только когда СК пришла из правила: поправленная по сделке СК — осознанный выбор аккаунта (бывает законная
+    скидка клиенту поверх агентской), её показываем, но не блокируем."""
+    mp = sorted({round(float(r.get("discount") or 0) * 100, 2) for r in base if float(r.get("discount") or 0) > 0})
+    double = bool(mp) and sk.get("mode") == "скидка в счёт" and bool(sk.get("percent")) and sk.get("source") == "rule"
+    return mp, double
+
+
+def _assert_not_double(state: dict) -> None:
+    sk = state["sk"]
+    if sk.get("double"):
+        mp = ", ".join(f"{x:g}" for x in sk["mp_discount"]).replace(".", ",")
+        raise ClosingError(409, DOUBLE_SK.format(mp=mp, sk=f"{float(sk['percent']):g}".replace(".", ",")))
+
+
+def drop_confirmation(db: Session, deal_id: int) -> None:
+    """Сменились договор или плательщик — СК могла смениться, а с ней сумма ДС: подтверждение сверки снимается (06.11.2026:
+    сверку подтвердили без договора, на сумму без СК, договор выбрали следом — и в ДО ушла другая сумма). Отправленную не трогаем."""
+    rec = db.get(FinalReconDeal, deal_id)
+    if rec is not None and not rec.sent_at and rec.confirmed_at:
+        rec.confirmed_at = rec.confirmed_by = None
 
 
 def _lines(base: list, extras: list, pf: dict) -> list:
@@ -512,6 +541,7 @@ def freeze(db: Session, deal, user) -> dict:
     state = compute(db, deal, rec=rec)
     if state["base_ds_net"] is None:
         raise ClosingError(409, "Сумма в ДС не определена: факта ещё нет — выберите «Под МП» или дождитесь статистики")
+    _assert_not_double(state)
     rec.plan_shows = state["plan_shows"]
     rec.fact_shows = state["fact_shows"]
     rec.bonus_shows = state["bonus"]["shows"]
@@ -531,6 +561,8 @@ def confirm(db: Session, deal, on: bool, user) -> dict:
     state = compute(db, deal, rec=rec)
     if on and state["base_ds_net"] is None:
         raise ClosingError(409, "Сверка не посчиталась: факта ещё нет — выберите «Под МП» или дождитесь статистики")
+    if on:
+        _assert_not_double(state)
     rec.confirmed_at = datetime.utcnow() if on else None
     rec.confirmed_by = getattr(user, "id", None) if on else None
     db.flush()

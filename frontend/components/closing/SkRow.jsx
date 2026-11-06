@@ -44,6 +44,16 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
           )}
         </div>
       )}
+      {inBill && sk.mp_discount?.length > 0 && (
+        <span style={{ fontSize: 12.5, fontWeight: 600, padding: '6px 10px', borderRadius: 8,
+          background: sk.double ? 'var(--danger-tint)' : 'var(--warning-tint)', border: `1px solid ${sk.double ? 'var(--danger-border)' : 'var(--warning-border)'}`,
+          color: sk.double ? 'var(--danger-fg)' : 'var(--warning-text)' }}>
+          В строках медиаплана уже скидка {sk.mp_discount.map(x => String(x).replace('.', ',')).join(', ')} %
+          {sk.double
+            ? ' — вместе со «скидкой в счёт» по условиям она вычтется дважды. Уберите скидку из медиаплана (в ДС она встанет строкой «Скидка СК») или поправьте СК по этой сделке. Пока так — сверку не подтвердить.'
+            : ' и СК поправлена по сделке: проверьте, что скидка не вычитается дважды.'}
+        </span>
+      )}
       {post && <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Счёт на полную сумму; СК {legal} выплачивается агентству отдельно — сумму ДС не меняет.{own ? ' Поправлено по сделке.' : ''}</span>}
       {!sk.mode && (
         <span style={{ fontSize: 12.5, color: 'var(--warning-text)' }}>
