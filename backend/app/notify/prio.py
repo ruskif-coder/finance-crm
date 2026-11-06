@@ -70,17 +70,17 @@ def _outward(db: Session, kind: str, deal, p, title: str, body: str, facts=()) -
     pub = db.get(SalesPublisher, p.publisher_id)
     if pub is None:
         return {"status": "skip"}
-    # Savepoint, а не `db.rollback()`: откат уносил внутренние уведомления по уже обработанным площадкам (аудит 21.10.2026).
-    try:
-        with db.begin_nested():
-            brand, period = _deal_brand_name(db, deal), deal_period_text(deal)
-            return notify_publisher(db, kind, pub.id, title=title, body=body, facts=list(facts),
-                                    context=" · ".join(x for x in ((pub.domain or pub.name), brand, period) if x),
-                                    link="/", entity_type="prio_placement", entity_id=p.id,
-                                    values={"бренд": brand, "период": period})
-    except Exception as e:  # noqa: BLE001
-        log.warning("Площадке %s не ушло «%s»: %s", pub.id, kind, e)
-        return {"status": "error", "why": str(e)[:200]}
+    # Savepoint (аудит 21.10.2026: откат уносил внутренние уведомления по уже обработанным площадкам) — но без `with`
+    # (06.11.2026, `safe.outward`): с ним коммит отправителя ронял всё после ленты, письмо и бот не уходили с 02.11.
+    from app.notify.safe import outward
+
+    def send():
+        brand, period = _deal_brand_name(db, deal), deal_period_text(deal)
+        return notify_publisher(db, kind, pub.id, title=title, body=body, facts=list(facts),
+                                context=" · ".join(x for x in ((pub.domain or pub.name), brand, period) if x),
+                                link="/", entity_type="prio_placement", entity_id=p.id,
+                                values={"бренд": brand, "период": period})
+    return outward(db, f"{kind} · площадка {pub.id}", send)
 
 
 def request_to_site(db: Session, deal, p, why: str) -> dict:

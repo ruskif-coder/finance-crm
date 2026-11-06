@@ -20,7 +20,7 @@ from app.publisher_recon.service import _num   # тот же формат чис
 log = logging.getLogger("finance.publisher_recon")
 
 KIND = "сверка"
-WHY = ("новая", "напоминание", "ответ", "итог")
+WHY = ("новая", "напоминание", "ответ", "итог", "отозвана")
 
 
 def message(why: str, month: str, ours: Optional[int], theirs: Optional[int], due: Optional[date],
@@ -39,9 +39,14 @@ def message(why: str, month: str, ours: Optional[int], theirs: Optional[int], du
                   f"Мы ответили в переписке по сверке. Посмотрите и ответьте{until}."),
         "итог": (f"Сверка за {month} закрыта",
                  "Итог согласован. Действий не требуется."),
+        # Отзыв «на корявые пальцы» (владелец 06.11.2026): сверка стёрта, придёт исправленная.
+        "отозвана": (f"Сверка за {month} отозвана",
+                     "Мы отозвали эту сверку, чтобы поправить данные. Отвечать на неё не нужно — исправленная придёт отдельно."),
     }[why]
     facts = []
-    if why == "итог":
+    if why == "отозвана":
+        pass
+    elif why == "итог":
         facts.append(("итог показов", _num(agreed or 0)))
     else:
         if ours is not None:
@@ -65,12 +70,9 @@ def to_site(db: Session, req, why: str, offer: Optional[int] = None) -> dict:
     month = periods.month_label(req.period)
     title, body, facts = message(why, month, rc.our_volume if rc else None, rc.their_volume if rc else None,
                                  req.due_at, offer=offer, agreed=rc.agreed_volume if rc else None)
-    try:
-        with db.begin_nested():
-            return notify_publisher(db, KIND, pub.id, title=title, body=body, facts=facts,
-                                    context=" · ".join(x for x in ((pub.domain or pub.name), month) if x),
-                                    link="/", entity_type="publisher_request", entity_id=req.id,
-                                    values={"период": month})
-    except Exception as e:  # noqa: BLE001
-        log.warning("Площадке %s не ушло «сверка» (%s): %s", pub.id, why, e)
-        return {"status": "error", "why": str(e)[:200]}
+    # Savepoint без `with` (06.11.2026, `safe.outward`): с `with db.begin_nested()` коммит отправителя ронял всё после ленты.
+    from app.notify.safe import outward
+    return outward(db, f"{KIND} · {why} · площадка {pub.id}", lambda: notify_publisher(
+        db, KIND, pub.id, title=title, body=body, facts=facts,
+        context=" · ".join(x for x in ((pub.domain or pub.name), month) if x),
+        link="/", entity_type="publisher_request", entity_id=req.id, values={"период": month}))

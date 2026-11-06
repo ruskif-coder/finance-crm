@@ -28,3 +28,26 @@ def quiet(db, what: str):
                 yield
     except Exception:  # noqa: BLE001
         log.exception("уведомление не ушло: %s", what)
+
+
+def outward(db, what: str, send):
+    """Уведомление площадке (`notify_publisher`) в savepoint БЕЗ контекст-менеджера.
+
+    `notify_publisher` фиксирует базу сам (лента кабинета — первой). Внутри `with db.begin_nested()` такой `commit` закрывал
+    savepoint, и следующая же команда падала «Can't operate on closed transaction inside context manager» — с 02.11.2026 сверка и
+    приоритезация доходили до площадки только строкой ленты, без письма и бота (06.11.2026). Ручной savepoint после `commit`
+    просто неактивен, работа идёт дальше. Сбой ДО коммита откатывает только savepoint — записи вызывающего целы (аудит 21.10.2026);
+    сбой после — только то, что после коммита."""
+    sp = db.begin_nested()
+    try:
+        out = send()
+    except Exception as e:  # noqa: BLE001
+        if sp.is_active:
+            sp.rollback()
+        else:
+            db.rollback()
+        log.warning("Площадке не ушло «%s»: %s", what, e)
+        return {"status": "error", "why": str(e)[:200]}
+    if sp.is_active:
+        sp.commit()
+    return out
