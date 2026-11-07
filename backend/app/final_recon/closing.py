@@ -306,7 +306,9 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras
     vat = vat_pct_of(deal, mp_amounts_by_deal(db, [deal.id]))
     total_net = _r2((base_ds or 0) + paid_extras) if base_ds is not None else None
     sk = SK.of_deal(db, deal)
-    sk_net = _r2(total_net * float(sk["percent"] or 0) / 100.0) if (total_net is not None and sk["mode"] and sk["percent"]) else 0.0
+    # База СК — базовая услуга, без платных допов (владелец 07.11.2026: «доп услуги не облагаются СК и тем более к ним
+    # не применяется скидка в счёт»). Допы идут в ДС полной суммой.
+    sk_net = _r2(base_ds * float(sk["percent"] or 0) / 100.0) if (base_ds is not None and sk["mode"] and sk["percent"]) else 0.0
     if sk["mode"] == "скидка в счёт" and total_net is not None:
         total_net = _r2(total_net - sk_net)
     mp_disc, double = double_sk(base, sk)

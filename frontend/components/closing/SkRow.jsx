@@ -30,7 +30,7 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
       {inBill && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            уменьшает сумму ДС{sk.amount_net ? `: −${rub2(sk.amount_net)}` : ''} · по условиям {legal}{own ? ' · поправлено по сделке' : ''}</span>
+            уменьшает сумму ДС{sk.amount_net ? `: −${rub2(sk.amount_net)}` : ''} · с базовой услуги, доп. услуги без СК · по условиям {legal}{own ? ' · поправлено по сделке' : ''}</span>
           {canEdit && (
             <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
               <span style={CAP}>по этой сделке</span>
@@ -55,7 +55,7 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
               : ` — скидка клиенту, СК ${String(sk.percent ?? 0).replace('.', ',')} % вычитается отдельно. Проверьте, что это не одна и та же скидка.`}
         </span>
       )}
-      {post && <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Счёт на полную сумму; СК {legal} выплачивается агентству отдельно — сумму ДС не меняет.{own ? ' Поправлено по сделке.' : ''}</span>}
+      {post && <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Счёт на полную сумму; СК {legal} с базовой услуги (доп. услуги без СК) выплачивается агентству отдельно — сумму ДС не меняет.{own ? ' Поправлено по сделке.' : ''}</span>}
       {!sk.mode && (
         <span style={{ fontSize: 12.5, color: 'var(--warning-text)' }}>
           Условие СК не задано: правило по договору закрытия и агентству сделки — в «Агентских условиях»{sk.payer_id ? '' : ' (сначала выберите доходный договор)'}.

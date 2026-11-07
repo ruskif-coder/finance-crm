@@ -31,6 +31,35 @@ from app.sales import mp_row
 from app.sales.models import SalesMediaPlan, SalesMediaPlanRow
 
 
+def _latest_plans(db: Session, deal_ids: Iterable[int]) -> list:
+    """Старшая версия каждой группы МП сделок, только посчитанные (со строками размещения) — выбор один на сумму сделки и её допы.
+
+    Строки — одним запросом на всю страницу, а не по плану: реестр зовёт это на каждую сотню сделок, и N+1 здесь стоил бы
+    сотни запросов на открытие экрана. Болванка без размещений не учитывается: заведённый и брошенный МП не обнуляет сделку."""
+    ids = [i for i in deal_ids if i is not None]
+    if not ids:
+        return []
+    plans = (db.query(SalesMediaPlan)
+             .filter(SalesMediaPlan.deal_id.in_(ids))
+             .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all())
+    if not plans:
+        return []
+    has_rows = {pid for pid, _n in
+                db.query(SalesMediaPlanRow.plan_id, func.count(SalesMediaPlanRow.id))
+                .filter(SalesMediaPlanRow.plan_id.in_([p.id for p in plans]))
+                .group_by(SalesMediaPlanRow.plan_id).all()}
+    seen: Dict[int, set] = {}
+    out = []
+    for p in plans:
+        groups = seen.setdefault(p.deal_id, set())
+        if p.group_id in groups:
+            continue                       # уже взяли старшую версию этой группы
+        groups.add(p.group_id)
+        if p.id in has_rows:
+            out.append(p)
+    return out
+
+
 def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
                        ) -> Dict[int, Tuple[float, float]]:
     """{deal_id: (net, gross)} по ПОСЛЕДНИМ версиям МП, свёрнутым по группам.
@@ -45,29 +74,8 @@ def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
     В словаре только те сделки, у которых есть хотя бы один посчитанный МП. Остальные
     отсутствуют — потребитель берёт `deal.amount`.
     """
-    ids = [i for i in deal_ids if i is not None]
-    if not ids:
-        return {}
-    plans = (db.query(SalesMediaPlan)
-             .filter(SalesMediaPlan.deal_id.in_(ids))
-             .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all())
-    if not plans:
-        return {}
-    # Строки — одним запросом на всю страницу, а не по плану: реестр зовёт это на каждую
-    # сотню сделок, и N+1 здесь стоил бы сотни запросов на открытие экрана.
-    has_rows = {pid for pid, _n in
-                db.query(SalesMediaPlanRow.plan_id, func.count(SalesMediaPlanRow.id))
-                .filter(SalesMediaPlanRow.plan_id.in_([p.id for p in plans]))
-                .group_by(SalesMediaPlanRow.plan_id).all()}
-    seen: Dict[int, set] = {}
     acc: Dict[int, list] = {}
-    for p in plans:
-        groups = seen.setdefault(p.deal_id, set())
-        if p.group_id in groups:
-            continue                       # уже взяли старшую версию этой группы
-        groups.add(p.group_id)
-        if p.id not in has_rows:           # болванка без размещений — план не заводили
-            continue                       # не трогаем сумму: не обнуляем сделку пустым МП
+    for p in _latest_plans(db, deal_ids):
         a = acc.setdefault(p.deal_id, [0.0, 0.0])
         a[0] += float(p.amount_net or 0)
         a[1] += float(p.amount_gross or 0)
@@ -131,3 +139,22 @@ def gross_of(deal, mp: Dict[int, Tuple[float, float]]) -> Optional[float]:
         return None
     d = deal.period_from or (deal.date_create.date() if deal.date_create else None)
     return round(float(deal.amount) * (1 + vat_rules.on(d) / 100.0), 2)
+
+
+def extras_net_by_deal(db: Session, deal_ids: Iterable[int]) -> Dict[int, float]:
+    """{deal_id: сумма доп. услуг без НДС} по тем же МП, что и сумма сделки (`_latest_plans`). Нет допов — сделки нет в словаре."""
+    from app.sales.models import SalesMediaPlanExtra
+    plans = {p.id: p.deal_id for p in _latest_plans(db, deal_ids)}
+    if not plans:
+        return {}
+    acc: Dict[int, float] = {}
+    for pid, total in (db.query(SalesMediaPlanExtra.plan_id, SalesMediaPlanExtra.total)
+                       .filter(SalesMediaPlanExtra.plan_id.in_(list(plans)))):
+        acc[plans[pid]] = acc.get(plans[pid], 0.0) + float(total or 0)
+    return {d: mp_row.rub(v) for d, v in acc.items() if v}
+
+
+def our_net(amount, pct, extras) -> float:
+    """«Наша сумма» сделки: СК только с базовой услуги, доп. услуги наши целиком (владелец 07.11.2026)."""
+    amount, extras = float(amount or 0), float(extras or 0)
+    return amount - max(amount - extras, 0.0) * float(pct or 0) / 100.0

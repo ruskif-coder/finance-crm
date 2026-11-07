@@ -568,9 +568,12 @@ def dashboard_bonus(
     # СК — «Агентские условия» тем же правилом, что закрытие (27.10.2026); где правила нет — прежние 30 % агентства оценкой.
     from app.final_recon.sk import sales_percent_many
     sk_pct = sales_percent_many(db, deals)
+    from app.sales.mp_amounts import extras_net_by_deal, our_net
+    extras = extras_net_by_deal(db, [d.id for d in deals])
 
     def net_of(amount, deal):
-        return float(amount or 0) * (1 - (sk_pct.get(deal.id) or 0) / 100)
+        # СК — без доп. услуг (владелец 07.11.2026), как в сверке и ДС
+        return our_net(amount, sk_pct.get(deal.id), extras.get(deal.id))
 
     sandbox_cnt = 0
     sandbox_sum = booking_sum = closed_sum = 0.0
@@ -792,6 +795,8 @@ def deals_registry(
     # СК — «Агентские условия» (как в сводке, 27.10.2026) — для «нашей суммы» в карточке сделки.
     from app.final_recon.sk import sales_percent_many
     sk_pct_of = sales_percent_many(db, [r[0] for r in rows])
+    from app.sales.mp_amounts import extras_net_by_deal, our_net
+    extras_of = extras_net_by_deal(db, [r[0].id for r in rows])
 
     # Полная подпись «краткое | ENG | Рус» для тултипа в реестре (наведение на
     # агентство/рекламодателя, где показано только краткое имя).
@@ -963,7 +968,7 @@ def deals_registry(
             # досчитывала «с НДС» сама по зашитым 22 % (ревью 23.09.2026).
             "amount_with_vat": gross_of(d, mp_amt),
             "vat_rate": vat_pct_of(d, mp_amt),
-            "our_sum": round(eff_net(d, mp_amt) * (1 - (sk_pct_of.get(d.id) or 0) / 100)),
+            "our_sum": round(our_net(eff_net(d, mp_amt), sk_pct_of.get(d.id), extras_of.get(d.id))),
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
             "advertiser_full": adv_full.get(d.advertiser_id),
@@ -2524,6 +2529,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
     # СК — «Агентские условия» (27.10.2026); прямая сделка без правила — 0, вся сумма наша.
     from app.final_recon.sk import sales_percent_many
     sk_pct = sales_percent_many(db, [deal]).get(deal.id, 0)
+    from app.sales.mp_amounts import extras_net_by_deal, our_net
     files = [{"kind": f.kind, "filename": f.filename, "size": f.size} for f in
              db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal.id).all()]
     creatives_ready = creatives_ready_by_deal(db, [deal.id]).get(deal.id, 0)
@@ -2606,7 +2612,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # Ставка, по которой ПОСЧИТАНА сделка, — карточка показывает суммы с НДС по ней,
         # а не по текущей ставке юрлица (правило 23.09.2026, mp_amounts.vat_pct_of).
         "vat_rate": vat_pct_of(deal, _mp_amt),
-        "our_sum": round(eff_net(deal, _mp_amt) * (1 - (sk_pct or 0) / 100)),
+        "our_sum": round(our_net(eff_net(deal, _mp_amt), sk_pct, extras_net_by_deal(db, [deal.id]).get(deal.id))),
         "currency": deal.currency, "files": files, "creatives_ready": creatives_ready,
         "date_create": deal.date_create,
         "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,

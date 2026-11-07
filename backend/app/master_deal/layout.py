@@ -61,7 +61,7 @@ def lines(db: Session, m: MasterDeal) -> list:
         for i, r in enumerate(base):
             out.append({**common, "service": service_label(svc, r.get("device")), "id": f"b:{d.id}:{i}", "kind": "base",
                         "position": " · ".join(x for x in (r.get("position"), r.get("device")) if x),
-                        "model": r.get("model"), "volume": round((r.get("volume") or 0) * kv) or None,
+                        "model": r.get("model"), "volume": row_volume(r, nets[i], kv),
                         "unit_price": r.get("unit_price"), "net": nets[i], "src": r})
         for i, r in enumerate(x for x in rows if x.get("kind") == "extra"):
             bonus = bool(r.get("bonus"))
@@ -78,12 +78,13 @@ def _discounts(rows: list) -> list:
     for deal_id in dict.fromkeys(r["deal_id"] for r in rows):
         mine = [r for r in rows if r["deal_id"] == deal_id]
         pct = mine[0].get("sk_pct") or 0
-        base = sum(r["net"] for r in mine)
+        # Только базовая услуга: допы СК не облагаются (владелец 07.11.2026) — в ДС одних допов строки скидки нет.
+        own = [r for r in mine if r["kind"] == "base"]
+        base = sum(r["net"] for r in own)
         if pct <= 0 or base <= 0:
             continue
-        r0 = next((r for r in mine if r["kind"] == "base"), mine[0])
-        # в ДС допов услуга не делит — скидка там относится только к бренду, как сами допы
-        svc = r0["service"] if r0["kind"] == "base" else None
+        r0 = own[0]
+        svc = r0["service"]
         out.append({**{k: r0[k] for k in ("deal_id", "deal", "brand", "sk_pct")}, "service": svc,
                     "id": f"sk:{deal_id}:{len(out)}", "kind": "discount", "position": f"Скидка СК {pct:g} %",
                     "model": "Скидка в счёт", "volume": None, "unit_price": None, "net": -_r2(base * pct / 100.0)})
@@ -171,3 +172,15 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     total = _r2(sum(ds["net"] for ds in ds_list))
     return {"vat_rate": vat, "ds": ds_list, "total_net": total, "total_gross": _r2(sum(ds["gross"] for ds in ds_list)),
             "upd_count": upd_no, "lines": len(ls), "has_paid_extras": bool(paid_extras), "settings": st}
+
+
+def row_volume(r: dict, net: float, kv: float):
+    """Объём строки ДС в единицах закупки её модели (07.11.2026). CPM — показы: объём МП × коэффициент сверки (показы сверки ÷
+    объём МП). Остальные (CPC — клики, Фикс/Пакет — штуки) — сумма строки ÷ цена за единицу: коэффициент там в показах и
+    превращал 2 567 кликов в 548 082 «клика». Цены нет — объём МП как есть."""
+    from app.sales import mp_row
+    vol = r.get("volume") or 0
+    if mp_row.is_cpm(r.get("model")):
+        return round(vol * kv) or None
+    price = float(r.get("unit_price") or 0)
+    return (round(float(net or 0) / price) if price else round(vol)) or None

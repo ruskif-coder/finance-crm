@@ -83,7 +83,8 @@ def _live_row(db: Session, r: dict, rules: list) -> dict:
     from app.sales.models import SalesDeal
     deal = db.get(SalesDeal, r["id"])
     out = CL.compute(db, deal)
-    base = _r2((out["base_ds_net"] or 0) + (out["paid_extras_net"] or 0)) if out["base_ds_net"] is not None else None
+    # База СК — базовая услуга без платных допов (владелец 07.11.2026: допы СК не облагаются) — та же, что в сверке.
+    base = _r2(out["base_ds_net"]) if out["base_ds_net"] is not None else None
     sk = out["sk"]
     on = R.close_date(r["period"])
     partners = []
