@@ -54,8 +54,13 @@ def test_fact_is_counted_per_placement_not_per_campaign():
             "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar()
     finally:
         db.close()
-    assert 's.placement_id = pl.id' in sql.replace('\n', ' '), (
-        'факт берётся без привязки к размещению — площадка увидит чужие показы')
+    flat = " ".join(sql.split())
+    # С 07.11.2026 факт считается набором (миграция 2026-11-07_publisher_placement_v_fast): суммы за день — по размещению,
+    # и к строке витрины они пристёгиваются по размещению. Прежняя форма — коррелированный `s.placement_id = pl.id`.
+    per_placement = ('s.placement_id = pl.id' in flat
+                     or ('GROUP BY s.campaign_id, s.placement_id, s.date' in flat
+                         and 'st.campaign_id = c.id AND st.placement_id = pl.id' in flat))
+    assert per_placement, 'факт берётся без привязки к размещению — площадка увидит чужие показы'
 
 
 def test_the_view_gives_dates_not_a_ready_period():
