@@ -14,6 +14,7 @@ import { can, getPermissions } from '@/lib/auth'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fmtDate, fmtDateTimeShort } from '@/lib/dates'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 import { monthLabel, pctComma, rub0 } from '@/lib/salesFormat'
 import { plural } from '@/components/master/kit'
 import { MasterStatusPill, TODO_DOT } from '@/lib/masterStatus'
@@ -191,13 +192,16 @@ export default function MasterDealsRegistry() {
                       onExpand={() => setExpanded(r.code)} />
                     <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{monthLabel(r.period)}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        № {r.contract?.number || '—'}{r.contract?.date ? ` от ${fmtDate(r.contract.date)}` : ''}</span>
+                      {/* Три строки — номер, дата, контрагент (владелец 07.11.2026: дата договора обрезалась многоточием) */}
+                      <span title={r.contract?.number || ''} style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        № {r.contract?.number || '—'}</span>
+                      {!!r.contract?.date && (
+                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>от {fmtDate(r.contract.date)}</span>)}
                       <span title={r.payer ? `Контрагент: ${r.counterparty || '—'}\nПлательщик: ${r.payer}` : (r.counterparty || '')}
                         style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party}</span>
                     </span>
                     <span title={r.ds.join(', ')} style={{ fontFamily: MONO, fontSize: 11.5, color: r.ds.length ? 'var(--text-primary)' : 'var(--text-disabled)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {r.ds.length ? r.ds.join(', ') : '—'}</span>
+                      {r.ds.length ? r.ds.map(shortAnnexNumber).join(', ') : '—'}</span>
                     <Chips list={r.advertisers} keep={2} max={120} />
                     <Chips list={r.brands} keep={3} max={96} />
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>

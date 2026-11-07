@@ -4,6 +4,7 @@
  * Данные-справочники в CATALOG / EXTRA_CATALOG / STAFF — заменить на API.
  */
 import MonthInput from '@/components/MonthInput'
+import { MODE_FIX, MODES, MODE_PCT, PCT_DEFAULT, pctOf, pctMode, totalFor } from '@/lib/mpExtraMode.mjs';
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI, Z } from '../salesTableKit';
@@ -13,6 +14,8 @@ import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
 import { isCpc, isCpm, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import { fmtDateOfMoment } from '@/lib/dates'
+// Свой процент — любая «Скидка N %», кроме готового пункта «Скидка 50 %» (тот остаётся отдельным выбором).
+const ownPct = (mode) => pctOf(mode) != null && mode !== 'Скидка 50 %';
 
 /* ── токены ─────────────────────────────────────────────────────────────
    Значения берём из нашей дизайн-системы (globals.css), НЕ вводим третью
@@ -62,15 +65,11 @@ export const EXTRA_CATALOG = [
 ];
 // «Фикс, ₽» (владелец 30.09.2026): итог доп. услуги — произвольная сумма в рублях, а не доля
 // прайса. Скидка в Excel и ДС считается из пары «цена — итог», режим — только подпись.
-export const MODE_FIX = 'Фикс, ₽';
-export const MODES = ['Полная цена', 'Скидка 50 %', 'Бонус', MODE_FIX];
-const MODE_RATE = { 'Полная цена': 1, 'Скидка 50 %': 0.5, 'Бонус': 0 };
+// «Задать %» (владелец 07.11.2026) — свой процент скидки на доп; правила режимов — `lib/mpExtraMode.mjs`.
+export { MODE_FIX, MODES };
 // Годовой план хранит режим кодом (full/half/bonus/fix) и передаёт его в конструктор как есть.
 const MODE_OF_CODE = { full: 'Полная цена', half: 'Скидка 50 %', bonus: 'Бонус', fix: MODE_FIX };
 const modeLabel = m => MODE_OF_CODE[m] || m || 'Полная цена';
-// Итог по режиму; у фикса и у неизвестного режима итог не пересчитывается.
-const totalFor = (mode, price, prevTotal) =>
-  MODE_RATE[mode] == null ? (prevTotal || 0) : Math.round((price || 0) * MODE_RATE[mode]);
 const TG_GROUPS = [['audience', 'Аудитория'], ['buys', 'Покупают'], ['interests', 'Интересы'], ['behavior', 'Поведение'], ['competitors', 'Конкуренты']];
 // Ответственные приходят из справочника «Сотрудники» (рабочие группы seller/account).
 // Каждый элемент — { id, name, is_master }. Демо-значения ниже — фолбэк без API.
@@ -1124,11 +1123,24 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         <span data-pop-root style={{ position: 'relative', minWidth: 0 }}>
                           <span onClick={() => toggle('extras', e.id, 'mode')} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 32, boxSizing: 'border-box', padding: '0 8px', borderRadius: 9, background: modeBg, color: modeFg, fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>{e.mode}</span>
                           <Popover open={isOpen('extras', e.id, 'mode')} minWidth={150}>
-                            {modes.map(m => <Option key={m} active={m === e.mode} label={m} onPick={() => { extras.patch(e.id, { mode: m, total: totalFor(m, e.price, e.total) }); setSel(null); }} />)}
+                            {modes.map(m => {
+                              const own = ownPct(e.mode);
+                              const next = m === MODE_PCT ? (own ? e.mode : pctMode(PCT_DEFAULT)) : m;
+                              return <Option key={m} active={m === MODE_PCT ? own : m === e.mode} label={m}
+                                onPick={() => { extras.patch(e.id, { mode: next, total: totalFor(next, e.price, e.total) }); setSel(null); }} />;
+                            })}
                           </Popover>
                         </span>
 
-                        <span />
+                        {ownPct(e.mode)
+                          ? <NumInput value={pctOf(e.mode)} placeholder="%" align="center"
+                              onChange={v => {
+                                const p = Number(String(v).replace(/\s/g, '').replace(',', '.'));
+                                if (!(p > 0 && p < 100)) return;
+                                const mode = pctMode(Math.round(p * 100) / 100);
+                                extras.patch(e.id, { mode, total: totalFor(mode, e.price, e.total) });
+                              }} />
+                          : <span />}
                         <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4, textAlign: 'right', whiteSpace: 'nowrap', textDecoration: e.total < e.price ? 'line-through' : 'none' }}>{dec(e.price)}</span>
                         {e.mode === MODE_FIX
                           ? <NumInput value={e.total} format={dec} placeholder="₽"
