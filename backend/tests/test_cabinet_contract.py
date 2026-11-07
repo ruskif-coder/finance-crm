@@ -497,15 +497,28 @@ def test_publisher_letter_has_no_internal_identifiers():
     имя заполнено. Но она сработала бы ровно там, где имени нет, — и площадка получила бы
     «7E2JWE» вместо названия размещения.
     """
-    import io
-    from pathlib import Path
+    # С 06.11.2026 отдельного письма-запроса нет: запрос посадочной — приписка к «новому креативу» (`traffic._tell_publisher`).
+    # Проверка — живым вызовом: сделка без имени, с кодом и id; ни то ни другое не должно попасть ни в одно поле уведомления.
+    from types import SimpleNamespace
 
-    src = io.open(Path(__file__).resolve().parents[1] / "app" / "routers" /
-                  "launch_prep.py", encoding="utf-8").read()
-    i = src.index('"сделка":')
-    line = src[i:src.index("\n", i)]
-    assert "deal.code" not in line and "deal.id" not in line, (
-        f"в письмо площадке подставляется наш идентификатор: {line.strip()}")
+    from app.notify import outward
+    from app.routers import launch_prep as LP
+    from app.routers import traffic as TR
+
+    got = {}
+    mp = __import__("pytest").MonkeyPatch()
+    try:
+        mp.setattr(outward, "notify_publisher", lambda db, kind, pid, **kw: got.update(kind=kind, **kw))
+        mp.setattr(LP, "_deal_brand_name", lambda db, deal: "Бренд")
+        mp.setattr(LP, "deal_period_text", lambda deal: "11.2026")
+        mp.setattr(TR, "url_ask", lambda db, set_id, target: "пришлите карточку товара")
+        TR._tell_publisher(None, SimpleNamespace(id=5), SimpleNamespace(id=3, no=2), SimpleNamespace(id=4, surface_kind="web"),
+                           SimpleNamespace(id=9, domain="site.ru", name="Сайт"),
+                           SimpleNamespace(id=77123, code="7E2JWE", title=None, product="Услуга"))
+    finally:
+        mp.undo()
+    text = repr({k: v for k, v in got.items() if k not in ("entity_id", "entity_type")})
+    assert got and "7E2JWE" not in text and "77123" not in text, f"в уведомление площадке попал наш идентификатор: {text}"
 
 
 def test_period_text_does_not_touch_a_field_that_does_not_exist():

@@ -75,10 +75,31 @@ def number_text(kind: Optional[str], no_text) -> str:
     return f"{forms(kind)['nom']} № {no_text}"
 
 
+# Подстановки слова документа по падежам. Слово в шаблоне — подстановка (по умолчанию); где её убрали и вписали слово руками,
+# текст печатается как написан (владелец 07.11.2026: «если переменную убрали и прописали — дальше шаблон так и едет»).
+TAGS = {"вид_документа": "nom", "вид_документа_род": "gen", "вид_документа_дат": "dat",
+        "вид_документа_твор": "ins", "вид_документа_пред": "prep"}
+
+
 def values(kind: Optional[str]) -> dict:
     """Подстановки вида документа для сборки текста пунктов."""
     f = forms(kind)
-    return {"вид_документа": f["nom"], "вид_документа_род": f["gen"], "вид_документа_дат": f["dat"]}
+    return {tag: f[case] for tag, case in TAGS.items()}
+
+
+def refill(parts: Optional[list], kind: Optional[str]) -> list:
+    """Куски собранного текста: подстановки слова документа — заново по виду (в своём падеже), остальное как есть.
+    Нужно замороженным моделям: подстановка там уже подставлена тем словом, что было при выпуске."""
+    f = forms(kind)
+    return [{**p, "t": f[TAGS[p["key"]]]} if p.get("key") in TAGS else p for p in parts or []]
+
+
+def text_of(entry: Optional[dict], kind: Optional[str]) -> str:
+    """Текст блока: из кусков, если они есть (подстановки слова — по виду), иначе — текст как записан."""
+    entry = entry or {}
+    if entry.get("parts"):
+        return "".join(p.get("t") or "" for p in refill(entry["parts"], kind))
+    return entry.get("text") or ""
 
 
 # ── «Синхронизировать» (владелец 31.10.2026): одно слово на весь документ ────────

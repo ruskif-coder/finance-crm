@@ -211,22 +211,18 @@ def template_labels(db: Session, version_ids) -> dict:
 
 
 def rebrand_model(model: dict, kind) -> dict:
-    """Замороженная модель для ЭКРАНА — со словом документа в полной форме, как в файле (владелец 02.11.2026). Подписанные до
-    этого дня модели хранят «Доп. соглашение» и «Соглашение»; подставленные значения (название бренда и т. п.) не трогаются.
+    """Замороженная модель для ЭКРАНА — как в файле: подстановки слова документа заново по виду (подписанные до 02.11.2026
+    модели хранят в них «Доп. соглашение»), текст, вписанный в шаблон руками, — как написан (владелец 07.11.2026).
     Возвращает копию: модель в базе остаётся, какой её заморозили."""
-    def part(g):
-        return g if g.get("key") else {**g, "t": DK.rebrand(g.get("t"), kind)}
-
     def block(b):
-        if b.get("sys"):
+        if b.get("sys") or not b.get("parts"):
             return b
-        return {**b, "text": DK.rebrand(b.get("text"), kind), **({"parts": [part(g) for g in b["parts"]]} if b.get("parts") else {})}
+        return {**b, "text": DK.text_of(b, kind), "parts": DK.refill(b["parts"], kind)}
 
     out = {**model, "number": DK.renumber(model.get("number"), kind), "blocks": [block(b) for b in model.get("blocks") or []]}
     cb = model.get("closing_basis")
-    if isinstance(cb, dict):
-        out["closing_basis"] = {**cb, "text": DK.rebrand(cb.get("text"), kind),
-                                **({"parts": [part(g) for g in cb["parts"]]} if cb.get("parts") else {})}
+    if isinstance(cb, dict) and cb.get("parts"):
+        out["closing_basis"] = {**cb, "text": DK.text_of(cb, kind), "parts": DK.refill(cb["parts"], kind)}
     return out
 
 
@@ -234,8 +230,8 @@ def preamble_of(model: dict, kind) -> Optional[str]:
     """Текст преамбулы из шаблона (02.11.2026) — словом документа в полной форме; None — шаблон её не задал, печатается
     прежняя формула."""
     pre = next((b for b in model.get("blocks") or [] if b.get("sys") == "pre"), None)
-    text = (pre or {}).get("text")
-    return DK.rebrand(text.strip(), kind) if text and text.strip() else None
+    text = DK.text_of(pre, kind) if pre else ""
+    return text.strip() or None
 
 
 # Пункт шаблона, который сам служит заголовком подписей: «Подписи Сторон:», «Реквизиты:», «Реквизиты и подписи Сторон».
@@ -246,8 +242,8 @@ def clauses_of(model: dict, kind) -> list:
     """Блоки конструктора — файлу, по порядку (владелец 02.11.2026: файл печатает ровно то, что собрано в конструкторе).
 
     Системные блоки (шапка, место и дата, преамбула, таблица, подписи) рисует генератор файла — у них нет текста; текстовые
-    идут с номером и текстом шаблона. Слово документа приводится к виду и здесь: замороженные до 02.11.2026 тексты хранят
-    «Доп. соглашение» и «Соглашение», а печататься они обязаны полной формой."""
+    идут с номером и текстом шаблона. Подстановки слова документа — по виду (замороженные до 02.11.2026 хранят в них
+    «Доп. соглашение»), вписанное в шаблон руками — как написано (владелец 07.11.2026)."""
     out = []
     for b in model.get("blocks") or []:
         if b.get("sys") == "sign":
@@ -259,7 +255,7 @@ def clauses_of(model: dict, kind) -> list:
             out.append({"sys": "table" if b["sys"] == "table" else b["sys"]})
         else:
             out.append({"num": b.get("num") or "", "sub": bool(b.get("sub")),
-                        "text": DK.rebrand((b.get("text") or "").strip(), kind)})
+                        "text": DK.text_of(b, kind).strip()})
     return out
 
 
@@ -278,7 +274,8 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     texts = [b.get("text") for b in model.get("blocks", []) if not b.get("sys")]
     doc["body"] = texts[0] if texts else ""
     # Основание для закрывающих документов — в тот же словарь: файл «для клиента» печатает его после ДС (одним документом на согласование).
-    doc["closing_basis"] = ((model.get("closing_basis") or {}).get("text")) or ""
+    doc["closing_basis"] = DK.text_of(model.get("closing_basis"),
+                                      DK.resolve(fixed_kind(annex, contract, model.get("kind")), None, is_master=bool(getattr(annex, "master_deal_id", None))))
     # Вид документа — генератору файла: DOCX называет документ тем же словом, что конструктор
     # («синхронизировать», 31.10.2026). До развилки на мастер-сделку — получают обе ветки.
     doc["kind"] = fixed_kind(annex, contract, model.get("kind"))
@@ -294,8 +291,7 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     # Заголовок и «место и дата», если их правили (05.11.2026); иначе файл рисует их как раньше.
     for key, field in (("head", "head_text"), ("place", "place_text")):
         b = model.get(key) or {}
-        doc[field] = DK.rebrand(b["text"].strip(), kind) if b.get("custom") and (b.get("text") or "").strip() else None
-    doc["closing_basis"] = DK.rebrand(doc.get("closing_basis") or "", kind)
+        doc[field] = DK.text_of(b, kind).strip() if b.get("custom") and (b.get("text") or "").strip() else None
     return with_words(doc)
 
 

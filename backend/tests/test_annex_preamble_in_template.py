@@ -50,9 +50,13 @@ def test_preamble_without_text_stays_the_old_formula():
     assert preamble_of({"blocks": out}, "дс") is None
 
 
-def test_preamble_of_the_model_speaks_the_full_word():
-    model = {"blocks": [{"id": "pre", "sys": "pre", "text": "заключили настоящее Доп. соглашение"}]}
+def test_preamble_refills_the_tag_and_keeps_the_typed_word():
+    """Владелец 07.11.2026: подстановка — по виду документа, вписанное руками — как написано."""
+    model = {"blocks": [{"id": "pre", "sys": "pre", "text": "заключили настоящее Доп. соглашение",
+                         "parts": [{"t": "заключили настоящее "}, {"t": "Доп. соглашение", "key": "вид_документа"}]}]}
     assert preamble_of(model, "дс") == "заключили настоящее Дополнительное соглашение"
+    typed = {"blocks": [{"id": "pre", "sys": "pre", "text": "заключили настоящее Соглашение"}]}
+    assert preamble_of(typed, "дс") == "заключили настоящее Соглашение"
 
 
 def test_unknown_tag_in_the_preamble_is_refused():
