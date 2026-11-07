@@ -58,9 +58,18 @@ def visit(page, url: str, timeout: int) -> dict:
     on_console = lambda m: (m.type == "error" and not any(n.search(m.text) for n in NOISE)              # noqa: E731
                             and errs.append(f"консоль: {m.text[:300]}"))
     on_resp = lambda r: ("/api/" in r.url and r.status >= 500 and errs.append(f"API {r.status}: {r.url[len(BASE):]}"))  # noqa: E731
+    # Время каждого запроса к API (07.11.2026, владелец: «тесты страниц на скорость, что ещё подвисает»): от отправки до
+    # конца ответа, по таймингу браузера. Экран целиком быстрее ~1,1 с не бывает — ждём затишья сети и паузу.
+    api = []
+
+    def on_done(req):
+        t = req.timing or {}
+        if "/api/" in req.url and t.get("responseEnd", -1) >= 0:
+            api.append({"api": req.url[len(BASE):].split("?")[0], "ms": int(t["responseEnd"])})
     page.on("pageerror", on_page)
     page.on("console", on_console)
     page.on("response", on_resp)
+    page.on("requestfinished", on_done)
     t0 = time.time()
     try:
         page.goto(BASE + url, wait_until="load", timeout=timeout)
@@ -81,7 +90,9 @@ def visit(page, url: str, timeout: int) -> dict:
         page.remove_listener("pageerror", on_page)
         page.remove_listener("console", on_console)
         page.remove_listener("response", on_resp)
-    return {"url": url, "ok": not errs, "errors": errs, "ms": int((time.time() - t0) * 1000), "text": size}
+        page.remove_listener("requestfinished", on_done)
+    api.sort(key=lambda x: -x["ms"])
+    return {"url": url, "ok": not errs, "errors": errs, "ms": int((time.time() - t0) * 1000), "text": size, "api": api[:5]}
 
 
 def walk(sess: dict, items: list, timeout: int, browser) -> list:
@@ -93,7 +104,10 @@ def walk(sess: dict, items: list, timeout: int, browser) -> list:
         if allowed(sess, perm, admin_only):
             r = visit(page, url, timeout)
             res.append(r)
-            print(f"  {'ok ' if r['ok'] else 'ОШИБКА'} {url} ({r['ms']} мс)" + ("" if r["ok"] else "\n      " + "\n      ".join(r["errors"])), flush=True)
+            slow = r["api"][0] if r["api"] else None
+            print(f"  {'ok ' if r['ok'] else 'ОШИБКА'} {url} ({r['ms']} мс"
+                  + (f"; медленнее всего API {slow['api']} — {slow['ms']} мс" if slow and slow["ms"] >= 500 else "") + ")"
+                  + ("" if r["ok"] else "\n      " + "\n      ".join(r["errors"])), flush=True)
     ctx.close()
     return res
 
