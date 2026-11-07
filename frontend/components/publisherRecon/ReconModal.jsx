@@ -10,6 +10,7 @@ import { fmtDayOfMoment, fmtDayTime } from '@/lib/dates'
 import { SVC_DOT } from '@/lib/masterStatus'
 import { money, parseShows, toneOf } from '@/lib/publisherRecon.mjs'
 import { CAPS, Dot, StatusPill, actBtn } from './reconKit'
+import { Cube } from '@/components/LogoLoader'
 
 const CAMP = 'minmax(160px,1.5fr) minmax(104px,0.8fr) 50px 98px 96px 92px 92px'
 const dm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '')
@@ -68,7 +69,8 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   if (!d) {
     return (
       <Modal title="Сверка" width={520} onClose={onClose}>
-        <div style={{ padding: '18px 0', fontSize: 13, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{err || 'Загружаю…'}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 0', fontSize: 13, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>
+          {err || <><Cube variant="spinner" size={24} />Загружаю…</>}</div>
       </Modal>
     )
   }

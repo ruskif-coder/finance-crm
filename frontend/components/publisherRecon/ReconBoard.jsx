@@ -9,6 +9,7 @@ import { counts, deltaOf, passes, plural, shiftMonth, toneOf } from '@/lib/publi
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ReconModal from './ReconModal'
 import { downloadFile } from '@/lib/download'
+import { Cube } from '@/components/LogoLoader'
 import { CAPS, Dot, MonthSwitch, StatusPill, Toast, actBtn, useToast } from './reconKit'
 
 const COLS = 'minmax(150px,0.9fr) minmax(100px,0.6fr) minmax(110px,0.6fr) minmax(110px,0.6fr) minmax(90px,0.5fr) minmax(104px,0.6fr) minmax(168px,0.8fr) minmax(76px,0.4fr) minmax(140px,0.8fr) 112px'
@@ -31,14 +32,18 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
   const [err, setErr] = useState('')
   const [filter, setFilter] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(false)       // идёт загрузка доски (07.11.2026: «видно, что данные подгружаются»)
+  const [exporting, setExporting] = useState(false)   // готовится Excel
   const [toast, flash] = useToast()
 
   const latest = useLatest()
   const load = useCallback(() => {
     const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил месяц — старый ответ приходил последним
+    setLoading(true)
     api.get(`/publisher-recon/board?period=${month}`, auth())
       .then(r => { if (fresh()) { setData(r.data); setErr('') } })
       .catch(e => { if (fresh()) { setData(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить сверки') } })
+      .finally(() => { if (fresh()) setLoading(false) })
   }, [month, latest])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)
@@ -106,10 +111,14 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
             {month !== current && (
               <span onClick={() => setMonth(current)} style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>к текущему</span>)}
             {/* Выгрузка месяца на экране (владелец 06.11.2026): сводная + площадка на своей вкладке */}
-            <span onClick={() => downloadFile(`/publisher-recon/export.xlsx?period=${month}`, null, flash)}
+            <span onClick={async () => {
+              if (exporting) return
+              setExporting(true)
+              try { await downloadFile(`/publisher-recon/export.xlsx?period=${month}`, null, flash) } finally { setExporting(false) }
+            }}
               title="Сводная на первой вкладке, дальше каждая площадка с кампаниями"
-              style={{ ...actBtn('g', false), fontSize: 12.5 }}>
-              Выгрузить в Excel ↓</span>
+              style={{ ...actBtn('g', exporting), fontSize: 12.5, gap: 8, cursor: exporting ? 'wait' : 'pointer' }}>
+              {exporting ? <><Cube variant="spinner" size={14} />Готовлю файл…</> : 'Выгрузить в Excel ↓'}</span>
             {canEdit && (
               <span onClick={sendAll} title={c.ready ? 'Активировать карточки в кабинетах всех готовых площадок' : 'Готовых сверок нет'}
                 style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: 'var(--on-accent)', whiteSpace: 'nowrap',
@@ -128,6 +137,10 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
           </div>
         ))}
 
+        {loading && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: data ? '6px 0' : '40px 0',
+            fontSize: 12.5, color: 'var(--text-muted)' }}>
+            <Cube variant="spinner" size={data ? 16 : 40} />{data ? 'Обновляю…' : 'Загружаю сверки…'}</div>)}
         {err && <div style={{ padding: '18px 0', fontSize: 13, color: 'var(--danger-fg)' }}>{err}</div>}
         {data && !data.active && <div style={{ padding: '28px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Сверки ведутся с октября 2026 — раньше месяцы закрывались без них.</div>}
 
