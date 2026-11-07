@@ -227,14 +227,20 @@ def latest(db: Session) -> dict:
     out = {r["url"]: dict(r) for r in rows}
     if not out:
         return out
+    # Набором (07.11.2026): последняя СМЕНА статуса — одна на адрес, а не подзапросом на каждую проверку (22 тыс. строк ×
+    # сотни проверок адреса — конвейер трафика ждал этого 3,4 с). Результат тот же — прибор test_site_monitor_latest_fast.
     since = db.execute(text("""
+        WITH l AS (SELECT DISTINCT ON (url) url, status FROM site_checks
+                    ORDER BY url, checked_at DESC, id DESC),
+             ch AS (SELECT c.url, max(c.checked_at) AS changed
+                      FROM site_checks c JOIN l ON l.url = c.url
+                     WHERE c.status <> l.status
+                     GROUP BY c.url)
         SELECT c.url, min(c.checked_at) AS since, count(*) AS streak
           FROM site_checks c
-          JOIN (SELECT DISTINCT ON (url) url, status FROM site_checks
-                 ORDER BY url, checked_at DESC, id DESC) l ON l.url = c.url
-         WHERE c.checked_at > coalesce((SELECT max(x.checked_at) FROM site_checks x
-                                         WHERE x.url = c.url AND x.status <> l.status),
-                                        'epoch'::timestamptz)
+          JOIN l ON l.url = c.url
+          LEFT JOIN ch ON ch.url = c.url
+         WHERE c.checked_at > coalesce(ch.changed, 'epoch'::timestamptz)
          GROUP BY c.url""")).mappings().all()
     for s in since:
         if s["url"] in out:

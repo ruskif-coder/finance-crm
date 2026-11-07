@@ -217,15 +217,39 @@ def check_disk():
                   f"порог: жёлтый {DISK_WARN_PCT}%, красный {DISK_CRIT_PCT}%")
 
 
+def _scan_uploads() -> dict:
+    """{путь от корня хранилища: размер} — `os.scandir`: размер приходит из записи каталога, без отдельного stat на файл."""
+    files, stack = {}, [UPLOADS_ROOT]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        elif e.is_file(follow_symlinks=False):
+                            files[os.path.relpath(e.path, UPLOADS_ROOT).replace("\\", "/")] = e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return files
+
+
+# Один обход хранилища на открытие экрана (07.11.2026): «Хранилище» и «Сироты» обходили его каждый сам — 2 × 2,2 с из 4,6 с.
+# Кэш на несколько секунд, а не навсегда: файлы появляются и исчезают, а экран должен показывать сейчас.
+_UPLOADS_CACHE: dict = {}
+_UPLOADS_TTL = 10.0
+
+
 def _walk_uploads():
-    files = {}
-    for root, _, names in os.walk(UPLOADS_ROOT):
-        for n in names:
-            full = os.path.join(root, n)
-            try:
-                files[os.path.relpath(full, UPLOADS_ROOT).replace("\\", "/")] = os.path.getsize(full)
-            except OSError:
-                pass
+    import time
+    hit = _UPLOADS_CACHE.get(UPLOADS_ROOT)
+    if hit and time.monotonic() - hit[0] < _UPLOADS_TTL:
+        return hit[1]
+    files = _scan_uploads()
+    _UPLOADS_CACHE[UPLOADS_ROOT] = (time.monotonic(), files)
     return files
 
 
