@@ -18,8 +18,10 @@ import { sanMoney, moneyNum } from '@/lib/money'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import PayPlanSummary, { DupTag, FilterChip } from '@/components/operations/PayPlanSummary'
+import OperationPanelHost from '@/components/operations/OperationPanelHost'
 import { downloadFile } from '@/lib/download'
 import useLatest from '@/lib/useLatest'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -291,11 +293,14 @@ const COLS = [
   ['sel', '26px', ''], ['date', '78px', 'Дата', 'date'], ['status', '112px', 'Статус', 'status'], ['dz', '36px', 'ДЗ', 'dz'],
   ['income', '98px', 'Поступление', 'income'], ['expense', '98px', 'Списание', 'expense'], ['bank', '96px', 'Банк', 'bank'],
   ['period', '78px', 'Период', 'period'], ['article', '122px', 'Статья', 'article'], ['counterparty', '1.2fr', 'Контрагент', 'counterparty'],
-  ['vat', '46px', 'НДС', 'vat_rate'], ['vat_amount', '84px', 'НДС сумма', 'vat_fact'], ['ds_num', '62px', '№ ДС', 'ds_num'], ['invoice', '112px', '№ счёта', 'invoice'],
+  ['vat', '46px', 'НДС', 'vat_rate'], ['vat_amount', '84px', 'НДС сумма', 'vat_fact'], ['ds_num', '92px', '№ ДС', 'ds_num'], ['invoice', '112px', '№ счёта', 'invoice'],
   ['invoice_date', '88px', 'Дата счёта', 'invoice_date'], ['doc', '32px', 'Док', 'doc'], ['description', '0.9fr', 'Описание', 'description'], ['actions', '72px', 'Действия'],
 ]
 const GRID = COLS.map(c => c[1]).join(' ')
 const RIGHT = new Set(['income', 'expense', 'vat', 'vat_amount'])
+// Клик по строке открывает боковую панель операции (владелец 09.11.2026); эти ячейки живут своими кликами
+const NO_PANEL = new Set(['sel', 'doc', 'actions'])
+const PAD_LEFT = { ds_num: 14 }       // колонка после прижатой вправо суммы — отступ и у шапки, и у ячейки
 
 export default function Operations2() {
   const router = useRouter()
@@ -463,6 +468,14 @@ export default function Operations2() {
 
   // Тип операции фильтрует сервер (op_type), строки приходят уже отобранными.
   const rows = ops
+  // Боковая панель операции: открыта по клику на строку, ↑/↓ — соседи на текущей странице
+  const [panelId, setPanelId] = useState(null)
+  const openPanel = (e, id) => {
+    if (e.target.closest('[data-noexp], input, button, a, select, textarea')) return
+    if (String(window.getSelection?.() || '')) return          // выделяли текст в строке, а не открывали
+    setPanelId(id)
+  }
+  const panelAt = rows.findIndex(o => o.id === panelId)
 
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
   const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setFGaps([]); setPage(0) }
@@ -691,8 +704,9 @@ export default function Operations2() {
       }
       case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
       case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
-      case 'ds_num': return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-        <span style={{ fontFamily: MONO, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.ds_num || '—'}</span>
+      // отступ слева: правый край «НДС сумма» иначе упирается в номер ДС (владелец 09.11.2026: «всё сливается»)
+      case 'ds_num': return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, paddingLeft: PAD_LEFT.ds_num }}>
+        <span style={{ fontFamily: MONO, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o.ds_num || ''}>{shortAnnexNumber(o.ds_num) || '—'}</span>
         <ChainMark op={o} />
       </span>
       case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
@@ -904,7 +918,7 @@ export default function Operations2() {
               <div style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, padding: '0 0 10px', borderBottom: '1px solid var(--border-card)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
                 {visibleCols.map(([k, w, label, sc]) => k === 'sel'
                   ? <span key={k}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
-                  : <span key={k} onClick={() => onSort(sc)} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
+                  : <span key={k} onClick={() => onSort(sc)} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', paddingLeft: PAD_LEFT[k], cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
               </div>
               {/* «Нет операций по выбранным фильтрам» — утверждение о ДАННЫХ. На сбое
                   загрузки оно неверно, и подменять им причину нельзя: человек начнёт
@@ -915,8 +929,8 @@ export default function Operations2() {
                 : rows.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по выбранным фильтрам</div>
                   : rows.map(o => (
                     <Fragment key={o.id}>
-                      <div className="op-row" style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', background: sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'transparent') }}>
-                        {visibleCols.map(([k]) => <span key={k} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
+                      <div className="op-row" onClick={e => openPanel(e, o.id)} style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', cursor: 'pointer', background: panelId === o.id ? 'var(--accent-tint)' : sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'transparent') }}>
+                        {visibleCols.map(([k]) => <span key={k} data-noexp={NO_PANEL.has(k) ? '' : undefined} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
                       </div>
                       {/* Правка раскрывается под своей строкой — форма стоит там, где
                           пользователь только что кликнул, и список не теряет место. */}
@@ -961,6 +975,11 @@ export default function Operations2() {
           </div>
         </div>
       </div>
+      {panelId != null && <OperationPanelHost opId={panelId} onClose={() => setPanelId(null)} onOpen={setPanelId}
+        hasPrev={panelAt > 0} hasNext={panelAt >= 0 && panelAt < rows.length - 1}
+        onPrev={() => panelAt > 0 && setPanelId(rows[panelAt - 1].id)}
+        onNext={() => panelAt >= 0 && panelAt < rows.length - 1 && setPanelId(rows[panelAt + 1].id)}
+        onRefreshRegistry={() => { setPanelId(null); loadOps() }} />}
     </div>
   )
 }

@@ -229,7 +229,9 @@ def board(db: Session, now: Optional[datetime] = None) -> dict:
             r = request(db, m, k, upds.get(k.upd_no, {}), n_kits, evs.get(k.id, []), cal, now, c=c, buyer=buyer)
             if r is not None:
                 out.append(r)
-    return {"now": now.astimezone(R.MSK).isoformat(), "settings": st, "seller": seller, "requests": out}
+    from app.onec_desk import upstream as UP
+    return {"now": now.astimezone(R.MSK).isoformat(), "settings": st, "seller": seller, "requests": out,
+            "upstream": UP.upstream(db, st["month"])}   # «ещё не дошли» (09.11.2026)
 
 
 def request_for(db: Session, m, k, now: Optional[datetime] = None) -> Optional[dict]:

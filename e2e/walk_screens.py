@@ -21,6 +21,8 @@ from playwright.sync_api import sync_playwright
 BASE = "https://localhost"
 CRASH = ("Application error", "Unhandled Runtime Error", "This page could not be found")
 # Шум, который не про наш код: отказ в доступе к необязательному запросу у роли без права — экран обязан пережить его сам
+# Песочница баннеров — отдельный домен `sb.*` (sb.localhost / sb.simbad.pro), см. Caddyfile.
+SANDBOX_RE = re.compile(r"https?://sb\.[^/\s]+/")
 NOISE = (re.compile(r"status of 40[13]"), re.compile(r"favicon"), re.compile(r"Download the React DevTools"))
 DETAIL = [("deal", "/sales/deals/{}", "sales_registry"), ("mp", "/accounts/mp/{}", "media_plans"),
           ("counterparty", "/directory/counterparties/{}", "counterparties"), ("publisher", "/publishers/{}", "dir_publishers"),
@@ -54,7 +56,13 @@ def allowed(sess: dict, perm, admin_only: bool) -> bool:
 
 def visit(page, url: str, timeout: int) -> dict:
     errs = []
-    on_page = lambda e: errs.append(f"JS: {e}")                                                       # noqa: E731
+    notes = []
+
+    def on_page(e):
+        # Ошибка чужого баннера в рамке песочницы — не поломка экрана, а свойство креатива (на «Премодерации»
+        # их показывают как раз затем, чтобы такое найти). Пишется заметкой, экран не краснеет.
+        stack = getattr(e, "stack", "") or ""
+        (notes if SANDBOX_RE.search(stack) else errs).append(f"JS: {e}")
     on_console = lambda m: (m.type == "error" and not any(n.search(m.text) for n in NOISE)              # noqa: E731
                             and errs.append(f"консоль: {m.text[:300]}"))
     on_resp = lambda r: ("/api/" in r.url and r.status >= 500 and errs.append(f"API {r.status}: {r.url[len(BASE):]}"))  # noqa: E731
@@ -92,12 +100,17 @@ def visit(page, url: str, timeout: int) -> dict:
         page.remove_listener("response", on_resp)
         page.remove_listener("requestfinished", on_done)
     api.sort(key=lambda x: -x["ms"])
-    return {"url": url, "ok": not errs, "errors": errs, "ms": int((time.time() - t0) * 1000), "text": size, "api": api[:5]}
+    return {"url": url, "ok": not errs, "errors": errs, "notes": notes, "ms": int((time.time() - t0) * 1000), "text": size,
+            "api": api[:5]}
 
 
 def walk(sess: dict, items: list, timeout: int, browser) -> list:
     ctx = browser.new_context(ignore_https_errors=True, viewport={"width": 1600, "height": 1000}, locale="ru-RU")
-    ctx.add_init_script("(() => { const s = %s; for (const k in s) localStorage.setItem(k, s[k]) })()" % json.dumps(sess["storage"]))
+    # Только главное окно: init-скрипт исполняется и в рамках, а в песочнице баннера (`sandbox allow-scripts`,
+    # без same-origin) обращение к localStorage бросает — обход записывал ошибку прибора как поломку экрана
+    # («Премодерация», 07.11.2026: чистая загрузка того же снимка — без ошибок).
+    ctx.add_init_script("(() => { if (window.top !== window) return; const s = %s; "
+                        "for (const k in s) localStorage.setItem(k, s[k]) })()" % json.dumps(sess["storage"]))
     page = ctx.new_page()
     res = []
     for url, perm, admin_only in items:
@@ -107,7 +120,8 @@ def walk(sess: dict, items: list, timeout: int, browser) -> list:
             slow = r["api"][0] if r["api"] else None
             print(f"  {'ok ' if r['ok'] else 'ОШИБКА'} {url} ({r['ms']} мс"
                   + (f"; медленнее всего API {slow['api']} — {slow['ms']} мс" if slow and slow["ms"] >= 500 else "") + ")"
-                  + ("" if r["ok"] else "\n      " + "\n      ".join(r["errors"])), flush=True)
+                  + ("" if r["ok"] else "\n      " + "\n      ".join(r["errors"]))
+                  + "".join(f"\n      баннер в песочнице: {n}" for n in r["notes"]), flush=True)
     ctx.close()
     return res
 

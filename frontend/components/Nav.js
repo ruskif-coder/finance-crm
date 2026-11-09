@@ -330,6 +330,25 @@ function useTrafficWaiting(enabled) {
   return waiting
 }
 
+// Неразобранные пакеты премодерации SSP (07.11.2026) — тот же порядок: лёгкая ручка, раз в минуту.
+function usePremodWaiting(enabled) {
+  const [waiting, setWaiting] = useState(0)
+  useEffect(() => {
+    if (!enabled) { setWaiting(0); return }
+    let alive = true
+    const load = () => {
+      if (typeof window === 'undefined' || !localStorage.getItem('token')) return
+      axios.get('/api/premod/count', authHdr())
+        .then(r => { if (alive) setWaiting(r.data.waiting || 0) })
+        .catch(() => {})
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [enabled])
+  return waiting
+}
+
 function Bell({ onGoto, size = 32 }) {
   const { notifs, unread, markRead, fresh, markSeen, dismiss } = useNotifications()
   const [open, setOpen] = useState(false)
@@ -919,17 +938,16 @@ export default function Nav({ children, onSearch, asPath }) {
 
   const rawSections = mounted ? allowedSections(perms, isAdmin) : []
   // Значок ставим только если пункт вообще виден — иначе и запрос лишний.
-  const hasQueue = rawSections.some(s => s.items?.some(i => i.href === '/traffic/queue'))
-  const trafficWaiting = useTrafficWaiting(hasQueue)
-  // Клонируем ветку с пунктом очереди и вешаем `badge`: механика карты дальше сама
-  // покажет число и на пункте, и в значке раздела (sumBadges). Мутировать nav.data.json
-  // нельзя — он общий и кэшируется между рендерами.
-  const sections = trafficWaiting > 0
-    ? rawSections.map(sec => (sec.items?.some(i => i.href === '/traffic/queue')
-        ? { ...sec, items: sec.items.map(i => (i.href === '/traffic/queue'
-            ? { ...i, badge: String(trafficWaiting) } : i)) }
-        : sec))
-    : rawSections
+  const visible = href => rawSections.some(s => s.items?.some(i => i.href === href))
+  const trafficWaiting = useTrafficWaiting(visible('/traffic/queue'))
+  const premodWaiting = usePremodWaiting(visible('/traffic/premoderation'))
+  // Клонируем ветку с пунктом и вешаем `badge`: механика карты дальше сама покажет число и
+  // на пункте, и в значке раздела (sumBadges). Мутировать nav.data.json нельзя — он общий
+  // и кэшируется между рендерами.
+  const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting }
+  const sections = rawSections.map(sec => (sec.items?.some(i => badges[i.href] > 0)
+    ? { ...sec, items: sec.items.map(i => (badges[i.href] > 0 ? { ...i, badge: String(badges[i.href]) } : i)) }
+    : sec))
   const active = findByPath(asPath || router.pathname)
 
   const go = href => router.push(href)

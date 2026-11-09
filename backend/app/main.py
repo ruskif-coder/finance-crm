@@ -23,7 +23,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          traffic_dashboard, annexes, directory_add,
-                         exec_dashboard, system_status, mail_admin, search, creative_check)
+                         exec_dashboard, system_status, mail_admin, search, creative_check, premod)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -634,6 +634,7 @@ app.include_router(cabinet_gateway.router, prefix="/api/cabinet-gw", tags=["cabi
 app.include_router(cabinet_gateway.webhook_router, prefix="/api/pub-bot", tags=["pub-bot"])
 # Проверка креатива без сделки (аккаунты, 07.10.2026): баннер, замечания по коду, нацеливание.
 app.include_router(creative_check.router, prefix="/api/creative-check", tags=["creative-check"])
+app.include_router(premod.router, prefix="/api/premod", tags=["premod"])
 # Шаблоны ДС: версии, кастомные под договор (спринт 1, 13.10.2026). Логика — пакет `app/annex_tpl`.
 from app.routers import annex_templates  # noqa: E402
 app.include_router(annex_templates.router, prefix="/api/annex-templates", tags=["annex-templates"])

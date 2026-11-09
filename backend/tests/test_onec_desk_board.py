@@ -12,6 +12,8 @@
 from datetime import date, datetime, timezone
 
 import pytest
+
+from tests._untouched_kit import untouched_kit
 from sqlalchemy import text
 
 import app.model_registry  # noqa: F401
@@ -100,12 +102,12 @@ def test_close_defaults_to_10th_and_closed_month_sets_closed_until():
 @pytest.fixture
 def env(monkeypatch):
     from app.database import SessionLocal
-    from app.master_deal.models import MasterDeal, MasterDealUpd
+    from app.master_deal.models import MasterDeal
     from app.models import User
     from app.onec_desk import files as OF
     from app.onec_desk import service as SV
     db = SessionLocal()
-    k = db.query(MasterDealUpd).order_by(MasterDealUpd.id).first()
+    k = untouched_kit(db)
     if k is None:
         db.close()
         pytest.skip("на стенде нет комплектов УПД")
@@ -155,6 +157,7 @@ def test_request_has_the_handoff_contract_shape(env):
 def test_submit_without_pdfs_is_refused_and_with_them_enters(env):
     db, m, k, user, sent, files = env
     from app.onec_desk import service as SV
+    db.execute(text("UPDATE contracts SET issue_channel = 'бумага' WHERE id = :c"), {"c": m.contract_id})   # XML не нужен
     req = _req(db, m, k)
     with pytest.raises(SV.DeskError) as e:
         SV.submit(db, m, k, _form(req), req, user)
@@ -318,3 +321,64 @@ def test_request_shows_issue_channel_of_the_contract(env):
     assert _req(db, m, k)["channel"] == "бумага"
     db.execute(_t("UPDATE contracts SET issue_channel = NULL WHERE id = :c"), {"c": m.contract_id})
     assert _req(db, m, k)["channel"] is None
+
+
+# ── XML обязателен, кроме бумаги; догрузка во внесённое (владелец 09.11.2026) ─────────────────────────
+
+PDFS = {"invoice": {"id": 1, "filename": "с.pdf"}, "upd": {"id": 2, "filename": "у.pdf"}}
+
+
+@pytest.mark.parametrize("channel", ["ЭДО", None])
+def test_submit_without_xml_is_refused_unless_paper(env, channel):
+    """Поломка: XML снова «по желанию» — ЭДО-комплект (или с незаданным каналом) вносится без файла для отправки клиенту."""
+    db, m, k, user, _, files = env
+    from app.onec_desk import service as SV
+    db.execute(text("UPDATE contracts SET issue_channel = :ch WHERE id = :c"), {"ch": channel, "c": m.contract_id})
+    files.update(PDFS)
+    req = _req(db, m, k)
+    with pytest.raises(SV.DeskError) as e:
+        SV.submit(db, m, k, _form(req), req, user)
+    assert "XML УПД" in e.value.message and "PDF" not in e.value.message
+
+
+def test_paper_submit_needs_both_pdfs_but_no_xml(env):
+    db, m, k, user, _, files = env
+    from app.onec_desk import service as SV
+    db.execute(text("UPDATE contracts SET issue_channel = 'бумага' WHERE id = :c"), {"c": m.contract_id})
+    req = _req(db, m, k)
+    files.update({"invoice": PDFS["invoice"]})
+    with pytest.raises(SV.DeskError) as e:
+        SV.submit(db, m, k, _form(req), req, user)
+    assert "PDF УПД" in e.value.message and "XML" not in e.value.message
+    files.update(PDFS)
+    SV.submit(db, m, k, _form(req), req, user)
+    assert k.onec_state == SV.DONE
+
+
+def _entered(db, m, k, user, files):
+    from app.onec_desk import service as SV
+    db.execute(text("UPDATE contracts SET issue_channel = 'бумага' WHERE id = :c"), {"c": m.contract_id})
+    files.update(PDFS)
+    req = _req(db, m, k)
+    SV.submit(db, m, k, _form(req), req, user)
+    db.execute(text("UPDATE contracts SET issue_channel = 'ЭДО' WHERE id = :c"), {"c": m.contract_id})
+    return _req(db, m, k)
+
+
+def test_late_xml_must_match_what_was_entered(env):
+    """Догрузка XML во внесённую заявку: файл чужого покупателя или с другим № УПД не принимается — внесённое уже ушло
+    в операцию, сверять больше негде."""
+    db, m, k, user, _, files = env
+    from app.onec_desk import service as SV
+    req = _entered(db, m, k, user, files)
+    t = {key: f"{round(sum(float(x[key]) for x in req['lines']), 2):.2f}" for key in ("net", "vat", "gross")}
+    good = dict(inn=req["buyer"]["inn"], kpp=req["buyer"]["kpp"], ct=req["contract"]["no"], svc=req["basis"] or "x", **t)
+    SV.check_late_xml(m, k, _xml(**good), req)
+    for bad in ({"kpp": "000000000"}, {"ct": "ЧУЖОЙ 1"}):
+        with pytest.raises(SV.DeskError) as e:
+            SV.check_late_xml(m, k, _xml(**{**good, **bad}), req)
+        assert e.value.status == 409
+    k.onec_upd_no = "999"
+    with pytest.raises(SV.DeskError) as e:
+        SV.check_late_xml(m, k, _xml(**good), req)
+    assert "№ УПД" in e.value.message

@@ -236,7 +236,8 @@ def submit(db: Session, m, k, form: dict, req: dict, user, closed_until=None) ->
                 xml_contract=xml["contract"] if xml else None, xml_basis=xml["basis"] if xml else None, comment=g("comment"))
     exp = {key: R.Decimal(str(round(sum(float(x[key]) for x in req["lines"]), 2))) for key in ("net", "vat", "gross")}
     who = SimpleNamespace(buyer_inn=req["buyer"]["inn"], buyer_kpp=req["buyer"]["kpp"],
-                          contract_no=req["contract"]["no"], ds_signed=req["ds_signed"], basis=req["basis"])
+                          contract_no=req["contract"]["no"], ds_signed=req["ds_signed"], basis=req["basis"],
+                          channel=req.get("channel"))
     pe = datetime.fromisoformat(req["period"]["to"]).date() if req["period"]["to"] else None
     res = R.evaluate(who, f_, expected=exp, dup_inv=None, dup_upd=None, closed_until=closed_until, period_end=pe)
     if not res.ready:
@@ -248,6 +249,21 @@ def submit(db: Session, m, k, form: dict, req: dict, user, closed_until=None) ->
     k.onec_draft = None
     db.flush()
     return {**out, "warns": res.warns}
+
+
+def check_late_xml(m, k, content: bytes, req: dict) -> None:
+    """XML, догруженный во внесённую заявку (владелец 09.11.2026): внесённое уже ушло в операцию, поэтому файл обязан быть
+    той самой УПД — покупатель, договор, основание и № как внесено. Иначе 409, файл не сохраняется."""
+    from app.onec_desk import rules as R
+    from app.onec_desk import xmlparse as XP
+    x = XP.parse(content, req["contract"]["no"], req["basis"])
+    who = SimpleNamespace(buyer_inn=req["buyer"]["inn"], buyer_kpp=req["buyer"]["kpp"], contract_no=req["contract"]["no"],
+                          basis=req["basis"])
+    bad = R.xml_mismatch(x["buyer"]["inn"], x["buyer"]["kpp"], x["contract"], x["basis"], who)
+    if (x["number"] or "").strip() != (k.onec_upd_no or "").strip():
+        bad.append("№ УПД")
+    if bad:
+        raise DeskError(409, "XML не от этой УПД — не совпадает: " + ", ".join(bad))
 
 
 def events(db: Session, k) -> list:

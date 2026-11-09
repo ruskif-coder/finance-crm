@@ -34,6 +34,7 @@ CRON_MODULES = [
     "app.dsp.block_stat",
     "app.traffic.site_monitor",
     "app.sales.plan_snapshot",          # 24.10.2026: снимок «Плана продаж»
+    "app.premod.sync",                  # 07.11.2026: забор очереди премодерации SSP
 ]
 
 PROBE = (

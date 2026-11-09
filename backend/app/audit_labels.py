@@ -122,6 +122,8 @@ ACTION_LABELS = {
     "creative_check_create": "Проверка креатива: загружен",
     "creative_check_targeting": "Проверка креатива: ссылка нацеливания",
     "creative_check_delete": "Проверка креатива: снят",
+    "premod_decide": "Премодерация: решение по пакету",
+    "premod_category": "Премодерация: категория заказчика",
     "mail_settings": "Настройки почты изменены",
     "mail_shell": "Правка оболочки письма",
     "mail_card_text": "Правка текста карточки уведомления",

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.master_deal import status as ST
 from app.master_deal.models import MasterDealFile
-from app.onec_desk.service import DeskError
+from app.onec_desk.service import DONE, DeskError
 
 ROOT, SUBDIR = "/app/uploads", "master_files"
 MAX_BYTES = 20 * 1024 * 1024
@@ -71,6 +71,8 @@ def get(db: Session, m, k, file_id: int) -> MasterDealFile:
 def delete(db: Session, m, k, file_id: int) -> tuple:
     if m.status == ST.ARCHIVE:
         raise DeskError(409, "Пакет в архиве — документы закрытого пакета не меняются")
+    if k.onec_state == DONE:
+        raise DeskError(409, "Заявка внесена — файл можно заменить, но не убрать")
     f = get(db, m, k, file_id)
     name, path = f.filename, f.path
     db.delete(f)

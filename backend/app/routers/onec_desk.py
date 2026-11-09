@@ -127,6 +127,9 @@ async def desk_file_upload(kit_id: int, slot: str, file: UploadFile = File(...),
     content = await file.read()
     m, k = _kit(db, kit_id, lock=True)
     try:
+        if slot == "xml" and k.onec_state == SV.DONE:   # догрузка во внесённую заявку — та самая УПД (09.11.2026)
+            from app.onec_desk import board as BD
+            SV.check_late_xml(m, k, content, BD.request_for(db, m, k))
         out = OF.save(db, m, k, user, slot=slot, filename=file.filename, content=content)
         db.commit()
     except SV.DeskError as e:

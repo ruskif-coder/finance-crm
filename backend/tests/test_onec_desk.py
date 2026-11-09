@@ -14,6 +14,8 @@
 from datetime import date
 
 import pytest
+
+from tests._untouched_kit import untouched_kit
 from sqlalchemy import text
 
 import app.model_registry  # noqa: F401
@@ -23,11 +25,11 @@ from app.master_deal import status as ST
 @pytest.fixture
 def env(monkeypatch):
     from app.database import SessionLocal
-    from app.master_deal.models import MasterDeal, MasterDealUpd
+    from app.master_deal.models import MasterDeal
     from app.models import User
     from app.onec_desk import service as SV
     db = SessionLocal()
-    k = db.query(MasterDealUpd).order_by(MasterDealUpd.id).first()
+    k = untouched_kit(db)
     if k is None:
         db.close()
         pytest.skip("на стенде нет комплектов УПД")
@@ -330,3 +332,19 @@ def test_download_name_carries_master_counterparty_and_period(env):
 def test_download_name_strips_characters_windows_refuses():
     from app.onec_desk import names as NM
     assert NM.safe('ООО "Ромашка/Лютик": *?') == "ООО Ромашка Лютик"
+
+
+def test_file_of_entered_kit_can_be_replaced_not_removed(env, tmp_path, monkeypatch):
+    """Внесённая заявка: файл можно догрузить или заменить, но не убрать — иначе внесённое останется без обязательного документа."""
+    db, m, k, user, _ = env
+    from app.onec_desk import files as OF
+    from app.onec_desk import service as SV
+    monkeypatch.setattr(OF, "ROOT", str(tmp_path))
+    k.onec_state = SV.DONE
+    db.flush()
+    f = OF.save(db, m, k, user, slot="upd", filename="упд.pdf", content=b"%PDF-1")
+    OF.save(db, m, k, user, slot="upd", filename="упд2.pdf", content=b"%PDF-2")
+    new_id = OF.files_of(db, m, k)["upd"]["id"]
+    with pytest.raises(SV.DeskError) as e:
+        OF.delete(db, m, k, new_id)
+    assert e.value.status == 409 and f["id"] != new_id

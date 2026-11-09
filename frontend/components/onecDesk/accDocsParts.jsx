@@ -73,7 +73,7 @@ export function CopyField({ label, value, hint, state, onCopy, big = true, child
 }
 
 /** Строка файла (п.7: пустая — нейтральная пунктирная) */
-export function FileRow({ kind, label, file, required, note, readOnly, onAttach, onRemove, onOpen }) {
+export function FileRow({ kind, label, file, required, note, readOnly, canAttach, onAttach, onRemove, onOpen }) {
   const has = !!file;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderRadius: 12, border: `1px ${has ? 'solid' : 'dashed'} ${has ? 'var(--border-inner)' : 'var(--border-card)'}`, background: has ? 'var(--bg-subtle)' : 'var(--bg-card)' }}>
@@ -83,7 +83,7 @@ export function FileRow({ kind, label, file, required, note, readOnly, onAttach,
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{has ? `${readOnly ? 'в архиве' : 'приложено'} · ${Math.round(file.size / 1000)} КБ` : note}</span>
       </span>
       {has && !readOnly && <a href="#" onClick={e => { e.preventDefault(); onRemove(); }} style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)' }}>убрать</a>}
-      {!readOnly && <Btn onClick={onAttach} style={{ height: 32 }}><Clip />{has ? 'заменить' : 'приложить'}</Btn>}
+      {(!readOnly || canAttach) && <Btn onClick={onAttach} style={{ height: 32 }}><Clip />{has ? 'заменить' : 'приложить'}</Btn>}
     </div>
   );
 }

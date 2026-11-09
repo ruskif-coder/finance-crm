@@ -119,6 +119,7 @@ export default function OnecDeskPage() {
     onOpenFile: (code, file) => file?.id && deskApi.download(kit(code), file.id, setErr),
     onRemoveFile: (code, kind, file) => (file?.id ? deskApi.removeFile(kit(code), file.id).catch(asError('Не удалось убрать файл')) : null),
     onEditClose: mayEdit ? () => setCloseEdit(true) : undefined,
+    onReload: load,
   }
 
   const head = <><Head><title>Закрывающие документы · Финансы | SIMB-AD ERP</title></Head><Navbar active="onec_desk" /></>

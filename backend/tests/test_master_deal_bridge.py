@@ -7,6 +7,8 @@
 from datetime import date
 
 import pytest
+
+from tests._untouched_kit import untouched_kit
 from sqlalchemy import text
 
 import app.model_registry  # noqa: F401
@@ -16,9 +18,9 @@ from app.master_deal import bridge as BR
 @pytest.fixture
 def env():
     from app.database import SessionLocal
-    from app.master_deal.models import MasterDeal, MasterDealUpd
+    from app.master_deal.models import MasterDeal
     db = SessionLocal()
-    k = db.query(MasterDealUpd).order_by(MasterDealUpd.id).first()
+    k = untouched_kit(db)
     if k is None:
         pytest.skip("на стенде нет комплектов УПД")
     # Счёт из 1С приходит только по подтверждённому ДС — номер ставим сами, не полагаясь на состояние пакета на стенде (откатывается).
@@ -51,7 +53,7 @@ def test_invoice_makes_one_planned_income_operation(env):
     rows = _ops(db, k)
     assert len(rows) == 1
     r = rows[0]
-    assert r.status == "план поступлений" and r.invoice == "1247" and r.invoice_date == date(2026, 10, 31)
+    assert r.status == "ПЛАН ПОСТУПЛЕНИЙ" and r.invoice == "1247" and r.invoice_date == date(2026, 10, 31)
     assert abs(r.income - float(k.gross)) < 0.01 and r.period == m.period
     assert r.article_id, "статья выручки — по основной услуге комплекта"
     assert r.counterparty_id and r.ds_num and r.description, "контрагент, № ДС и основание к закрытию"
@@ -66,7 +68,7 @@ def test_repeat_updates_not_duplicates_and_paid_is_frozen(env):
     BR.sync_kit(db, m, k)
     rows = _ops(db, k)
     assert len(rows) == 1 and rows[0].invoice == "1248" and abs(rows[0].income - float(k.gross)) < 0.01
-    db.execute(text("UPDATE operations SET status = 'оплачено' WHERE id = :i"), {"i": rows[0].id})
+    db.execute(text("UPDATE operations SET status = 'ОПЛАЧЕНО' WHERE id = :i"), {"i": rows[0].id})
     k.gross = float(k.gross) + 500
     BR.sync_kit(db, m, k)
     assert abs(_ops(db, k)[0].income - (float(k.gross) - 500)) < 0.01, "оплаченную операцию мост не трогает"
@@ -77,3 +79,13 @@ def test_main_service_by_amount():
             {"kind": "extra", "position": "Комплект", "amount": 50.0}]
     assert BR.main_service(rows) == "Приоритезация"
     assert BR.main_service([{"kind": "extra", "position": "Комплект", "amount": 10.0}]) is None
+
+
+def test_bridge_operation_passes_the_operations_screen_check(env):
+    """Ломается, если мост снова напишет статус мимо словаря: «план поступлений» строчными (прод, 21 операция на 16,3 млн,
+    09.11.2026) — дебиторка, карточки и напоминания сравнивают буквально, и операции выпали из всех сводок, кроме финотчёта.
+    Мерило — та же проверка, что у формы и импорта операций."""
+    from app.routers.operations import _operation_problem
+    db, m, k = env
+    k.onec_invoice_no = "1247"
+    assert _operation_problem(BR.sync_kit(db, m, k)) is None

@@ -230,6 +230,15 @@ class Contract(Base):
     ord_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
+# Словарь статусов операции — ОДИН на систему (перенесён из routers/operations.py 09.11.2026). Отчёты, дебиторка, карточки и
+# напоминания сравнивают статус буквально: строка мимо словаря выпадает из всех сводок, оставаясь в журнале. Так и случилось:
+# мост мастер-сделки писал «план поступлений» строчными (прод, 21 операция за октябрь). Модель статус не отвергает намеренно:
+# ручки проверяют его сами (`routers/operations._operation_problem`) и собирают проблемы импорта построчно, исключение в модели
+# превратило бы их в 500. Код, создающий операции сам, берёт статус ОТСЮДА.
+OPERATION_STATUSES = ("ОПЛАЧЕНО", "ПЛАН ПОСТУПЛЕНИЙ", "ПЛАН ОПЛАТ")
+PAID, PLAN_INCOME, PLAN_EXPENSE = OPERATION_STATUSES
+
+
 class Operation(Base):
     __tablename__ = "operations"
     id = Column(Integer, primary_key=True)
@@ -271,7 +280,7 @@ class Operation(Base):
     def _paid_leaves_pay_plan(self, key, value):
         """Оплаченное уходит из плана оплат (решение владельца 02.11.2026). Здесь, а не в ручках:
         в «ОПЛАЧЕНО» ведут форма, массовая правка, частичная оплата и импорт."""
-        if value == "ОПЛАЧЕНО":
+        if value == PAID:
             self.pay_plan_at = None
             self.pay_plan_by = None
         return value

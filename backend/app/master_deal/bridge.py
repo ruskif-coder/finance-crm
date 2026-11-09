@@ -15,9 +15,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import own_company
+from app.models import PLAN_INCOME
 
 log = logging.getLogger("finance.master_deal")
-PLANNED = "план поступлений"
+PLANNED = PLAN_INCOME          # статус из словаря модели, не своей строкой: строчными он выпадал из сводок (09.11.2026)
 
 
 def main_service(rows: list) -> Optional[str]:

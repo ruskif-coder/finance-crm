@@ -27,6 +27,7 @@ import app.mail.models  # noqa: F401
 import app.models  # noqa: F401
 import app.notify.models  # noqa: F401
 import app.ord.models  # noqa: F401
+import app.premod.models  # noqa: F401
 import app.prio.models  # noqa: F401
 import app.publisher_requests  # noqa: F401
 import app.sales.models  # noqa: F401

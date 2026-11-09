@@ -71,11 +71,23 @@ class Form:
         return any([self.inv_no, self.inv_date, self.inv_pdf_id, self.upd_no, self.upd_date, self.net, self.vat, self.gross, self.upd_pdf_id, self.upd_xml_id])
 
 
+def xml_mismatch(inn, kpp, contract, basis, req) -> list[str]:
+    """Что в XML УПД не совпало с заявкой: покупатель, договор, основание (если задано). Одно правило для «Внести» и для
+    догрузки XML во внесённую заявку; на экране — его пара `xmlCheck` в accDocsLogic.js."""
+    pairs = [("ИНН покупателя", inn, req.buyer_inn), ("КПП покупателя", kpp, req.buyer_kpp), ("договор", contract, req.contract_no)]
+    if getattr(req, "basis", ""):
+        pairs.append(("основание", basis, req.basis))
+    return [label for label, got, want in pairs if got != want]
+
+
 @dataclass
 class Result:
     inv_ok: bool; upd_ok: bool; ready: bool; readiness: str
     missing: list[tuple[str, str]] = field(default_factory=list)   # (label, tone: need|bad|warn) — блокируют
     warns: list[str] = field(default_factory=list)                  # не блокируют
+
+
+PAPER = "бумага"   # канал выдачи договора (`master_deal.status.PAPER`) — XML для ЭДО не нужен
 
 
 def evaluate(req, f: Form, *, expected: dict[str, Decimal], dup_inv: str | None, dup_upd: str | None,
@@ -89,15 +101,16 @@ def evaluate(req, f: Form, *, expected: dict[str, Decimal], dup_inv: str | None,
     need_comment = max_diff > SUM_TOLERANCE
     sum_ok = not any_empty and not bad_num and (not need_comment or f.comment.strip() != "")
 
-    xml_err = bool(f.upd_xml_id) and f.xml_buyer_inn is not None and (
-        f.xml_buyer_inn != req.buyer_inn or f.xml_buyer_kpp != req.buyer_kpp or f.xml_contract != req.contract_no
-        or (bool(getattr(req, "basis", "")) and f.xml_basis != req.basis))
+    xml_err = bool(f.upd_xml_id) and f.xml_buyer_inn is not None and bool(
+        xml_mismatch(f.xml_buyer_inn, f.xml_buyer_kpp, f.xml_contract, f.xml_basis, req))
 
     inv_d, upd_d = ru_date(f.inv_date), ru_date(f.upd_date)
     inv_date_bad = bool(f.inv_date) and inv_d is None
     upd_date_bad = bool(f.upd_date) and upd_d is None
     inv_ok = bool(f.inv_no and inv_d and f.inv_pdf_id)
-    upd_ok = bool(f.upd_no and upd_d and f.upd_pdf_id) and sum_ok and not xml_err
+    # XML для ЭДО обязателен везде, кроме бумаги; канал не задан — как ЭДО (владелец 09.11.2026)
+    need_xml = getattr(req, "channel", None) != PAPER
+    upd_ok = bool(f.upd_no and upd_d and f.upd_pdf_id) and sum_ok and not xml_err and (bool(f.upd_xml_id) or not need_xml)
 
     missing: list[tuple[str, str]] = []
     if not f.inv_no: missing.append(("№ счёта", "need"))
@@ -111,6 +124,7 @@ def evaluate(req, f: Form, *, expected: dict[str, Decimal], dup_inv: str | None,
     elif any_empty: missing.append(("суммы УПД", "need"))
     if need_comment and not f.comment.strip(): missing.append(("комментарий к расхождению", "warn"))
     if not f.upd_pdf_id: missing.append(("PDF УПД", "need"))
+    if need_xml and not f.upd_xml_id: missing.append(("XML УПД", "need"))
     if xml_err: missing.append(("XML: покупатель, договор или основание не совпадает", "bad"))
 
     warns: list[str] = []

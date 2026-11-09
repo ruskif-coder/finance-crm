@@ -211,10 +211,11 @@ def _has_counter(html: str, src: str) -> bool:
 # Клик по всей площади (14.10.2026, сделка 9E8Z4U). Загрузчик DSP заменяет ссылку баннера обёрткой `<a href="{LINK_UNESC}">` вокруг
 # всего тела — БЕЗ класса и id. Баннер, где кликабельную площадь задавал класс ссылки (`.banner{display:block;…}` — так верстают под
 # Adfox), а слои отключены от мыши, остаётся с обёрткой нулевого размера: показы идут, клик проходит сквозь слои мимо ссылки.
-# Растягиваем обёртку на весь баннер поверх слоёв. Маркер — чтобы не вставить дважды.
+# Растягиваем обёртку на весь баннер. Маркер — чтобы не вставить дважды.
+# БЕЗ верхнего слоя (`z-index`, 09.11.2026): с ним растянутая ссылка ложилась и поверх плашки ЕРИД — клик по плашке уводил на
+# посадочную вместо сведений о рекламодателе. Слои баннера отключены от мыши, поэтому клик по ним и так доходит до ссылки.
 CLICK_FIX_MARK = "data-simb-click-fix"
-CLICK_FIX_STYLE = (f'<style {CLICK_FIX_MARK}>body>a{{display:block;position:absolute;inset:0;z-index:2147483000;'
-                   'cursor:pointer}</style>')
+CLICK_FIX_STYLE = f'<style {CLICK_FIX_MARK}>body>a{{display:block;position:absolute;inset:0;cursor:pointer}}</style>'
 _DSP_WRAPPER_RE = re.compile(r"<body[^>]*>\s*<a\s+href=[\"']\{LINK_UNESC\}[\"']", re.I)
 
 
@@ -456,3 +457,19 @@ def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
     if pixel:
         params["pixel"] = pixel.strip()
     return params
+
+
+_CLICK_FIX_BLOCK_RE = re.compile(r"<style[^>]*\b" + CLICK_FIX_MARK + r"\b[^>]*>.*?</style>", re.I | re.S)
+
+
+def restyle_click_fix(html: str) -> tuple:
+    """Привести уже вставленный фикс клика к текущему `CLICK_FIX_STYLE` (09.11.2026: убран верхний слой над плашкой ЕРИД).
+
+    Перевыгрузка этого не делает — `needs_click_fix` видит метку и второй раз не вставляет. Заменяется ЛЮБОЙ блок с меткой, а не
+    только старый текст: в DSP его правили и руками. Без метки HTML не трогается. → (новый html, изменился ли)."""
+    m = _CLICK_FIX_BLOCK_RE.search(html or "")
+    if not m:
+        return html, False
+    rest = _CLICK_FIX_BLOCK_RE.sub("", html[m.end():])       # дубли, если их когда-то вставили дважды
+    new = html[:m.start()] + CLICK_FIX_STYLE + rest
+    return new, new != html

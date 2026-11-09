@@ -26,6 +26,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import {
   money, parseMoney, msk, isoToRuDate, workHours, ageLabel, ageTone, closeInfo, EMPTY_FORM, evaluate, rowPips, matches, sortQueue, copyAllText, expectedOf, isStarted,
 } from './accDocsLogic';
+import { UpstreamLine, UpstreamModal } from './Upstream';   // «ещё не дошли» (09.11.2026)
 import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow, Field, borderFor, StepHead, Sum, TONE } from './accDocsParts';
 
 const AD_RISE = 'adRise 0.4s cubic-bezier(0.22,1,0.36,1) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
@@ -35,11 +36,12 @@ const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
 const short = name => name.replace(/ ООО$/, '');
 
-export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, now }) {
+export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, now }) {
   const nowMs = typeof now === 'number' ? now : Date.parse(now || data.now);
   const cal = data.settings.calendar;
   const [tab, setTab] = useState('wait');
   const [group, setGroup] = useState('buyer');
+  const [upOpen, setUpOpen] = useState(false);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState({});                // локальные переходы до перезагрузки данных: code → 'done' | 'returned'
   const [forms, setForms] = useState(() => Object.fromEntries(data.requests.filter(r => r.draft).map(r => [r.code, { ...EMPTY_FORM, ...r.draft }])));
@@ -74,6 +76,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
 
   /* ── форма выбранной заявки ── */
   const readOnly = r && r.status === 'done';
+  const lateAttach = !!readOnly;   // во внесённую заявку файл можно догрузить или заменить, но не убрать (владелец 09.11.2026)
   const f = !r ? EMPTY_FORM : readOnly && r.done ? archiveForm(r) : formOf(r.code);
   const setF = patch => { if (!r || readOnly) return; setForms(s => ({ ...s, [r.code]: { ...formOf(r.code), ...patch } })); };
   const ev = r ? evaluate(r, f, { dupInv: dup[r.code] && dup[r.code].inv, dupUpd: dup[r.code] && dup[r.code].upd, closedUntil: data.settings.closed_until, readOnly }) : null;
@@ -98,9 +101,10 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   const copyAll = () => { copy('all', copyAllText(r)); setCopied(s => ({ ...s, [r.code]: Object.fromEntries(COPY_KEYS.concat('all').map(k => [k, true])) })); showToast('Всё для 1С — в буфере одним блоком'); };
 
   const fileInput = useRef(); const pending = useRef(null);
-  const pick = kind => { if (readOnly) return; pending.current = kind; fileInput.current.accept = ACCEPT[kind]; fileInput.current.value = ''; fileInput.current.click(); };
+  const pick = kind => { if (readOnly && !lateAttach) return; pending.current = kind; fileInput.current.accept = ACCEPT[kind]; fileInput.current.value = ''; fileInput.current.click(); };
   const onFile = async e => { const file = e.target.files && e.target.files[0], kind = pending.current; if (!file || !kind) return; const code = r.code;
     let up; try { up = await onUpload(code, kind, file); } catch (err) { fail(err); return; }
+    if (lateAttach) { onReload && onReload(); showToast(code + ': файл догружен'); return; }   // внесённое: форма — из данных сервера
     if (kind === 'updXml') { let x; try { x = await onParseXml(code, file); } catch (err) { setForms(s => ({ ...s, [code]: { ...formOf(code), updXml: up, xml: null, fromXml: false } })); fail(err); return; }
       const cur = formOf(code);   // п.4: номер/дата — если пусто, суммы — всегда
       setForms(s => ({ ...s, [code]: { ...cur, updXml: up, xml: x, fromXml: true, updNo: cur.updNo || x.number, updDate: cur.updDate || x.date, net: x.net, vat: x.vat, gross: x.gross } }));
@@ -175,6 +179,8 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
               <span style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', color: close.tone === 'ok' ? 'var(--text-secondary)' : TONE[close.tone].fg }}>До закрытия {data.settings.close_month_gen || data.settings.close_month} {close.left} {close.word}</span>
               <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{close.at} · открыто {close.openCount}</span>
             </div>
+            <UpstreamLine up={data.upstream} onOpen={() => setUpOpen(true)} />
+            {upOpen && data.upstream && <UpstreamModal up={data.upstream} month={data.settings.close_month} onClose={() => setUpOpen(false)} />}
             <div style={{ display: 'flex', flexDirection: 'column', overflow: 'auto', minHeight: 0 }}>
               {groups.map(g => (
                 <React.Fragment key={g.key}>
@@ -255,8 +261,10 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
     diff: `Расходится с ДС на ${money(S.maxDiff)} ₽ — объясните ниже`, match: S.maxDiff ? `Расхождение ${money(S.maxDiff)} ₽ — в пределах 1 ₽` : 'Суммы совпадают с ДС ✓' })[S.state];
   const dateNote = (v, bad, w) => bad ? ['формат дд.мм.гггг', 'bad'] : w ? [w, 'warn'] : [`по ДС — ${ev.periodEnd}`, ''];
   const [invDN, invDT] = dateNote(f.invDate, ev.invDateBad, ev.invDW), [updDN, updDT] = dateNote(f.updDate, ev.updDateBad, ev.updDW);
-  const bar = readOnly ? [] : ev.missing.map(m => ({ ...m })).concat(ev.warns.map(label => ({ label, tone: 'warn' })));
-  const head = readOnly ? `Внесено ${msk(r.done.at).dm} — заявка в архиве` : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
+  const lateMissing = readOnly ? ev.missing.filter(m => /^(PDF|XML)/.test(m.label)) : [];   // внесено без файла — догрузить
+  const lateAttach = !!readOnly;
+  const bar = readOnly ? lateMissing : ev.missing.map(m => ({ ...m })).concat(ev.warns.map(label => ({ label, tone: 'warn' })));
+  const head = readOnly ? (lateMissing.length ? `Внесено ${msk(r.done.at).dm} — догрузите:` : `Внесено ${msk(r.done.at).dm} — заявка в архиве`) : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, minHeight: 'calc(100vh - 110px)' }}>
@@ -333,7 +341,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
               <Field label="№ счёта" note={dupRow.inv ? 'такой № уже: ' + dupRow.inv : ''} noteTone={dupRow.inv ? 'warn' : ''}><Input mono value={f.invNo} onChange={e => setF({ invNo: e.target.value })} placeholder="из 1С" readOnly={readOnly} style={{ borderColor: borderFor(dupRow.inv ? 'warn' : '') }} /></Field>
               <Field label="дата" note={invDN} noteTone={invDT}><Input mono value={f.invDate} onChange={e => setF({ invDate: e.target.value })} placeholder="дд.мм.гггг" readOnly={readOnly} style={{ borderColor: borderFor(invDT) }} /></Field>
             </div>
-            <FileRow kind="PDF" label="Счёт · PDF" file={f.invPdf} required note="перетащите файл или нажмите «приложить»" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('invPdf')} onRemove={() => removeFile('invPdf', { invPdf: null })} />
+            <FileRow kind="PDF" label="Счёт · PDF" file={f.invPdf} required note="перетащите файл или нажмите «приложить»" readOnly={readOnly} canAttach={lateAttach} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('invPdf')} onRemove={() => removeFile('invPdf', { invPdf: null })} />
           </Card>
 
           <Card style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderColor: ev.updOk ? 'var(--income-border)' : 'var(--border-card)' }}>
@@ -341,7 +349,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             {/* бумага (владелец 06.11.2026, вариант 1): XML для ЭДО не нужен — только PDF УПД; уже приложенный XML остаётся виден */}
             {paper && !f.updXml
               ? <div style={{ padding: '9px 12px', borderRadius: 12, border: '1px dashed var(--border-card)', fontSize: 12.5, color: 'var(--text-muted)' }}>Бумага — XML для ЭДО не нужен</div>
-              : <FileRow kind="XML" label="УПД · XML для ЭДО" file={f.updXml} note="приложите — номер, дата и суммы заполнятся из файла" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updXml')} onRemove={() => removeFile('updXml', { updXml: null, xml: null, fromXml: false })} />}
+              : <FileRow kind="XML" label="УПД · XML для ЭДО" file={f.updXml} note="приложите — номер, дата и суммы заполнятся из файла" readOnly={readOnly} canAttach={lateAttach} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updXml')} onRemove={() => removeFile('updXml', { updXml: null, xml: null, fromXml: false })} />}
             {ev.xml.on && !readOnly && (() => { const t = ev.xml.err ? TONE.bad : TONE.ok; return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: t.fg }}>{ev.xml.err ? 'XML не совпадает со сделкой — внести нельзя, проверьте УПД или верните аккаунту' : 'XML сверен со сделкой'}</span>
@@ -369,10 +377,10 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             </div>
             {paper ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, borderRadius: 14, background: 'var(--warning-tint)', border: '1px solid var(--warning-border)' }}>
-                <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно — по нему печатают" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />
+                <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно — по нему печатают" readOnly={readOnly} canAttach={lateAttach} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />
                 <span style={{ fontSize: 12, color: 'var(--warning-fg)', padding: '0 6px 2px' }}>Бумага: этот PDF распечатают и подпишут у клиента — скан подписанного приложит аккаунт в мастер-сделке</span>
               </div>)
-              : <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно" readOnly={readOnly} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />}
+              : <FileRow kind="PDF" label="УПД · PDF" file={f.updPdf} required note="обязательно" readOnly={readOnly} canAttach={lateAttach} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updPdf')} onRemove={() => removeFile('updPdf', { updPdf: null })} />}
           </Card>
         </div>
 
@@ -415,7 +423,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             <Btn onClick={doReturn} disabled={!ret.reason && !ret.text.trim()} style={{ borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}>Вернуть аккаунту</Btn></span>
         </> : <>
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px 8px', flexWrap: 'wrap', flex: '1 1 0', minWidth: 0 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly || ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly ? (lateMissing.length ? 'var(--warning-fg)' : 'var(--income-fg)') : ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
             {bar.map(m => <span key={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 10px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: TONE[m.tone].bg, color: TONE[m.tone].fg }}><Dot c={TONE[m.tone].dot} /><span style={{ whiteSpace: 'nowrap' }}>{m.label}</span></span>)}
           </span>
           <span style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>

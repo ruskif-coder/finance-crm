@@ -5,7 +5,7 @@ from sqlalchemy import func, case, or_, and_
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
-from app.models import Operation, Article, Counterparty, User
+from app.models import OPERATION_STATUSES, Operation, Article, Counterparty, User
 from app import own_company
 from app.audit import log_action
 from app.permissions import require_permission
@@ -30,11 +30,7 @@ router = APIRouter()
 # поток и одно соединение: 3 048 строк это 957 мс, дальше линейно.
 EXPORT_MAX_ROWS = 20000
 
-# Словарь статусов операции. Раньше сервер принимал ЛЮБУЮ строку, а интерфейс предлагал
-# только эти три — и расхождение выяснялось бы на отчётах, которые фильтруют по точному
-# совпадению: строка с опечаткой в статусе просто выпадает из всех сводок, оставаясь в
-# журнале. Замер 11.09.2026: в базе ровно три значения, дырой пока не пользовались.
-OPERATION_STATUSES = ("ОПЛАЧЕНО", "ПЛАН ПОСТУПЛЕНИЙ", "ПЛАН ОПЛАТ")
+# Словарь статусов операции (`OPERATION_STATUSES`) живёт в модели — один на систему.
 
 
 def _operation_problem(op) -> str | None:
@@ -469,6 +465,20 @@ def get_operations(
             for op in operations
         ]
     }
+
+@router.get("/{op_id}/context")
+def operation_context(op_id: int, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("operations", "view"))):
+    """Боковая панель операции: пакет, ДС, сделки, документы 1С, деньги, стороны, история — одним запросом при открытии."""
+    from app import operation_context as OC
+    from app.permissions import get_permissions_for_user
+    op = db.get(Operation, op_id)
+    if op is None:
+        raise HTTPException(status_code=404, detail="Операция не найдена — возможно, её удалили. Обновите реестр")
+    # PDF и XML 1С отдаёт экран бухгалтера под своим правом: без него ссылки на панели серые, а не отказ после клика
+    can_docs = bool(get_permissions_for_user(db, current_user).get("onec_desk", {}).get("view"))
+    return OC.build(db, op, can_download_docs=can_docs)
+
 
 @router.get("/periods")
 def get_periods(

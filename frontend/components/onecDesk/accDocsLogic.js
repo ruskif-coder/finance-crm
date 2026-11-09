@@ -123,7 +123,8 @@ export function evaluate(req, f, ctx = {}) {
   const invDW = invDateBad || ctx.readOnly ? '' : dateWarn(f.invDate, { isUpd: false, periodEnd, closedUntil: ctx.closedUntil });
   const updDW = updDateBad || ctx.readOnly ? '' : dateWarn(f.updDate, { isUpd: true, periodEnd, closedUntil: ctx.closedUntil });
   const invOk = !!(f.invNo && f.invDate && !invDateBad && f.invPdf);
-  const updOk = !!(f.updNo && f.updDate && !updDateBad && f.updPdf) && sum.ok && !xml.err;
+  const needXml = req.channel !== 'бумага';   // XML для ЭДО обязателен, кроме бумаги; канал не задан — как ЭДО (владелец 09.11.2026)
+  const updOk = !!(f.updNo && f.updDate && !updDateBad && f.updPdf && (f.updXml || !needXml)) && sum.ok && !xml.err;
 
   const missing = []; const need = label => missing.push({ label, tone: 'need' }); const prob = (label, tone) => missing.push({ label, tone });
   if (!f.invNo) need('№ счёта'); if (!f.invDate) need('дата счёта'); else if (invDateBad) prob('дата счёта', 'bad'); if (!f.invPdf) need('PDF счёта');
@@ -131,6 +132,7 @@ export function evaluate(req, f, ctx = {}) {
   if (sum.badNum) prob('сумма УПД', 'bad'); else if (sum.anyEmpty) need('суммы УПД');
   if (sum.needComment && !(f.comment || '').trim()) prob('комментарий к расхождению', 'warn');
   if (!f.updPdf) need('PDF УПД');
+  if (needXml && !f.updXml) need('XML УПД');
   if (xml.err) prob('XML: покупатель, договор или основание не совпадает', 'bad');
 
   const warns = [];

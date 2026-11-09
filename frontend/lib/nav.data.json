@@ -219,6 +219,12 @@
           "perm": "traffic_queue"
         },
         {
+          "key": "premoderation",
+          "label": "Премодерация",
+          "href": "/traffic/premoderation",
+          "perm": "traffic_premod"
+        },
+        {
           "key": "stats",
           "label": "Статистика",
           "href": "/traffic/stats",
