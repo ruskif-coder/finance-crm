@@ -8,7 +8,6 @@
 Повтор обновляет ту же операцию (ссылка на комплект), только пока она «план поступлений»: оплаченную или поправленную бухгалтером
 в другой статус не трогаем."""
 import logging
-from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
@@ -70,7 +69,8 @@ def sync_kit(db: Session, m, k):
     basis = tpl_doc.upd_closing(model, k, a.rows, db)["text"] if model else None
     vat = float(a.vat_rate or 0)
     income = round(float(k.onec_gross if k.onec_gross is not None else (k.gross or 0)), 2)   # вернувшаяся из 1С сумма — факт (решение 42)
-    fields = {"date": k.onec_invoice_date or date.today(), "status": PLANNED, "income": income, "expense": 0.0, "period": m.period,
+    # «Дата» операции у плана пустая (владелец 09.11.2026) — её ставит оплата; дата счёта — своё поле `invoice_date`
+    fields = {"date": None, "status": PLANNED, "income": income, "expense": 0.0, "period": m.period,
               # НДС из 1С — тоже факт (решение 42, ревью 05.11.2026); до 1С — расчёт от ставки ДС
               "vat_rate": vat, "vat_fact": round(float(k.onec_vat), 2) if k.onec_vat is not None else compute_vat_fact(income, 0.0, vat),
               "article_id": _article(db, a, k),

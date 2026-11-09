@@ -36,7 +36,7 @@ def env():
 
 
 def _ops(db, k):
-    return db.execute(text("SELECT id, status, income, invoice, invoice_date, ds_num, article_id, counterparty_id, period, description "
+    return db.execute(text("SELECT id, date, status, income, invoice, invoice_date, ds_num, article_id, counterparty_id, period, description "
                            "FROM operations WHERE master_deal_upd_id = :k"), {"k": k.id}).all()
 
 
@@ -54,6 +54,9 @@ def test_invoice_makes_one_planned_income_operation(env):
     assert len(rows) == 1
     r = rows[0]
     assert r.status == "ПЛАН ПОСТУПЛЕНИЙ" and r.invoice == "1247" and r.invoice_date == date(2026, 10, 31)
+    # владелец 09.11.2026: «дата операции должна быть пустой» — у плана её нет (как у 51 ручного плана поступлений),
+    # дата счёта — своё поле. Ломается, если мост снова впишет дату счёта или сегодняшний день в «Дату».
+    assert r.date is None, "дата операции у плана поступлений пустая"
     assert abs(r.income - float(k.gross)) < 0.01 and r.period == m.period
     assert r.article_id, "статья выручки — по основной услуге комплекта"
     assert r.counterparty_id and r.ds_num and r.description, "контрагент, № ДС и основание к закрытию"
