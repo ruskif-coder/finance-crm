@@ -65,7 +65,9 @@ EDIT = require_permission("annexes", "edit")
 # Печатная сборка ДС — в сервисе `app/sales/annex_print.py` (аудит 2.7.0, п. 2.7); прежние имена — ссылками туда.
 from app.sales import annex_print as AP  # noqa: E402
 _contract, _annex, _annex_deals = AP.contract_of, AP.annex_of, AP.annex_deals
-_assert_no_open_legal, file_name, assert_printable, _doc = AP.assert_no_open_legal, AP.file_name, AP.assert_printable, AP.printable_doc
+from app import doc_names as DN  # noqa: E402
+BASIS = "с основанием для закрывающих"
+_assert_no_open_legal, assert_printable, _doc = AP.assert_no_open_legal, AP.assert_printable, AP.printable_doc
 
 
 def _deal_cards(db: Session, annex_id: int) -> list:
@@ -880,7 +882,10 @@ def external_file(annex_id: int, db: Session = Depends(get_db), user: User = Dep
     if not X.is_external(a) or f is None:
         raise HTTPException(404, "Файла у этого ДС нет")
     from app.files_safe import existing_upload_path
-    return FileResponse(existing_upload_path(f.path, subdir=X.SUBDIR), filename=f.filename)
+    import os
+    # не имя загрузки, а общее правило документов — как у собранного ДС (владелец 09.11.2026)
+    return FileResponse(existing_upload_path(f.path, subdir=X.SUBDIR),
+                        filename=DN.for_annex(db, a, os.path.splitext(f.filename or "")[1].lower() or ".pdf"))
 
 
 class SignIn(BaseModel):
@@ -1021,8 +1026,8 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     # Имя файла — кириллицей, а заголовки HTTP умеют только latin-1. Поэтому RFC 5987:
     # ASCII-запасное имя для старых клиентов и `filename*` в UTF-8 для остальных. Без
     # этого ручка падала пятисоткой на кодировке заголовка, а не на документе.
-    human = file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                      payer=(doc.get("customer") or {}).get("name"), basis=with_basis)
+    # имя — общим правилом документов (владелец 09.11.2026: «вид - номер - дата - контрагент - мастер сделка», «формат един»)
+    human = DN.for_annex(db, a, ".pdf", BASIS if with_basis else None)
     ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}{'_with_basis' if with_basis else ''}.pdf"
     quoted = quote(human)
     return StreamingResponse(
@@ -1050,8 +1055,7 @@ def annex_docx(annex_id: int, db: Session = Depends(get_db), user: User = Depend
     doc = _doc(db, a)
     assert_printable(doc)
     data = docx_build.build_docx(doc, with_basis=with_basis)
-    human = file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                      payer=(doc.get("customer") or {}).get("name"), basis=with_basis).replace(".pdf", ".docx")
+    human = DN.for_annex(db, a, ".docx", BASIS if with_basis else None)
     ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}{'_with_basis' if with_basis else ''}.docx"
     quoted = quote(human)
     return StreamingResponse(

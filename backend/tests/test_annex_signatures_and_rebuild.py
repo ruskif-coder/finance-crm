@@ -99,7 +99,9 @@ def test_client_file_has_the_closing_basis_page_only_when_asked():
     full = text(annex_docx.build_docx(doc, with_basis=True))
     assert "Основание для закрывающих документов" in full and "Размещение рекламных материалов бренда «Икс»" in full
     assert full.index("Подписи Сторон") < full.index("Основание для закрывающих документов")           # основание — после ДС
-    assert A.file_name(no=5, doc_date=date(2026, 9, 30), brand="Икс", payer="ООО Ромашка", basis=True).endswith("с основанием для закрывающих.pdf")
+    from app import doc_names as DN
+    from app.routers.annexes import BASIS
+    assert DN.name("ДС № 5", date(2026, 9, 30), "ООО Ромашка", "M-0001", BASIS).endswith(" · M-0001 · с основанием для закрывающих.pdf")
 
 
 # ── дата ДС: по умолчанию начало РК, смена — отдельной ручкой с записью в журнал (владелец 14.10.2026) ─────────

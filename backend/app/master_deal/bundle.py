@@ -6,9 +6,9 @@ import os
 import zipfile
 from io import BytesIO
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import doc_names as DN
 from app.master_deal import to_annex as TA
 
 def _safe_name(s: str) -> str:
@@ -44,25 +44,21 @@ def build(db: Session, m) -> tuple:
                 # Подписан вне системы (03.11.2026): документ — файл клиента (он ляжет ниже, сканом) или ссылка ЭДО. Наш DOCX
                 # не собираем: это был бы наш текст под чужим подписанным документом.
                 if row.edo_link:
-                    put(z, f"{a['number']} — ссылка ЭДО.txt", f"{a['number']} подписан вне системы.\nДокумент в ЭДО: {row.edo_link}\n")
+                    put(z, DN.for_annex(db, row, ".txt", "ссылка ЭДО"), f"{a['number']} подписан вне системы.\nДокумент в ЭДО: {row.edo_link}\n")
                 continue
             try:
-                name, data = _annex_docx(db, a["id"])
-                put(z, name.replace("ДС без номера", a["number"]), data)      # черновик — номером из раскладки
+                _, data = _annex_docx(db, a["id"])
+                put(z, DN.for_annex(db, row, ".docx", number=a["number"]), data)     # черновик — номером из раскладки
 
             except Exception as e:  # noqa: BLE001 — причина уходит в «не вошло.txt»
                 skipped.append(f"{a['number']}: {getattr(e, 'detail', None) or e}")
-        for fid, fname, path, label in db.execute(text("""
-                SELECT f.id, f.filename, f.path,
-                       CASE WHEN f.kind IN ('скан ДС', 'скан УПД') THEN 'скан · ' ELSE f.kind || ' · ' END
-                       || coalesce(a.number, 'УПД № ' || f.upd_no::text, 'скан')
-                  FROM master_deal_files f LEFT JOIN sales_annexes a ON a.id = f.annex_id
-                 WHERE f.master_deal_id = :m ORDER BY f.id"""), {"m": m.id}).all():
+        from app.master_deal.models import MasterDealFile
+        for f in db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id).order_by(MasterDealFile.id):
             try:
-                with open(existing_upload_path(path), "rb") as fh:
-                    put(z, f"{label} — {fname}", fh.read())
+                with open(existing_upload_path(f.path), "rb") as fh:
+                    put(z, DN.for_package_file(db, m, f), fh.read())     # то же имя, что при скачивании файла по одному
             except Exception:  # noqa: BLE001
-                skipped.append(f"скан «{fname}»: файла нет на диске")
+                skipped.append(f"скан «{f.filename}»: файла нет на диске")
         if skipped or not used:
             z.writestr("не вошло.txt", "\n".join(skipped or ["В пакете пока нет готовых файлов: ДС не созданы, сканов нет."]))
-    return f"{m.code}.zip", buf.getvalue()
+    return DN.for_package_zip(db, m), buf.getvalue()

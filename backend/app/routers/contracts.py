@@ -465,13 +465,11 @@ def download_contract_document(
     # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
     file_path = existing_upload_path(contract.attached_filename, root=UPLOADS_DIR)
 
-    # Отдаём с оригинальным именем (без префикса contract_id_)
-    original_name = contract.attached_filename
-    prefix = f"{contract_id}_"
-    if original_name.startswith(prefix):
-        original_name = original_name[len(prefix):]
-
-    return FileResponse(file_path, filename=original_name,
+    # Имя — общим правилом документов: «Договор № … от … · Контрагент.pdf» (владелец 09.11.2026: «формат един»), а не имя загрузки
+    import os
+    from app.doc_names import for_contract
+    ext = os.path.splitext(contract.attached_filename)[1].lower()
+    return FileResponse(file_path, filename=for_contract(db, contract, ext),
                         media_type="application/octet-stream")
 
 

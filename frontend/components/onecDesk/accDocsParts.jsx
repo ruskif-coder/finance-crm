@@ -2,16 +2,17 @@
  * Части страницы «Документы для бухгалтерии». Только отображение — состояние и правила в AccountantDocs.jsx / accDocsLogic.js.
  * Шрифты и карточка — из кита (salesTableKit). Btn, Input, Chip, Pip, CopyField, FileRow — свои у экрана: в ките нет
  * компонентов с этими состояниями (фокус, «в буфере», пунктир пустого файла), а стили-объекты кита их не заменяют.
+ * Хендофф 09.11.2026 (аудит внедрённой страницы) вставлен дословно; «стенд:» — проводка в систему.
  */
 import React from 'react';
-import { MONO, UI as SANS, card } from '@/components/salesTableKit';
+import { MONO, UI as SANS, card } from '@/components/salesTableKit';   // стенд: шрифты и карточка — из кита
 import { money } from './accDocsLogic';
 
 export { MONO, SANS };
 
 /* ── стили страницы (подключаются один раз) ── */
 export const STYLE = `
-.ad-root { font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
+.ad-root { --ad-rise: adRise 0.4s cubic-bezier(0.22,1,0.36,1) both; font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
 .ad-root a { color:var(--accent); text-decoration:none } .ad-root a:hover { color:var(--accent-hover); text-decoration:underline }
 .ad-cap { font-family:${MONO}; font-size:10.5px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-cap) }
 .ad-btn { display:inline-flex; align-items:center; gap:6px; height:34px; box-sizing:border-box; padding:0 14px; border:1px solid var(--border-card); background:var(--bg-card); border-radius:12px; font:600 13px ${SANS}; color:var(--text-secondary); white-space:nowrap; cursor:pointer; user-select:none }
@@ -30,7 +31,7 @@ export const STYLE = `
 
 /* ── примитивы ── */
 export const Cap = ({ children, style }) => <span className="ad-cap" style={style}>{children}</span>;
-export const Card = ({ children, style, ...p }) => <div style={{ ...card, ...style }} {...p}>{children}</div>;
+export const Card = ({ children, style, ...p }) => <div style={{ ...card, ...style }} {...p}>{children}</div>;   // стенд: карточка кита
 export const Btn = ({ children, primary, disabled, onClick, style, title }) => (
   <span role="button" tabIndex={0} title={title} aria-disabled={disabled ? 'true' : undefined} className={'ad-btn' + (primary ? ' p' : '')} style={style}
     onClick={onClick} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onClick && onClick())}>{children}</span>
@@ -53,8 +54,10 @@ export const Chip = ({ tone = 'need', children, dashed, title }) => { const t = 
 export const Pip = ({ kind, label, title, onGreen }) => {
   const m = { flag: ['var(--accent)', '#FFFFFF'], ok: ['var(--income-tint)', 'var(--income-fg)'], warn: ['var(--warning-tint)', 'var(--warning-fg)'], off: ['var(--bg-subtle)', 'var(--text-faint)'],
     'edo-off': ['var(--bg-card)', 'var(--text-disabled)'], 'edo-info': ['var(--accent-tint)', 'var(--accent-fg)'], 'edo-ok': ['var(--income-tint)', 'var(--income-fg)'], 'edo-bad': ['var(--danger-tint)', 'var(--danger-fg)'] }[kind];
-  const bg = onGreen && kind !== 'flag' ? 'var(--bg-card)' : m[0];
-  return <span title={title} style={{ display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 6px', borderRadius: 5, fontFamily: MONO, fontSize: 10, fontWeight: 700, background: bg, color: m[1] }}>{label}</span>;
+  /* аудит п.2: на зелёной строке неподписанный ДС — залитая жёлтая метка, чтобы предупреждение не терялось */
+  const loud = onGreen && kind === 'warn';
+  const bg = loud ? 'var(--warning)' : onGreen && kind !== 'flag' ? 'var(--bg-card)' : m[0];
+  return <span title={title} style={{ display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 6px', borderRadius: 5, fontFamily: MONO, fontSize: 10, fontWeight: 700, background: bg, color: loud ? 'var(--on-accent)' : m[1] }}>{label}</span>;
 };
 
 /** Значение, которое копируется по клику. state: 'last' | 'was' | '' (п.13) */
@@ -73,16 +76,17 @@ export function CopyField({ label, value, hint, state, onCopy, big = true, child
 }
 
 /** Строка файла (п.7: пустая — нейтральная пунктирная) */
+// стенд: файлы под авторизацией — открывает страница (`onOpen`); во внесённое можно догрузить (`canAttach`)
 export function FileRow({ kind, label, file, required, note, readOnly, canAttach, onAttach, onRemove, onOpen }) {
   const has = !!file;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderRadius: 12, border: `1px ${has ? 'solid' : 'dashed'} ${has ? 'var(--border-inner)' : 'var(--border-card)'}`, background: has ? 'var(--bg-subtle)' : 'var(--bg-card)' }}>
       <span style={{ flex: '0 0 auto', minWidth: 40, height: 28, padding: '0 6px', boxSizing: 'border-box', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-inner)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: has ? 'var(--accent-fg)' : 'var(--text-faint)' }}>{kind}</span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: has ? 'var(--text-primary)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{has ? (onOpen ? <a href="#" onClick={e => { e.preventDefault(); onOpen(file); }}>{file.name}</a> : file.name) : label + (required ? '' : ' · по желанию')}</span>
+        <span title={has ? file.name : undefined} style={{ fontSize: 13, fontWeight: 700, color: has ? 'var(--text-primary)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{has ? (onOpen ? <a href="#" onClick={e => { e.preventDefault(); onOpen(file); }}>{file.name}</a> : file.name) : label + (required ? '' : ' · по желанию')}</span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{has ? `${readOnly ? 'в архиве' : 'приложено'} · ${Math.round(file.size / 1000)} КБ` : note}</span>
       </span>
-      {has && !readOnly && <a href="#" onClick={e => { e.preventDefault(); onRemove(); }} style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)' }}>убрать</a>}
+      {has && !readOnly && <a href="#" title="Убрать файл" aria-label="Убрать файл" onClick={e => { e.preventDefault(); onRemove(); }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, fontSize: 16, lineHeight: 1, color: 'var(--text-faint)', textDecoration: 'none' }}>×</a>}
       {(!readOnly || canAttach) && <Btn onClick={onAttach} style={{ height: 32 }}><Clip />{has ? 'заменить' : 'приложить'}</Btn>}
     </div>
   );

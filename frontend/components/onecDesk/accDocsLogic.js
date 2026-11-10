@@ -14,7 +14,7 @@ export const AGE_WARN_H = 9;             // ≥ 1 рабочего дня — ж
 export const AGE_BAD_H = 27;             // ≥ 3 рабочих дней — красный
 
 /* ── деньги ── */
-// формат денег — общий (lib/salesFormat.rub2, «1 000 000,40»); пусто здесь — пустая строка, а не «—»: значение идёт и в поля ввода
+// стенд: формат денег — общий (lib/salesFormat.rub2, «1 000 000,40»); пусто — пустая строка, а не «—»: значение идёт и в поля ввода
 export const money = v => (v == null || Number.isNaN(v)) ? '' : rub2(v);
 /** '1 000 000,40' → 1000000.4; '' → null; мусор → NaN */
 export const parseMoney = s => {
@@ -96,7 +96,7 @@ export function sumCheck(f, exp, tol = SUM_TOLERANCE) {
 export function xmlCheck(xml, req) {
   if (!xml) return { on: false, err: false, rows: [] };
   const rows = [['ИНН покупателя', xml.buyer && xml.buyer.inn, req.buyer.inn], ['КПП покупателя', xml.buyer && xml.buyer.kpp, req.buyer.kpp], ['договор', xml.contract, req.contract.no]]
-    // согласованное основание — наименование услуги в строке УПД (владелец 05.11.2026); сервер сравнивает без оформления
+    // стенд: согласованное основание — наименование услуги в строке УПД (владелец 05.11.2026); сервер сравнивает без оформления
     .concat(req.basis ? [['основание', xml.basis, req.basis]] : [])
     .map(([label, value, want]) => ({ label, value: value || '—', want, ok: value === want }));
   return { on: true, err: rows.some(r => !r.ok), rows };
@@ -123,7 +123,7 @@ export function evaluate(req, f, ctx = {}) {
   const invDW = invDateBad || ctx.readOnly ? '' : dateWarn(f.invDate, { isUpd: false, periodEnd, closedUntil: ctx.closedUntil });
   const updDW = updDateBad || ctx.readOnly ? '' : dateWarn(f.updDate, { isUpd: true, periodEnd, closedUntil: ctx.closedUntil });
   const invOk = !!(f.invNo && f.invDate && !invDateBad && f.invPdf);
-  const needXml = req.channel !== 'бумага';   // XML для ЭДО обязателен, кроме бумаги; канал не задан — как ЭДО (владелец 09.11.2026)
+  const needXml = req.channel !== 'бумага';   // стенд: XML для ЭДО обязателен, кроме бумаги; канал не задан — как ЭДО (владелец 09.11.2026)
   const updOk = !!(f.updNo && f.updDate && !updDateBad && f.updPdf && (f.updXml || !needXml)) && sum.ok && !xml.err;
 
   const missing = []; const need = label => missing.push({ label, tone: 'need' }); const prob = (label, tone) => missing.push({ label, tone });
@@ -145,6 +145,49 @@ export function evaluate(req, f, ctx = {}) {
     readiness: !isStarted(f) ? 'none' : ready ? 'ready' : 'started', periodEnd };
 }
 
+/**
+ * Вид строки очереди (аудит п.2–3). readiness — из rowPips.
+ *  ready → зелёный фон; selected → синяя рамка 2 px по всему контуру (border 1 px + кольцо box-shadow 1 px), без полос слева;
+ *  dsWarn — готово, но ДС не подписан: метка ДС на зелёной строке залитая жёлтая (var(--warning), белый текст).
+ */
+export const rowLook = (req, readiness, selected) => {
+  const ready = req.status === 'wait' && readiness === 'ready';
+  return { ready, selected, dsWarn: ready && !req.ds_signed };
+};
+
+/** Аудит п.4: текст услуги совпадает с основанием — второй раз абзац не показываем */
+export const sameAsBasis = (service, basis) => (service || '').trim().replace(/\s+/g, ' ') === (basis || '').trim().replace(/\s+/g, ' ');
+
+/** Аудит п.8: подсказка под датой — только для УПД (не раньше конца периода); у счёта пусто */
+export const dateHint = (isUpd, periodEnd) => isUpd && periodEnd ? `не раньше ${periodEnd}` : '';
+
+/**
+ * Прогноз «Ещё в пути» (полоса срока закрытия, вторая строка): мастер-сделки периода close_month, по которым процесс запущен
+ * (этап сделки — сверка / согласование), а заявки на документы ещё нет. Только для информации: в очередь не попадают, действий нет.
+ * items: [{ code, buyer, brand, account, stage: 'сверка' | 'согласование', gross, stage_since: ISO }]
+ * Сортировка: сначала согласование (ближе к заявке), внутри — дольше в этапе. «в этапе» — в рабочих часах; ≥ 3 р.д. — жёлтым.
+ */
+export const STAGE_ORDER = ['согласование', 'сверка'];
+export function forecastOf(na, nowMs, cal) {
+  const items = (na && na.items) || [];
+  const plural = n => n % 10 === 1 && n % 100 !== 11 ? 'сделка' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'сделки' : 'сделок';
+  return {
+    on: items.length > 0, total: items.length, totalLabel: `${items.length} ${plural(items.length)}`,
+    gross: Math.round(items.reduce((a, x) => a + x.gross, 0) * 100) / 100,
+    by: STAGE_ORDER.map(stage => ({ stage, n: items.filter(x => x.stage === stage).length })).filter(x => x.n).reverse(),
+    items: items.slice().sort((a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage) || Date.parse(a.stage_since) - Date.parse(b.stage_since))
+      .map(x => { const h = workHours(Date.parse(x.stage_since), nowMs, cal);
+        return { ...x, inStage: (x.stage === 'согласование' ? 'у клиента ' : 'в работе ') + (h < WORK_DAY.hours ? Math.max(1, Math.floor(h)) + ' ч' : Math.floor(h / WORK_DAY.hours) + ' р.д.'), late: h >= AGE_BAD_H }; }),
+  };
+}
+
+/**
+ * Вкладка «Ждут сканов»: документы внесены, а ДС так и не подписан (внесли с предупреждением «ДС не подписан») — ждём скан подписанного ДС.
+ * Скан прикладывает бухгалтер или аккаунт; после этого ds_signed = true, ds_scan_url заполнен, заявка уходит из вкладки.
+ */
+export const waitsScan = r => r.status === 'done' && !r.ds_signed;
+export const inTab = (r, tab) => tab === 'all' ? true : tab === 'scan' ? waitsScan(r) : r.status === tab;
+
 /** Метки строки очереди */
 export function rowPips(req, f, seen) {
   const ev = req.status === 'wait' ? evaluate(req, f || EMPTY_FORM) : null, rd = ev ? ev.readiness : 'none';
@@ -156,7 +199,7 @@ export function rowPips(req, f, seen) {
     out.push({ kind: ev.invOk ? 'ok' : 'off', label: 'СЧЁТ', title: ev.invOk ? 'Счёт заполнен' : 'Счёт не заполнен' });
     out.push({ kind: ev.updOk ? 'ok' : 'off', label: 'УПД', title: ev.updOk ? 'УПД заполнен' : 'УПД не заполнен' });
   }
-  if (req.status === 'done') out.push(edoPip(req.edo));
+  if (req.status === 'done' && req.edo) out.push(edoPip(req.edo));   // стенд: до подключения ЭДО метки нет (владелец 09.11.2026: «убери, я это и так знаю»)
   return { pips: out, readiness: rd };
 }
 

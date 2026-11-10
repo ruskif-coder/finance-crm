@@ -85,3 +85,16 @@ def read(f: MasterDealFile) -> bytes:
     from app.files_safe import existing_upload_path
     with open(existing_upload_path(f.path), "rb") as fh:
         return fh.read()
+
+
+def save_ds_scan(db: Session, m, k, user, *, filename: str, content: bytes) -> dict:
+    """Скан подписанного ДС от бухгалтера (хендофф 09.11.2026, вкладка «Ждут сканов»): тем же путём, что в мастер-сделке, — к ДС
+    комплекта. Прежний файл с диска убирает вызывающий ПОСЛЕ коммита (`old_path`)."""
+    from app.master_deal import files as MFL
+    from app.master_deal.service import MasterError
+    if not k.annex_id:
+        raise DeskError(409, "У этой заявки нет ДС — скан прикладывать не к чему")
+    try:
+        return MFL.save_scan(db, m, user, filename=filename, content=content, annex_id=k.annex_id, upd_no=None)
+    except MasterError as e:
+        raise DeskError(e.status, e.message)

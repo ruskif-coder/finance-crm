@@ -123,7 +123,8 @@ def test_package_zip_takes_the_client_document_not_our_constructor(ctx):
     _sign(db, a, svc, user)
     names = zipfile.ZipFile(io.BytesIO(bundle.build(db, db.get(MasterDeal, a.master_deal_id))[1])).namelist()
     assert not [n for n in names if n.endswith(".docx")], names
-    assert any("ДС.pdf" in n for n in names), names
+    # файл клиента — общим правилом имени документа (владелец 09.11.2026), а не именем загрузки «ДС.pdf»
+    assert any(n.startswith("ДС № 987654") and n.endswith("скан подписанного.pdf") for n in names), names
 
 
 def test_package_zip_names_the_edo_link(ctx):

@@ -143,6 +143,27 @@ async def desk_file_upload(kit_id: int, slot: str, file: UploadFile = File(...),
     return _done(db, user, m, k, "onec_desk_file", f"{out['kind']} — «{out['filename']}»" + (" (замена)" if out["old_path"] else ""))
 
 
+@router.post("/kit/{kit_id}/ds-scan")
+async def desk_ds_scan(kit_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Скан подписанного ДС от бухгалтера (хендофф 09.11.2026, вкладка «Ждут сканов») — тем же путём и по тем же правилам, что в
+    мастер-сделке: к выставленному бумажному ДС комплекта."""
+    from app.files_safe import remove_upload
+    content = await file.read()
+    m, k = _kit(db, kit_id, lock=True)
+    try:
+        out = OF.save_ds_scan(db, m, k, user, filename=file.filename, content=content)
+        db.commit()
+    except SV.DeskError as e:
+        db.rollback()
+        _err(e)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "К этому ДС скан только что загрузили — обновите страницу")
+    if out["old_path"]:
+        remove_upload(out["old_path"])
+    return _done(db, user, m, k, "onec_desk_file", f"скан подписанного ДС — «{out['filename']}»" + (" (замена)" if out["replaced"] else ""))
+
+
 @router.get("/kit/{kit_id}/files/{file_id}")
 def desk_file_download(kit_id: int, file_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     from app.files_safe import existing_upload_path
@@ -198,8 +219,9 @@ def desk_ds(kit_id: int, fmt: str = "pdf", db: Session = Depends(get_db), user: 
     if ext is None:                                   # внешний ДС — расширение его файла
         import os
         ext = os.path.splitext(getattr(resp, "filename", "") or "")[1].lower() or ".pdf"
-    # Имя — с пакетом, контрагентом и периодом (владелец 05.11.2026), а не «Annex_28_…»
-    resp.headers["Content-Disposition"] = NM.disposition(NM.file_name(db, m, a.number or "ДС", ext), f"{m.code}_DS{ext}")
+    # Имя — общим правилом документов (владелец 09.11.2026: «независимо с какого экрана качаю — формат един»)
+    from app.doc_names import for_annex
+    resp.headers["Content-Disposition"] = NM.disposition(for_annex(db, a, ext), f"{m.code}_DS{ext}")
     return resp
 
 

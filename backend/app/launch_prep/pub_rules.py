@@ -124,6 +124,19 @@ def web_url(url: Optional[str]) -> Optional[str]:
     return app_link_web(u) if is_app_link(u) else u
 
 
+# Склейка нескольких ссылок в одном поле (владелец 09.11.2026: «ссылка должна быть атомарна», «не давать» — ни аккаунту, ни
+# площадке): пробел/перевод строки внутри или разделитель «, ; |», за которым начинается новый адрес. Запятая ВНУТРИ адреса
+# законна (`?id=11680,11681`, фильтры поиска) — её не трогаем.
+_GLUED = re.compile(r"\s|[\x00-\x1f\x7f]|[,;|]\s*(?:[a-z][a-z0-9+.-]*://|www\.)", re.I)
+ONE_LINK = ("Нужна одна ссылка — в поле несколько адресов. Если товаров несколько, нужна одна ссылка на подборку: "
+            "запросите её у площадки")
+
+
+def _assert_one_link(v: str) -> None:
+    if _GLUED.search(v):
+        raise ValueError(ONE_LINK)
+
+
 def validate_landing(value: Optional[str], surface_kind: Optional[str] = None) -> Optional[str]:
     """ВЕБ-ссылка пары — всегда http(s), на любой поверхности (владелец 06.10.2026: «первая
     всегда веб»). Ссылка в приложении — отдельное поле, `validate_app_link`.
@@ -135,6 +148,7 @@ def validate_landing(value: Optional[str], surface_kind: Optional[str] = None) -
         raise ValueError("Веб-ссылка должна начинаться с http:// или https://"
                          + (" — ссылку в приложении (storefront://…, deeplink+://…) впишите "
                             "во второе поле" if surface_kind == "app" else ""))
+    _assert_one_link(v)
     return v
 
 
@@ -152,6 +166,7 @@ def validate_app_link(value: Optional[str]) -> Optional[str]:
     # запускает любой компонент Android-приложения (ревью 06.10.2026).
     if re.search(r"\s|[\x00-\x1f\x7f]", v):
         raise ValueError("В ссылке в приложении не должно быть пробелов и переводов строки")
+    _assert_one_link(v)
     if v.lower().startswith("intent:"):
         raise ValueError("Ссылки intent:// не принимаем — укажите схему приложения или https://")
     if v.lower().startswith(("http://", "https://")) or is_app_link(v) or is_app_scheme(v):

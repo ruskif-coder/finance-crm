@@ -58,36 +58,6 @@ def assert_no_open_legal(db: Session, a: SalesAnnex) -> None:
         raise HTTPException(409, why)
 
 
-_BAD_IN_NAME = ('\\', '/', ':', '*', '?', '"', '<', '>',
-                '|', '\r', '\n', '\t')
-
-
-def file_name(*, no, doc_date, brand, payer, basis: bool = False) -> str:
-    """Имя файла ДС: «ДС №68 от 31.05.2026 — Dr. Reddy's Хелинорм — ООО Ромашка.pdf».
-
-    Четыре части по правилу владельца 05.09.2026: номер, дата, рекламодатель с брендом,
-    юрлицо по договору. Порядок не косметика — по такому имени документ находят в папке
-    и в переписке, не открывая.
-
-    Пустые части выпадают, а не оставляют пустое место с разделителем: у черновика
-    номера ещё нет, у части контрагентов не заполнен бренд.
-    """
-    parts = [f"ДС №{no}" if no else "ДС без номера"]
-    if doc_date:
-        parts[0] += f" от {doc_date.strftime('%d.%m.%Y')}"
-    for v in (brand, payer):
-        v = " ".join((v or "").split())
-        if v:
-            parts.append(v)
-    if basis:
-        parts.append("с основанием для закрывающих")
-    name = " — ".join(parts)
-    for ch in _BAD_IN_NAME:
-        name = name.replace(ch, " ")
-    name = " ".join(name.split())
-    # Ограничение длины имени файла — 255 байт в большинстве систем; кириллица в UTF-8
-    # занимает по два, поэтому режем по символам с запасом.
-    return (name[:110].rstrip() or "ДС") + ".pdf"
 
 
 def assert_printable(doc: dict) -> None:
@@ -123,6 +93,6 @@ def printable_docx(db: Session, annex_id: int) -> tuple:
     assert_no_open_legal(db, a)
     doc = printable_doc(db, a)
     assert_printable(doc)
-    name = file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                     payer=(doc.get("customer") or {}).get("name")).replace(".pdf", ".docx")
+    from app.doc_names import for_annex
+    name = for_annex(db, a, ".docx")              # имя — общим правилом документов (владелец 09.11.2026)
     return name, docx_build.build_docx(doc)

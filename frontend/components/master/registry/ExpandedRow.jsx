@@ -89,7 +89,7 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
           {!!ds.length && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{ready} из {total} готово</span>}
           <ChannelChip way={channel} height={22} />
           {!!ds.length && (
-            <span onClick={() => downloadFile(`/master-deals/${code}/zip`, `${code}.zip`, setErr)} title="Скачать все готовые файлы пакета одним архивом"
+            <span onClick={() => downloadFile(`/master-deals/${code}/zip`, null, setErr)} title="Скачать все готовые файлы пакета одним архивом"
               style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--accent)', cursor: 'pointer' }}>скачать всё · zip</span>
           )}
         </span>

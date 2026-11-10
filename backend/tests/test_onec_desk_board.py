@@ -382,3 +382,42 @@ def test_late_xml_must_match_what_was_entered(env):
     with pytest.raises(SV.DeskError) as e:
         SV.check_late_xml(m, k, _xml(**good), req)
     assert "№ УПД" in e.value.message
+
+
+def test_request_names_the_account_managers_of_its_deals(env):
+    """Владелец 09.11.2026 (скриншот шапки заявки): «вот сюда нужно вывести аккаунта сделки» — бухгалтеру видно, к кому идти.
+    Аккаунты — сделок, разнесённых на ДС этого комплекта, без повторов. Ломается, если имя пропадёт из ответа или повторится."""
+    db, m, k, *_ = env
+    want = sorted({r for (r,) in db.execute(text("""
+        SELECT DISTINCT r.name FROM sales_deal_annex_allocation x JOIN sales_deals d ON d.id = x.deal_id
+          JOIN sales_reps r ON r.id = d.account_manager_id WHERE x.annex_id = :a AND r.name IS NOT NULL"""), {"a": k.annex_id})})
+    assert _req(db, m, k)["accounts"] == want
+
+
+def test_accountant_attaches_signed_ds_scan_and_request_turns_signed(env, tmp_path, monkeypatch):
+    """Хендофф 09.11.2026, вкладка «Ждут сканов»: внесли с неподписанным ДС — бухгалтер прикладывает скан подписанного ДС, заявка
+    становится «ДС подписан». Скан ложится тем же путём, что в мастер-сделке (`master_deal.files.save_scan`), к ДС комплекта.
+    Ломается, если скан ляжет не к тому ДС или без ДС у комплекта пройдёт молча."""
+    from app.master_deal import files as MFL
+    from app.onec_desk import files as OF
+    from app.onec_desk.service import DeskError
+    from app.sales.models import SalesAnnex
+    db, m, k, user, *_ = env
+    a = db.get(SalesAnnex, k.annex_id)
+    a.origin, a.sign_state = "система", None
+    a.master_deal_id, a.no = m.id, a.no or 987001      # у внесённой заявки ДС подтверждён и в пакете — скан кладут только к такому
+    from app.master_deal import doc_sign as DSG
+    a.sign_channel = "ЭДО"
+    db.flush()
+    with pytest.raises(DeskError):                    # ЭДО: подпись принесёт само (правило мастер-сделки) — скан не принимаем
+        OF.save_ds_scan(db, m, k, user, filename="скан.pdf", content=b"%PDF-1.4 x")
+    a.sign_channel, a.sign_state = DSG.PAPER, "выставлен"     # бумага у клиента — ждём подписанный экземпляр
+    db.execute(text("DELETE FROM master_deal_files WHERE annex_id = :a AND kind = 'скан ДС'"), {"a": a.id})
+    db.flush()
+    monkeypatch.setattr(MFL, "ROOT", str(tmp_path))
+    assert _req(db, m, k)["ds_signed"] is False
+    OF.save_ds_scan(db, m, k, user, filename="скан.pdf", content=b"%PDF-1.4 x")
+    assert _req(db, m, k)["ds_signed"] is True
+    k.annex_id = None
+    with pytest.raises(DeskError):
+        OF.save_ds_scan(db, m, k, user, filename="скан.pdf", content=b"%PDF-1.4 x")

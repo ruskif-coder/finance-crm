@@ -18,6 +18,12 @@ export const deskApi = {
     fd.append('file', file)
     return api.post(`${base}/kit/${id}/files/${slot}`, fd, auth()).then(r => r.data)
   },
+  // скан подписанного ДС от бухгалтера — вкладка «Ждут сканов» (хендофф 09.11.2026); правила — как в мастер-сделке
+  dsScan: (id, file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post(`${base}/kit/${id}/ds-scan`, fd, auth()).then(r => r.data)
+  },
   removeFile: (id, fileId) => api.delete(`${base}/kit/${id}/files/${fileId}`, auth()).then(r => r.data),
   download: (id, fileId, onError) => downloadFile(`${base}/kit/${id}/files/${fileId}`, undefined, onError),
   dsDoc: (id) => api.get(`${base}/kit/${id}/ds-doc`, auth()).then(r => r.data),

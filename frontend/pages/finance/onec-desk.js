@@ -95,7 +95,9 @@ export default function OnecDeskPage() {
   }
 
   const handlers = {
-    onUpload: (code, kind, file) => deskApi.upload(kit(code), SLOT_OF[kind], file).then(up => fileOf(up, SLOT_OF[kind]), asError('Не удалось приложить файл')),
+    onUpload: (code, kind, file) => kind === 'dsScan'
+      ? deskApi.dsScan(kit(code), file).then(() => { load(); return { name: file.name, size: file.size, url: null } }, asError('Не удалось приложить скан'))
+      : deskApi.upload(kit(code), SLOT_OF[kind], file).then(up => fileOf(up, SLOT_OF[kind]), asError('Не удалось приложить файл')),
     onParseXml: (code) => deskApi.parseXml(kit(code)).catch(asError('XML не разобрался — заполните поля вручную')),
     onCheckNumber: (kind, no, code) => deskApi.checkNumber(kind, no, kit(code)).catch(() => null),
     onSaveDraft: (code, form) => (mayEdit ? deskApi.draft(kit(code), form) : Promise.reject(new Error('нет права'))),

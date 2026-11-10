@@ -3,11 +3,13 @@
  * отличия от пакета дизайна — только проводка в систему: файлы ДС и приложенные файлы открывает страница (у нас они под
  * авторизацией, ссылкой не открыть), «убрать» файл удаляет его на сервере, ошибки сервера — тостом, срок закрытия правится
  * по клику на плашку, родительный падеж месяца — с сервера.
+ * Хендофф 09.11.2026 (аудит внедрённой страницы) перенесён поверх; правки стенда — на прежних местах, новые помечены «стенд:».
  * Очередь заявок на счёт и УПД по мастер-сделкам + рабочая панель заявки. Эталон вида и поведения — reference/Документы для бухгалтерии.dc.html.
  *
  * Пропы:
  *   data                         — ответ GET /api/acc-docs (контракт в sampleData.js)
- *   onUpload(code, kind, file)   — kind: 'invPdf' | 'updPdf' | 'updXml' → Promise<File{name,size,url}>
+ *   onUpload(code, kind, file)   — kind: 'invPdf' | 'updPdf' | 'updXml' | 'dsScan' → Promise<File{name,size,url}>;
+ *                                  'dsScan' — скан подписанного ДС у внесённой заявки: сервер ставит ds_signed = true и ds_scan_url
  *   onParseXml(code, file)       — разбор XML УПД → Promise<XmlParse>
  *   onCheckNumber(kind, no, code)— повтор номера → Promise<null | {code,status,at}>
  *   onSaveDraft(code, form)      — автосохранение (дебаунс 700 мс) → Promise<{saved_at}>
@@ -24,13 +26,13 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
-  money, parseMoney, msk, isoToRuDate, workHours, ageLabel, ageTone, closeInfo, EMPTY_FORM, evaluate, rowPips, matches, sortQueue, copyAllText, expectedOf, isStarted,
+  money, parseMoney, msk, isoToRuDate, workHours, ageLabel, ageTone, closeInfo, EMPTY_FORM, evaluate, rowPips, rowLook, sameAsBasis, dateHint, forecastOf, waitsScan, inTab, matches, sortQueue, copyAllText, expectedOf, isStarted,
 } from './accDocsLogic';
-import { UpstreamLine, UpstreamModal } from './Upstream';   // «ещё не дошли» (09.11.2026)
-import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow, Field, borderFor, StepHead, Sum, TONE } from './accDocsParts';
+import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow, Field, borderFor, StepHead, Sum, TONE, Clip } from './accDocsParts';
+import { parseDocFileName } from '@/lib/docFileName.mjs';   // стенд: № и дата из имени файла 1С (10.11.2026)
 
 const AD_RISE = 'adRise 0.4s cubic-bezier(0.22,1,0.36,1) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
-const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['all', 'Все', null]];
+const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['scan', 'Ждут сканов', 'var(--warning)'], ['all', 'Все', null]];   // стенд: «Ждут сканов» — после «Внесены» (владелец 09.11.2026)
 const RETURN_REASONS = ['реквизиты покупателя', 'сумма не та', 'нет подписанного ДС', 'основание / период'];
 const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
@@ -41,7 +43,6 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   const cal = data.settings.calendar;
   const [tab, setTab] = useState('wait');
   const [group, setGroup] = useState('buyer');
-  const [upOpen, setUpOpen] = useState(false);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState({});                // локальные переходы до перезагрузки данных: code → 'done' | 'returned'
   const [forms, setForms] = useState(() => Object.fromEntries(data.requests.filter(r => r.draft).map(r => [r.code, { ...EMPTY_FORM, ...r.draft }])));
@@ -54,13 +55,15 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   const [note, setNoteDraft] = useState('');
   const [localNotes, setLocalNotes] = useState({});
   const [toast, setToast] = useState('');
+  const [scans, setScans] = useState({});                  // code → File: скан подписанного ДС приложен в этой сессии
+  const [naOpen, setNaOpen] = useState(false);             // прогноз «Ещё в пути» раскрыт
   const toastT = useRef(); const showToast = (t, ms = 1900) => { setToast(t); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToast(''), ms); };
   const fail = e => showToast((e && e.message) || 'Не получилось — попробуйте ещё раз', 5000);
 
-  const reqs = useMemo(() => data.requests.map(r => status[r.code] ? { ...r, status: status[r.code] } : r), [data.requests, status]);
+  const reqs = useMemo(() => data.requests.map(r => { const r1 = status[r.code] ? { ...r, status: status[r.code] } : r; return scans[r.code] ? { ...r1, ds_signed: true, ds_scan_url: scans[r.code].url, _scanAt: scans[r.code].at } : r1; }), [data.requests, status, scans]);
   const formOf = code => forms[code] || EMPTY_FORM;
   const searching = q.trim().length > 0;
-  const list = useMemo(() => sortQueue(searching ? reqs.filter(r => matches(r, q)) : reqs.filter(r => tab === 'all' || r.status === tab)), [reqs, q, tab, searching]);
+  const list = useMemo(() => sortQueue(searching ? reqs.filter(r => matches(r, q)) : reqs.filter(r => inTab(r, tab))), [reqs, q, tab, searching]);
 
   /* группы очереди (по умолчанию — по покупателю и договору) */
   const groups = useMemo(() => {
@@ -102,13 +105,21 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
 
   const fileInput = useRef(); const pending = useRef(null);
   const pick = kind => { if (readOnly && !lateAttach) return; pending.current = kind; fileInput.current.accept = ACCEPT[kind]; fileInput.current.value = ''; fileInput.current.click(); };
+  const pickScan = () => { pending.current = 'dsScan'; fileInput.current.accept = '.pdf,.jpg,.jpeg,.png'; fileInput.current.value = ''; fileInput.current.click(); };
   const onFile = async e => { const file = e.target.files && e.target.files[0], kind = pending.current; if (!file || !kind) return; const code = r.code;
     let up; try { up = await onUpload(code, kind, file); } catch (err) { fail(err); return; }
+    if (kind === 'dsScan') { setScans(s => ({ ...s, [code]: { ...up, at: new Date(nowMs).toISOString() } })); showToast(code + ': скан подписанного ДС приложен'); return; }
     if (lateAttach) { onReload && onReload(); showToast(code + ': файл догружен'); return; }   // внесённое: форма — из данных сервера
     if (kind === 'updXml') { let x; try { x = await onParseXml(code, file); } catch (err) { setForms(s => ({ ...s, [code]: { ...formOf(code), updXml: up, xml: null, fromXml: false } })); fail(err); return; }
       const cur = formOf(code);   // п.4: номер/дата — если пусто, суммы — всегда
       setForms(s => ({ ...s, [code]: { ...cur, updXml: up, xml: x, fromXml: true, updNo: cur.updNo || x.number, updDate: cur.updDate || x.date, net: x.net, vat: x.vat, gross: x.gross } }));
-    } else setForms(s => ({ ...s, [code]: { ...formOf(code), [kind]: up } })); };
+    } else {
+      // стенд: № и дата из имени файла 1С («Счет на оплату № 291 от 06 ноября 2026 г.») — только в пустые поля, как у XML (владелец 10.11.2026)
+      const cur = formOf(code), nm = (kind === 'invPdf' || kind === 'updPdf') ? parseDocFileName(file.name) : null;
+      const [noK, dateK] = kind === 'invPdf' ? ['invNo', 'invDate'] : ['updNo', 'updDate'];
+      const fill = nm ? { [noK]: cur[noK] || nm.no, [dateK]: cur[dateK] || nm.date || '' } : {};
+      setForms(s => ({ ...s, [code]: { ...cur, [kind]: up, ...fill } }));
+    } };
   const removeFile = (kind, patch) => { const code = r.code, file = formOf(code)[kind];
     Promise.resolve(file && onRemoveFile && onRemoveFile(code, kind, file)).then(() => setF(patch), fail); };
   const nextWait = code => { const w = sortQueue(reqs.filter(x => x.status === 'wait' && x.code !== code)); return w[0] && w[0].code; };
@@ -151,7 +162,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
             <span style={{ fontFamily: MONO, fontSize: 11.5, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>счёт и УПД по мастер-сделкам · сейчас {msk(nowMs).dm} · ожидание — в рабочих часах</span>
           </span>
           <span role="tablist" style={{ display: 'inline-flex', gap: 6, marginLeft: 18 }}>
-            {TABS.map(([k, label, dot]) => { const on = !searching && tab === k, n = reqs.filter(x => k === 'all' || x.status === k).length;
+            {TABS.map(([k, label, dot]) => { const on = !searching && tab === k, n = reqs.filter(x => inTab(x, k)).length;
               return <span key={k} role="tab" aria-selected={on} tabIndex={0} onClick={() => { setTab(k); setQ(''); }} onKeyDown={e => e.key === 'Enter' && (setTab(k), setQ(''))}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, boxSizing: 'border-box', padding: '0 14px', borderRadius: 12, fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
                 {dot && <Dot c={dot} s={7} />}{label}<span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>{n}</span></span>; })}
@@ -173,14 +184,39 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                   return <span key={v} role="button" tabIndex={0} onClick={() => setGroup(v)} style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 11px', borderRadius: 8, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', background: on ? 'var(--bg-card)' : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>{l}</span>; })}
               </span>
             </div>
-            {/* п.8: срок закрытия месяца */}
-            <div role={onEditClose ? 'button' : undefined} tabIndex={onEditClose ? 0 : undefined} onClick={onEditClose} title={onEditClose ? 'Изменить срок закрытия месяца' : undefined} style={{ cursor: onEditClose ? 'pointer' : undefined, display: 'flex', alignItems: 'center', gap: 8, margin: '0 4px', padding: '7px 11px', borderRadius: 10, background: close.tone === 'ok' ? 'var(--bg-subtle)' : close.tone === 'warn' ? 'var(--warning-bg)' : 'var(--danger-tint)', border: `1px solid ${close.tone === 'ok' ? 'var(--border-inner)' : TONE[close.tone].border}` }}>
-              <Dot c={close.tone === 'ok' ? 'var(--text-faint)' : TONE[close.tone].dot} s={7} />
-              <span style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', color: close.tone === 'ok' ? 'var(--text-secondary)' : TONE[close.tone].fg }}>До закрытия {data.settings.close_month_gen || data.settings.close_month} {close.left} {close.word}</span>
-              <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{close.at} · открыто {close.openCount}</span>
-            </div>
-            <UpstreamLine up={data.upstream} onOpen={() => setUpOpen(true)} />
-            {upOpen && data.upstream && <UpstreamModal up={data.upstream} month={data.settings.close_month} onClose={() => setUpOpen(false)} />}
+            {/* стенд: клик по первой строке — правка срока закрытия; месяц родительным падежом — с сервера */}
+            {/* п.8: срок закрытия месяца + прогноз «Ещё в пути» — одна плашка, две строки */}
+            {(() => { const bg = close.tone === 'ok' ? 'var(--bg-subtle)' : close.tone === 'warn' ? 'var(--warning-bg)' : 'var(--danger-tint)', bd = close.tone === 'ok' ? 'var(--border-inner)' : TONE[close.tone].border;
+              const fc = forecastOf(data.not_arrived, nowMs, cal);
+              return <div style={{ flex: '0 0 auto', margin: '0 4px', borderRadius: 10, background: bg, border: `1px solid ${bd}`, overflow: 'hidden' }}>
+                <div role={onEditClose ? 'button' : undefined} tabIndex={onEditClose ? 0 : undefined} onClick={onEditClose} title={onEditClose ? 'Изменить срок закрытия месяца' : undefined} style={{ cursor: onEditClose ? 'pointer' : undefined, display: 'flex', alignItems: 'center', gap: 8, height: 34, boxSizing: 'border-box', padding: '0 11px' }}>
+                  <Dot c={close.tone === 'ok' ? 'var(--text-faint)' : TONE[close.tone].dot} s={7} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', color: close.tone === 'ok' ? 'var(--text-secondary)' : TONE[close.tone].fg }}>До закрытия {data.settings.close_month_gen || data.settings.close_month} {close.left} {close.word}</span>
+                  <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{close.at} · открыто {close.openCount}</span>
+                </div>
+                {fc.on && <>
+                  <div role="button" tabIndex={0} aria-expanded={naOpen} onClick={() => setNaOpen(v => !v)} onKeyDown={e => e.key === 'Enter' && setNaOpen(v => !v)}
+                    title="Прогноз: сделки периода, по которым процесс запущен, но заявка на документы ещё не пришла"
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, height: 34, boxSizing: 'border-box', padding: '0 11px', borderTop: `1px solid ${bd}`, cursor: 'pointer' }}>
+                    <span style={{ width: 7, height: 7, boxSizing: 'border-box', borderRadius: 2, border: '1.5px solid var(--text-faint)' }} />
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Ещё в пути {fc.totalLabel}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{money(fc.gross)} ₽</span>
+                    <span style={{ display: 'flex', gap: 4, minWidth: 0, overflow: 'hidden' }}>{fc.by.map(b => <span key={b.stage} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 20, padding: '0 7px', borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{b.stage}<b>{b.n}</b></span>)}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)', whiteSpace: 'nowrap' }}>{naOpen ? 'скрыть ▴' : 'список ▾'}</span>
+                  </div>
+                  {naOpen && <div style={{ maxHeight: 232, overflowY: 'auto', borderTop: `1px solid ${bd}`, background: 'var(--bg-card)' }}>
+                    {fc.items.map(x => <div key={x.code} style={{ display: 'grid', gridTemplateColumns: '62px minmax(0,1fr) 112px 104px', gap: 10, alignItems: 'center', padding: '6px 11px', borderBottom: '1px solid var(--border-row)' }}>
+                      <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)' }}>{x.code}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.buyer}</span>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.brand} · {x.account}</span></span>
+                      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}><span style={{ fontFamily: MONO, fontSize: 11, padding: '0 6px', borderRadius: 5, background: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>{x.stage}</span>
+                        <span style={{ fontFamily: MONO, fontSize: 10.5, color: x.late ? 'var(--warning-fg)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>{x.inStage}</span></span>
+                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textAlign: 'right', whiteSpace: 'nowrap' }}>{money(x.gross)}</span>
+                    </div>)}
+                    <span style={{ display: 'block', padding: '7px 11px', fontSize: 11.5, color: 'var(--text-faint)' }}>Только для прогноза: заявка на документы появится в очереди, когда аккаунт отправит пакет.</span>
+                  </div>}
+                </>}
+              </div>; })()}
             <div style={{ display: 'flex', flexDirection: 'column', overflow: 'auto', minHeight: 0 }}>
               {groups.map(g => (
                 <React.Fragment key={g.key}>
@@ -193,18 +229,18 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                 </React.Fragment>
               ))}
               {list.length === 0 && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '40px 16px', textAlign: 'center' }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: searching ? 'var(--text-secondary)' : 'var(--income-fg)' }}>{searching ? 'Ничего не найдено' : tab === 'wait' ? 'Ничего не ждёт' : 'Пусто'}</span>
-                <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{searching ? 'Ищем по покупателю, ИНН, коду сделки, № ДС и договора.' : tab === 'wait' ? 'Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.' : 'В этой вкладке заявок нет.'}</span></div>}
+                <span style={{ fontSize: 15, fontWeight: 700, color: searching ? 'var(--text-secondary)' : 'var(--income-fg)' }}>{searching ? 'Ничего не найдено' : tab === 'wait' ? 'Ничего не ждёт' : tab === 'scan' ? 'Все сканы на месте' : 'Пусто'}</span>
+                <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{searching ? 'Ищем по покупателю, ИНН, коду сделки, № ДС и договора.' : tab === 'wait' ? 'Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.' : tab === 'scan' ? 'По всем внесённым заявкам ДС подписан.' : 'В этой вкладке заявок нет.'}</span></div>}
             </div>
-            <span style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '4px 6px 0', lineHeight: 1.4 }}>Ожидание в рабочих часах (пн–пт, 9–18 МСК). Жёлтое — больше рабочего дня, красное — больше трёх. ДС: зелёный — подписан, жёлтый — создан, но не подписан. СЧЁТ и УПД появляются, когда заявку начали заполнять. Зелёная строка — всё заполнено, осталось нажать «Внести».</span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '4px 6px 0', lineHeight: 1.4 }}>Ожидание в рабочих часах (пн–пт, 9–18 МСК). Жёлтое — больше рабочего дня, красное — больше трёх. ДС: зелёный — подписан, жёлтый — создан, но не подписан. СЧЁТ и УПД появляются, когда заявку начали заполнять. Зелёная строка — всё заполнено, осталось нажать «Внести»; залитая жёлтая метка ДС на зелёной строке — всё заполнено, но ДС не подписан. Синяя рамка — открытая заявка.</span>
           </Card>
 
           {/* ═════ рабочая панель ═════ */}
           {!r ? <Card style={{ padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, alignSelf: 'start' }}>
               <span style={{ fontSize: 17, fontWeight: 800, color: 'var(--income-fg)' }}>Очередь пуста</span>
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.</span></Card>
-            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, onDsFile, onOpenFile, removeFile,
-                past: sortQueue(reqs.filter(x => x.buyer.inn === r.buyer.inn && x.code !== r.code && x.status === 'done')).slice(0, 6), select,
+            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, pickScan, onDsFile, onOpenFile, removeFile,
+                past: sortQueue(reqs.filter(x => x.buyer.inn === r.buyer.inn && x.code !== r.code && x.status === 'done')).slice(0, 24), select,
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
       </div>
@@ -216,15 +252,17 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
 /* ───────── строка очереди ───────── */
 function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
   const { pips, readiness } = rowPips(req, form, seen);
-  const ready = req.status === 'wait' && readiness === 'ready';
+  const look = rowLook(req, readiness, sel), ready = look.ready;
   const h = workHours(Date.parse(req.since), nowMs, cal), tone = ageTone(h);
-  const age = req.status === 'done' ? ['внесено', 'var(--income-fg)', 'var(--income)'] : req.status === 'returned' ? ['у аккаунта', 'var(--warning-fg)', 'var(--warning)']
+  const age = waitsScan(req) ? ['ждёт скан', 'var(--warning-fg)', 'var(--warning)'] : req.status === 'done' ? ['внесено', 'var(--income-fg)', 'var(--income)'] : req.status === 'returned' ? ['у аккаунта', 'var(--warning-fg)', 'var(--warning)']
     : [ageLabel(h), tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg, tone === 'ok' ? 'var(--text-faint)' : TONE[tone].dot];
   const exp = expectedOf(req);
   return (
     <div role="button" tabIndex={0} className="ad-row" aria-current={sel || undefined} onClick={onPick} onKeyDown={e => e.key === 'Enter' && onPick()}
       style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 150px 112px', gap: '0 12px', alignItems: 'center', padding: '9px 10px', borderRadius: 12, cursor: 'pointer', marginBottom: 2,
-        background: ready ? 'var(--income-tint)' : sel ? 'var(--bg-tint)' : 'transparent', border: `1px solid ${sel ? (ready ? 'var(--income)' : 'var(--accent-border)') : ready ? 'var(--income-border)' : 'transparent'}` }}>
+        background: ready ? 'var(--income-tint)' : sel ? 'var(--bg-tint)' : 'transparent', border: `1px solid ${sel ? 'var(--accent)' : ready ? 'var(--income-border)' : 'transparent'}`,
+        boxShadow: sel ? '0 0 0 1px var(--accent)' : 'none' }}
+      title={look.dsWarn ? 'Всё заполнено, но ДС не подписан' : undefined}>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
         <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
           <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent-fg)' }}>{req.code}</span>
@@ -250,7 +288,7 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
 }
 
 /* ───────── рабочая панель заявки ───────── */
-function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
+function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, pickScan, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
   const h = workHours(Date.parse(r.since), nowMs, cal), tone = ageTone(h);
   const st = r.status === 'done' ? ['внесено', 'ok'] : r.status === 'returned' ? ['возвращено аккаунту', 'warn'] : ev.ready ? ['готово к внесению', 'ok'] : ['ждёт бухгалтера', 'info'];
   const exp = ev.exp, line = r.lines[0], allCp = lastCopy === r.code + ':all';
@@ -259,12 +297,12 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
   const S = ev.sum, sumTone = S.state === 'bad' ? 'bad' : S.state === 'diff' ? 'warn' : S.state === 'match' ? 'ok' : 'need';
   const verdict = (f.fromXml && !S.anyEmpty ? 'Из XML · ' : '') + ({ bad: 'Сумма не распознана — проверьте ввод', empty: 'Введите суммы из УПД в 1С — сверим с ДС', partial: 'Заполните все три суммы',
     diff: `Расходится с ДС на ${money(S.maxDiff)} ₽ — объясните ниже`, match: S.maxDiff ? `Расхождение ${money(S.maxDiff)} ₽ — в пределах 1 ₽` : 'Суммы совпадают с ДС ✓' })[S.state];
-  const dateNote = (v, bad, w) => bad ? ['формат дд.мм.гггг', 'bad'] : w ? [w, 'warn'] : [`по ДС — ${ev.periodEnd}`, ''];
-  const [invDN, invDT] = dateNote(f.invDate, ev.invDateBad, ev.invDW), [updDN, updDT] = dateNote(f.updDate, ev.updDateBad, ev.updDW);
+  const dateNote = (bad, w, hint) => bad ? ['формат дд.мм.гггг', 'bad'] : w ? [w, 'warn'] : [readOnly ? '' : hint, ''];
+  const [invDN, invDT] = dateNote(ev.invDateBad, ev.invDW, dateHint(false, ev.periodEnd)), [updDN, updDT] = dateNote(ev.updDateBad, ev.updDW, dateHint(true, ev.periodEnd));
   const lateMissing = readOnly ? ev.missing.filter(m => /^(PDF|XML)/.test(m.label)) : [];   // внесено без файла — догрузить
   const lateAttach = !!readOnly;
   const bar = readOnly ? lateMissing : ev.missing.map(m => ({ ...m })).concat(ev.warns.map(label => ({ label, tone: 'warn' })));
-  const head = readOnly ? (lateMissing.length ? `Внесено ${msk(r.done.at).dm} — догрузите:` : `Внесено ${msk(r.done.at).dm} — заявка в архиве`) : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
+  const head = readOnly ? (lateMissing.length ? `Внесено ${msk(r.done.at).dm} — догрузите:` : !r.ds_signed ? `Внесено ${msk(r.done.at).dm} — ждём скан подписанного ДС` : `Внесено ${msk(r.done.at).dm} — заявка в архиве`) : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, minHeight: 'calc(100vh - 110px)' }}>
@@ -274,13 +312,18 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.01em' }}>{r.buyer.name}</span>
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>ИНН {r.buyer.inn} · КПП {r.buyer.kpp}</span>
         <Chip tone={st[1]}>{st[0]}</Chip>
-        <Chip tone={r.ds_signed ? 'ok' : 'warn'}>{r.ds_signed ? 'ДС подписан' : 'ДС создан, не подписан'}</Chip>
+        <Chip tone={r.ds_signed ? 'ok' : 'warn'}>{r.ds_signed ? 'ДС подписан' : readOnly ? 'ждём скан подписанного ДС' : 'ДС создан, не подписан'}</Chip>
         {/* как выставляем (владелец 06.11.2026): признак договора; бумага — печать и сканы, не задан — пакет сам не уйдёт в «выставление» */}
-        {r.channel ? <Chip tone={r.channel === 'бумага' ? 'warn' : 'info'} title="Канал выдачи из договора">выставляем: {r.channel}</Chip>
+        {r.channel ? <Chip tone={r.channel === 'бумага' ? 'warn' : 'need'} title="Канал выдачи из договора">выставляем: {r.channel}</Chip>
           : <Chip tone="bad" title="У договора не задан канал выдачи — заполните в окне «Добавить данные» или в карточке договора">канал выдачи не задан</Chip>}
         {r.status === 'done' && <EdoChip edo={r.edo} />}
-        <span style={{ fontFamily: MONO, fontSize: 12, color: r.status === 'wait' ? (tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg) : 'var(--text-muted)' }}>
-          {r.status === 'wait' ? `ждёт ${ageLabel(h)} (рабочих) · с ${msk(r.since).dm}` : r.status === 'returned' ? `возвращено ${r.returned ? msk(r.returned.at).dm : ''}` : `внесено ${msk(r.done.at).dm}`}</span>
+        <span title="Ожидание в рабочих часах: пн–пт, 9–18 МСК" style={{ fontFamily: MONO, fontSize: 12, cursor: 'help', color: r.status === 'wait' ? (tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg) : 'var(--text-muted)' }}>
+          {r.status === 'wait' ? `ждёт ${ageLabel(h)} · с ${msk(r.since).dm}` : r.status === 'returned' ? `возвращено ${r.returned ? msk(r.returned.at).dm : ''}` : `внесено ${msk(r.done.at).dm}`}</span>
+        {/* стенд: аккаунты сделок пакета — второй строкой слева (владелец 09.11.2026: «вот сюда нужно вывести аккаунта сделки») */}
+        <span style={{ flexBasis: '100%', height: 0 }} />
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {r.accounts && r.accounts.length ? <>{r.accounts.length > 1 ? 'аккаунты' : 'аккаунт'}: <b style={{ color: 'var(--text)', fontWeight: 600 }}>{r.accounts.join(', ')}</b></> : 'аккаунт сделки не указан'}
+        </span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><Btn onClick={() => onExcel && onExcel(r.code)}>Excel пакета</Btn><Btn onClick={() => onOpenDeal && onOpenDeal(r.code)}>мастер-сделка {r.code} ↗</Btn></span>
       </Card>
 
@@ -313,7 +356,9 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             {r.lines.map((l, i) => (
               <div key={i} style={{ border: '1px solid var(--border-inner)', borderRadius: 12, overflow: 'hidden' }}>
                 <CopyField label="услуга" state={cstate('svc')} onCopy={() => copy('svc', l.service)} style={{ borderRadius: 0, border: 'none', borderBottom: '1px solid var(--border-inner)' }}>
-                  <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>{l.service}</span>
+                  {sameAsBasis(l.service, r.basis)  /* аудит п.4 */
+                    ? <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>как в основании — тот же текст, клик копирует</span>
+                    : <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>{l.service}</span>}
                   <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>{r.brand} · {isoToRuDate(r.period.from)} – {isoToRuDate(r.period.to)}</span>
                 </CopyField>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
@@ -351,13 +396,14 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
               ? <div style={{ padding: '9px 12px', borderRadius: 12, border: '1px dashed var(--border-card)', fontSize: 12.5, color: 'var(--text-muted)' }}>Бумага — XML для ЭДО не нужен</div>
               : <FileRow kind="XML" label="УПД · XML для ЭДО" file={f.updXml} note="приложите — номер, дата и суммы заполнятся из файла" readOnly={readOnly} canAttach={lateAttach} onOpen={x => onOpenFile && onOpenFile(r.code, x)} onAttach={() => pick('updXml')} onRemove={() => removeFile('updXml', { updXml: null, xml: null, fromXml: false })} />}
             {ev.xml.on && !readOnly && (() => { const t = ev.xml.err ? TONE.bad : TONE.ok; return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.fg }}>{ev.xml.err ? 'XML не совпадает со сделкой — внести нельзя, проверьте УПД или верните аккаунту' : 'XML сверен со сделкой'}</span>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>{ev.xml.rows.map(x => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: ev.xml.err ? '10px 12px' : '7px 12px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.fg }}>{ev.xml.err ? 'XML не совпадает со сделкой — внести нельзя, проверьте УПД или верните аккаунту' : 'XML сверен со сделкой: ИНН, КПП, договор ✓'}</span>
+                {/* аудит п.5: подробности — только при расхождении */}
+                {ev.xml.err && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>{ev.xml.rows.map(x => (
                   <span key={x.label} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: x.label === 'основание' ? '1 / -1' : undefined }}>
                     <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><Cap>{x.label}</Cap><span style={{ fontSize: 11.5, fontWeight: 700, color: x.ok ? 'var(--income-fg)' : 'var(--danger-fg)' }}>{x.ok ? '✓' : '≠'}</span></span>
                     <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: x.ok ? 'var(--income-fg)' : 'var(--danger-fg)' }}>{x.value}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{x.ok ? 'как в сделке' : 'в сделке ' + x.want}</span></span>))}</div>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{x.ok ? 'как в сделке' : 'в сделке ' + x.want}</span></span>))}</div>}
               </div>); })()}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 180px', gap: 10 }}>
               <Field label="№ УПД" note={dupRow.upd ? 'такой № уже: ' + dupRow.upd : f.fromXml ? 'из XML' : ''} noteTone={dupRow.upd ? 'warn' : ''}><Input mono value={f.updNo} onChange={e => setF({ updNo: e.target.value })} placeholder="из 1С или XML" readOnly={readOnly} style={{ borderColor: borderFor(dupRow.upd ? 'warn' : '') }} /></Field>
@@ -367,7 +413,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 10 }}>
                 {[['net', 'без НДС'], ['vat', `НДС ${line.vat_rate} %`], ['gross', 'с НДС']].map(([k, l]) => { const v = S.vals[k], d = S.diff[k];
                   const tone = v != null && Number.isNaN(v) ? 'bad' : d && Math.abs(d) > 1 ? 'warn' : '';
-                  const nt = v == null ? ['в ДС ' + money(exp[k]), ''] : Number.isNaN(v) ? ['не число', 'bad'] : d ? [(d > 0 ? '+' : '−') + money(Math.abs(d)) + ' к ДС', Math.abs(d) > 1 ? 'warn' : ''] : ['как в ДС', 'ok'];
+                  const nt = v == null ? ['в ДС ' + money(exp[k]), ''] : Number.isNaN(v) ? ['не число', 'bad'] : d ? [(d > 0 ? '+' : '−') + money(Math.abs(d)) + ' к ДС', Math.abs(d) > 1 ? 'warn' : ''] : ['', ''];  /* аудит п.6: у совпавшей суммы подписи нет — итог одной строкой ниже */
                   return <span key={k} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><Cap>{l}</Cap>
                     <Input mono value={f[k]} onChange={e => setF({ [k]: e.target.value, fromXml: false })} placeholder="0,00" readOnly={readOnly} style={{ textAlign: 'right', borderColor: borderFor(tone) }} aria-label={'УПД ' + l} />
                     <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right', color: nt[1] === 'bad' ? 'var(--danger-fg)' : nt[1] === 'warn' ? 'var(--warning-fg)' : nt[1] === 'ok' ? 'var(--income-fg)' : 'var(--text-faint)' }}>{nt[0]}</span></span>; })}
@@ -385,10 +431,13 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         </div>
 
         {/* ряд 2: прошлые пакеты | обсуждение */}
-        <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'minmax(0,1.05fr) minmax(0,1fr)', gap: 14, alignItems: 'stretch' }}>
-          <Card style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* аудит п.10: нет прошлых пакетов — карточки нет, обсуждение на всю ширину */}
+        <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: past.length ? 'minmax(0,1.05fr) minmax(0,1fr)' : 'minmax(0,1fr)', gap: 14, alignItems: 'stretch' }}>
+          {past.length > 0 && <Card style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontSize: 14, fontWeight: 700 }}>Прошлые пакеты покупателя</span><span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>{past.length || ''}</span></div>
             <span style={{ fontSize: 12, color: 'var(--text-muted)', paddingBottom: 4 }}>Как вносили раньше — номера и даты для сверки</span>
+            {/* видно 4 пакета, остальные — прокруткой */}
+            <div style={{ maxHeight: 4 * 52, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             {past.map(x => (
               <div key={x.code} role="button" tabIndex={0} className="ad-row" onClick={() => select(x.code)} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: '2px 10px', padding: 8, borderRadius: 10, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
                 <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}><span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)' }}>{x.code}</span><span style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{x.annex.short}</span><span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.brand}</span></span>
@@ -396,8 +445,8 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
                 <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)' }}>{x.done ? `сч. ${x.done.inv.no} · УПД ${x.done.upd.no} от ${x.done.upd.date}` : '—'}</span>
                 <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>{x.done ? 'внесено ' + msk(x.done.at).dm : ''}</span>
               </div>))}
-            {!past.length && <span style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 0' }}>Раньше пакетов по этому покупателю не было</span>}
-          </Card>
+            </div>
+          </Card>}
           <Card style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontSize: 14, fontWeight: 700 }}>Обсуждение и история</span></div>
             {log.concat(systemLog(r)).map((l, i) => { const fresh = l.from_account && l.unread;
@@ -423,9 +472,10 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             <Btn onClick={doReturn} disabled={!ret.reason && !ret.text.trim()} style={{ borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}>Вернуть аккаунту</Btn></span>
         </> : <>
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px 8px', flexWrap: 'wrap', flex: '1 1 0', minWidth: 0 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly ? (lateMissing.length ? 'var(--warning-fg)' : 'var(--income-fg)') : ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly ? (lateMissing.length || !r.ds_signed ? 'var(--warning-fg)' : 'var(--income-fg)') : ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
             {bar.map(m => <span key={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 10px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: TONE[m.tone].bg, color: TONE[m.tone].fg }}><Dot c={TONE[m.tone].dot} /><span style={{ whiteSpace: 'nowrap' }}>{m.label}</span></span>)}
           </span>
+          {readOnly && !r.ds_signed && <Btn primary onClick={pickScan} style={{ height: 38, padding: '0 18px' }}><Clip />Приложить скан ДС</Btn>}
           <span style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
             {!readOnly && saved && <span style={{ color: saved === 'error' ? 'var(--danger-fg)' : undefined }}>{saved === 'error' ? 'не сохранено · повторить' : 'черновик сохранён · ' + saved}</span>}
             <span title="Ctrl+Enter — внести и к следующему · ↑ ↓ — соседняя заявка · Esc — закрыть возврат" style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 8px', border: '1px solid var(--border-card)', borderRadius: 7, color: 'var(--text-muted)', cursor: 'help' }}>Ctrl+Enter · ↑↓</span>
@@ -442,13 +492,14 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
 /* системные события в ленте: отправка, повторная отправка, возврат, внесение */
 function systemLog(r) {
   const out = [];
+  if (r._scanAt) out.push({ at: r._scanAt, who: 'Бухгалтер', text: 'Приложила скан подписанного ДС', tone: 'ok' });
   if (r.status === 'done' && r.done) out.push({ at: r.done.at, who: 'Бухгалтер', text: `Внесла: счёт № ${r.done.inv.no}, УПД № ${r.done.upd.no}`, tone: 'ok' });
   if (r.returned) out.push({ at: r.returned.at, who: 'Бухгалтер', text: 'Вернула: ' + r.returned.reason, tone: 'warn' });
   out.push({ at: r.since, who: 'Аккаунт', text: `${r.resent ? 'Отправил повторно' : 'Отправил пакет на закрывающие'}: ${r.annex.title}, ${money(expectedOf(r).gross)} ₽` });
   return out;
 }
 function EdoChip({ edo }) { /* п.9: до подключения — «не подключено» */
-  if (!edo) return <Chip dashed title="Статус отправки и подписания по ЭДО появится после подключения Диадок / СБИС">ЭДО: не подключено</Chip>;
+  if (!edo) return null;   // стенд: «ЭДО: не подключено» не показываем (владелец 09.11.2026: «убери, я это и так знаю»)
   const map = { queued: ['в очереди', 'info'], sent: ['отправлен', 'info'], delivered: ['доставлен', 'info'], signed: ['подписан покупателем', 'ok'], rejected: ['отклонён', 'bad'], error: ['ошибка', 'bad'] }[edo.status];
   return <Chip tone={map[1]} title={edo.reason || ''}>ЭДО: {map[0]}</Chip>;
 }

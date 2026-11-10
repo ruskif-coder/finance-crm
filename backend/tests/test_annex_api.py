@@ -166,40 +166,8 @@ def test_number_hint_never_becomes_the_start_number_by_itself(env):
     assert p["no"] == 1, 'без стартового номера нумерация начинается с единицы'
 
 
-# ── имя файла ────────────────────────────────────────────────────────────────
-
-def test_file_name_carries_all_four_parts():
-    """Правило владельца 05.09.2026: номер, дата, рекламодатель с брендом, юрлицо по
-    договору. По имени документ находят в папке, не открывая его."""
-    n = A.file_name(no=68, doc_date=date(2026, 5, 31),
-                    brand="Dr. Reddy / Хелинорм", payer="ДИДЖИТАЛ ИНСПИРЕЙШН ООО")
-    assert n.endswith(".pdf")
-    for part in ("ДС №68", "31.05.2026", "Хелинорм", "ДИДЖИТАЛ ИНСПИРЕЙШН ООО"):
-        assert part in n
-
-
-def test_slash_from_the_brand_never_reaches_the_file_name():
-    """Бренд собирается как «Рекламодатель / Бренд». Слэш в имени файла — это путь:
-    документ не сохранился бы вовсе, и выглядело бы это как поломка выгрузки."""
-    n = A.file_name(no=1, doc_date=date(2026, 5, 31),
-                    brand="Dr. Reddy / Хелинорм", payer='ООО "Ромашка"')
-    assert not set(n) & {"/", chr(92), ":", "*", "?", '"', "<", ">", "|"}
-
-
-def test_empty_parts_drop_out_instead_of_leaving_a_gap():
-    """У черновика номера ещё нет, у части контрагентов не заполнен бренд. Пустая часть
-    выпадает целиком — иначе в имени повисает разделитель без содержимого."""
-    n = A.file_name(no=None, doc_date=date(2026, 5, 31), brand=None, payer="ООО Ромашка")
-    assert n == "ДС без номера от 31.05.2026 — ООО Ромашка.pdf"
-    assert A.file_name(no=7, doc_date=None, brand=None, payer=None) == "ДС №7.pdf"
-    assert A.file_name(no=None, doc_date=None, brand=None, payer=None) == "ДС без номера.pdf"
-
-
-def test_file_name_stays_within_the_filesystem_limit():
-    """255 байт — предел почти везде, а кириллица в UTF-8 занимает по два."""
-    n = A.file_name(no=68, doc_date=date(2026, 5, 31), brand="Бренд " * 40,
-                    payer="Контрагент " * 40)
-    assert len(n.encode("utf-8")) < 255
+# ── имя файла ── правило владельца 09.11.2026 («вид - номер - дата - контрагент - мастер сделка») заменило правило 05.09
+# (номер, дата, бренд, юрлицо); проверки — `tests/test_doc_names.py` и `tests/test_doc_names_endpoints.py`.
 
 
 # ── проверка реквизитов ──────────────────────────────────────────────────────

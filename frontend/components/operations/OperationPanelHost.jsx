@@ -47,7 +47,7 @@ export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onN
   const onAction = (key, o) => {
     if (key === 'open_package') router.push(`/finance/onec-desk?code=${encodeURIComponent(o.package.code)}`)
     else if (key === 'open_bank_row') onOpen(o.payment.op_id)          // банковских строк нет — оплата это операция цепочки
-    else if (key === 'download') downloadFile(`/onec-desk/kit/${o.upd.kit_id}/files/${o.file}`, o.label, msg => alert(msg))
+    else if (key === 'download') downloadFile(`/onec-desk/kit/${o.upd.kit_id}/files/${o.file}`, null, msg => alert(msg))   // имя — от сервера, общим правилом
     // модалка бухгалтера живёт под его правом; без права — печатная форма ДС в системе
     else if (key === 'view_ds') { if (o.can_download_docs && o.upd) setDsView({ kitId: o.upd.kit_id, title: `${o.ds.short} · ${o.package.code}` }); else window.open(`/directory/annexes/pdf/${o.ds.id}`, '_blank', 'noopener') }
     else if (key === 'ds_file') downloadFile(`/annexes/${o.ds.id}/external-file`, undefined, msg => alert(msg))

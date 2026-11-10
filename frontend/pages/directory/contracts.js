@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { useState, useEffect, useRef } from 'react'
 import Head from 'next/head'
 import api, { auth } from '@/lib/http'
+import { downloadFile } from '@/lib/download'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
 import { canDelete } from '@/lib/auth'
@@ -381,17 +382,8 @@ export default function Contracts() {
     e.target.value = ''
   }
 
-  const handleDownload = async (id, storedFilename) => {
-    try {
-      const res = await api.get(`/contracts/${id}/download`, { responseType: 'blob', ...auth() })
-      const prefix = `${id}_`
-      const displayName = storedFilename.startsWith(prefix) ? storedFilename.slice(prefix.length) : storedFilename
-      const url = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a'); a.href = url; a.download = displayName
-      document.body.appendChild(a); a.click(); a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch { alert('Не удалось скачать файл') }
-  }
+  // имя файла — от сервера, общим правилом документов «Договор № … от … · Контрагент» (владелец 09.11.2026: «формат един»)
+  const handleDownload = (id) => downloadFile(`/contracts/${id}/download`, null, () => alert('Не удалось скачать файл'))
 
   const handleDeleteDoc = async (id) => {
     if (!confirm('Удалить прикреплённый документ?')) return

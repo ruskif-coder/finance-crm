@@ -118,6 +118,15 @@ def _files(f: dict) -> dict:
     return {conv[k]: {"id": v["id"], "name": v["filename"], "size": v.get("size") or 0, "url": None} for k, v in f.items()}
 
 
+def _accounts(db: Session, annex_id) -> list:
+    """Аккаунты сделок, разнесённых на ДС комплекта (владелец 09.11.2026: «вот сюда нужно вывести аккаунта сделки»)."""
+    if not annex_id:
+        return []
+    return sorted({r for (r,) in db.execute(text("""
+        SELECT DISTINCT r.name FROM sales_deal_annex_allocation x JOIN sales_deals d ON d.id = x.deal_id
+          JOIN sales_reps r ON r.id = d.account_manager_id WHERE x.annex_id = :a AND r.name IS NOT NULL"""), {"a": annex_id})})
+
+
 def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, now: datetime, c=None, buyer=None) -> Optional[dict]:
     from app.onec_desk import queue as Q
     from app.sales.models import SalesAnnex
@@ -159,6 +168,7 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
         "thread": _thread(evs, k.onec_seen_at), "edo": None,
         # Как выставляем (владелец 06.11.2026: «забыли буху показать»): признак договора, а ушедшее клиенту — по своему каналу
         "channel": _channel(db, m),
+        "accounts": _accounts(db, k.annex_id),
     }
     unseen_fix = False
     if status == "wait":
@@ -230,8 +240,9 @@ def board(db: Session, now: Optional[datetime] = None) -> dict:
             if r is not None:
                 out.append(r)
     from app.onec_desk import upstream as UP
+    up = UP.upstream(db, st["month"])     # «ещё не дошли» (09.11.2026) → прогноз «Ещё в пути» второй строкой плашки срока (хендофф 09.11)
     return {"now": now.astimezone(R.MSK).isoformat(), "settings": st, "seller": seller, "requests": out,
-            "upstream": UP.upstream(db, st["month"])}   # «ещё не дошли» (09.11.2026)
+            "not_arrived": UP.not_arrived(up)}
 
 
 def request_for(db: Session, m, k, now: Optional[datetime] = None) -> Optional[dict]:
