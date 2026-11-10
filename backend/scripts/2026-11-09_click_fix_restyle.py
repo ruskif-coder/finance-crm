@@ -14,6 +14,7 @@
     docker exec finance_backend python -m scripts.2026-11-09_click_fix_restyle "--statuses=запущена,ожидает сборки"
     docker exec finance_backend python -m scripts.2026-11-09_click_fix_restyle --only=<хеш> --apply   # один креатив на пробу
     docker exec finance_backend python -m scripts.2026-11-09_click_fix_restyle --apply
+    docker exec finance_backend python -m scripts.2026-11-09_click_fix_restyle --targeting          # копии нацеливания (10.11.2026)
 
 Перед правкой текущий HTML пишется в `/app/logs/dsp_html_backup_clickfix_<хеш>_<дата>.html` (на сервере — `backend/logs/`):
 откат — вернуть этот HTML правкой `Creative.edit`. После правки печатается статус креатива в DSP до и после — по нему видно, не
@@ -48,6 +49,25 @@ def candidates(db, statuses, only=None) -> list:
     return [dict(x) for x in rows]
 
 
+def targeting_candidates(db, only=None) -> list:
+    """Копии креативов для ссылок нацеливания (владелец 10.11.2026: «надо накатить и на все нацеливания»): живут у демоклиента,
+    в РК не входят. Все комплекты, у которых копия заведена."""
+    rows = db.execute(text(
+        "SELECT s.id, s.ms_targeting_creative_xxhash AS xxhash, 'tgt' || s.id AS title, NULL AS status "
+        "  FROM launch_prep_creative_set s WHERE s.ms_targeting_creative_xxhash IS NOT NULL "
+        "   AND (CAST(:only AS text) IS NULL OR s.ms_targeting_creative_xxhash = :only) ORDER BY s.id"), {"only": only}).mappings().all()
+    return [dict(x) for x in rows]
+
+
+def targeting_client(db) -> MsClient:
+    """Клиент DSP от имени демоклиента нацеливания — тот же кабинет, что заводит копии (`dsp.config.targeting_cabinet`)."""
+    from app.dsp.config import targeting_cabinet
+    partner, _ = targeting_cabinet(db)
+    if not partner:
+        raise SystemExit("Не задан кабинет нацеливания: Трафики → Каталог → Скрипты сайта")
+    return MsClient(partner_xxhash=partner)
+
+
 def _backup(xxhash: str, html: str) -> str:
     os.makedirs(BACKUP_DIR, exist_ok=True)
     path = os.path.join(BACKUP_DIR, "dsp_html_backup_clickfix_%s_%s.html" % (xxhash, date.today().strftime("%Y%m%d")))
@@ -56,13 +76,15 @@ def _backup(xxhash: str, html: str) -> str:
     return path
 
 
-def run(statuses=DEFAULT_STATUSES, only=None, apply=False, client=None, db=None) -> dict:
+def run(statuses=DEFAULT_STATUSES, only=None, apply=False, client=None, db=None, mode="campaigns") -> dict:
+    """mode: `campaigns` — креативы РК в статусах `statuses`; `targeting` — копии нацеливания у демоклиента."""
     own_db = db is None
     db = db or SessionLocal()
-    c = client or MsClient()
+    c = client or (targeting_client(db) if mode == "targeting" else MsClient())
+    rows = targeting_candidates(db, only) if mode == "targeting" else candidates(db, statuses, only)
     rep = {"planned": [], "applied": [], "failed": [], "ok": 0, "no_mark": 0}
     try:
-        for row in candidates(db, statuses, only):
+        for row in rows:
             name = row["title"] or f"cr{row['id']}"
             try:
                 info = c.creative_get_info(row["xxhash"]) or {}
@@ -104,9 +126,10 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     apply = "--apply" in argv
     statuses = tuple(s.strip() for s in (_arg(argv, "--statuses") or ",".join(DEFAULT_STATUSES)).split(",") if s.strip())
-    rep = run(statuses, only=_arg(argv, "--only"), apply=apply)
+    mode = "targeting" if "--targeting" in argv else "campaigns"
+    rep = run(statuses, only=_arg(argv, "--only"), apply=apply, mode=mode)
     print(("ПРИМЕНЕНО" if apply else "СУХОЙ ПРОГОН — ничего не записано")
-          + f" · РК {', '.join(statuses)} · уже в порядке {rep['ok']} · без фикса клика {rep['no_mark']}"
+          + (" · копии нацеливания" if mode == "targeting" else f" · РК {', '.join(statuses)}") + f" · уже в порядке {rep['ok']} · без фикса клика {rep['no_mark']}"
           + f" · к правке {len(rep['planned'])}")
     for it in rep["planned"]:
         tail = (f"  DSP {it['status_before']} → {it.get('status_after')}" if apply else f"  DSP {it['status_before']}")

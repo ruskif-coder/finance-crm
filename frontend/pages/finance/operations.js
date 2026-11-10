@@ -22,6 +22,7 @@ import OperationPanelHost from '@/components/operations/OperationPanelHost'
 import { downloadFile } from '@/lib/download'
 import useLatest from '@/lib/useLatest'
 import { shortAnnexNumber } from '@/lib/annexNumber'
+import CreditLines from '@/components/settings/CreditLines'   // третья вкладка «Кредиты» (владелец 10.11.2026)
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -318,6 +319,7 @@ export default function Operations2() {
   // человек сам отметил «В план» (решение владельца 02.11.2026: вкладка внутри операций,
   // функционал целиком тот же). В адресе — чтобы обновление страницы не сбрасывало вкладку.
   const payPlan = router.query.tab === 'plan'
+  const creditTab = router.query.tab === 'credit'   // настройка кредитных линий (владелец 10.11.2026: «3 вкладкой в операциях»)
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'operations', 'edit')
   // Кнопки — по тому праву, которое спросит сервер (аудит 23.09.2026, 6.L1): создание и
@@ -325,6 +327,7 @@ export default function Operations2() {
   const canCreate = can(perms, 'operations', 'create')
   const canDelete = can(perms, 'operations', 'delete')
   const canImport = can(perms, 'import')
+  const canCredit = can(perms, 'settings_balances')   // право кредитных линий — то же, что у стартовых остатков
   const isMobile = useIsMobile()
   const [ops, setOps] = useState([])
   const [total, setTotal] = useState(0)
@@ -358,7 +361,7 @@ export default function Operations2() {
   const [planF, setPlanF] = useState(null)
   const setTab = (t) => {
     setSel({}); setPage(0); setPlanF(null)
-    router.replace({ pathname: router.pathname, query: t === 'plan' ? { tab: t } : {} }, undefined, { shallow: true })
+    router.replace({ pathname: router.pathname, query: t === 'plan' || t === 'credit' ? { tab: t } : {} }, undefined, { shallow: true })
   }
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
   const [editFiles, setEditFiles] = useState([])   // сканы открытой на правку операции
@@ -798,8 +801,9 @@ export default function Operations2() {
             <IconBtn title="Выгрузить в Excel (с учётом фильтров)" onClick={downloadExport}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg></IconBtn>
           </div>
         </div>
-        <UnderlineTabs value={payPlan ? 'plan' : 'all'} onChange={setTab}
-          tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }]} />
+        <UnderlineTabs value={creditTab ? 'credit' : payPlan ? 'plan' : 'all'} onChange={setTab}
+          tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }].concat(canCredit ? [{ key: 'credit', label: 'Кредиты' }] : [])} />
+        {creditTab ? <CreditLines /> : <>
         {payPlan && <PayPlanSummary data={planSum} filter={planF} onFilter={setPlanF} />}
 
         {/* Форма создания */}
@@ -974,6 +978,7 @@ export default function Operations2() {
             </div>
           </div>
         </div>
+        </>}
       </div>
       {panelId != null && <OperationPanelHost opId={panelId} onClose={() => setPanelId(null)} onOpen={setPanelId}
         hasPrev={panelAt > 0} hasNext={panelAt >= 0 && panelAt < rows.length - 1}

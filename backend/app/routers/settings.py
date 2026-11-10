@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.audit import log_action
 from app.database import get_db
-from app.models import CreditLine, User, Operation
+from app.models import Counterparty, CreditLine, User, Operation
 from app.permissions import require_permission
 from sqlalchemy import func
 from pydantic import BaseModel
@@ -183,30 +183,42 @@ def update_bank_own_company(
 
 
 # ── кредитные линии (02.11.2026) ─────────────────────────────────────────────────────────────────────────────────────
-# Для «Денег на сегодня» в сводке плана оплат: свободно = лимит − выбрано. «Выбрано» — руками (тело кредита в статьях не
-# выделено). Удаления нет: закрытую линию выключают, история остаётся. Право — то же, что у стартовых остатков.
+# Для «Денег на сегодня» в сводке плана оплат: свободно = лимит − выбрано. С 10.11.2026 «выбрано» считается по оплаченным
+# операциям тела кредита с банком-контрагентом линии (`app.credit_lines`); руками — только у линии без контрагента.
+# Удаления нет: закрытую линию выключают, история остаётся. Право — то же, что у стартовых остатков.
 
 class CreditLineIn(BaseModel):
     bank: str
     limit_amount: float
-    used_amount: float = 0
+    used_amount: float = 0              # только у линии без контрагента; с контрагентом — из операций
+    counterparty_id: Optional[int] = None
     as_of: Optional[date] = None
     note: Optional[str] = None
     is_active: bool = True
 
 
-def _credit_line_out(c: CreditLine) -> dict:
-    return {"id": c.id, "bank": c.bank, "limit_amount": c.limit_amount, "used_amount": c.used_amount,
-            "free": (c.limit_amount or 0) - (c.used_amount or 0), "as_of": c.as_of, "note": c.note,
-            "is_active": c.is_active, "updated_at": c.updated_at}
+def _credit_line_out(c: CreditLine, used: float, cp_name: Optional[str] = None) -> dict:
+    return {"id": c.id, "bank": c.bank, "limit_amount": c.limit_amount, "used_amount": used,
+            "free": (c.limit_amount or 0) - used, "as_of": c.as_of, "note": c.note, "is_active": c.is_active,
+            "updated_at": c.updated_at, "counterparty_id": c.counterparty_id, "counterparty_name": cp_name,
+            "used_from_operations": bool(c.counterparty_id)}
 
 
-def _check_credit_line(data: CreditLineIn):
+def _lines_out(db: Session, rows) -> list:
+    from app.credit_lines import used_of
+    used = used_of(db, rows)
+    names = dict(db.query(Counterparty.id, Counterparty.name).filter(Counterparty.id.in_([c.counterparty_id for c in rows if c.counterparty_id] or [0])).all())
+    return [_credit_line_out(c, used[c.id], names.get(c.counterparty_id)) for c in rows]
+
+
+def _check_credit_line(data: CreditLineIn, db: Session):
     if data.bank not in BANKS or data.bank == "Наличные":
         raise HTTPException(status_code=400, detail=f"Кредитная линия — только у банка: {data.bank}")
     if data.limit_amount <= 0:
         raise HTTPException(status_code=400, detail="Лимит должен быть больше нуля")
-    if data.used_amount < 0 or data.used_amount > data.limit_amount:
+    if data.counterparty_id is not None and db.get(Counterparty, data.counterparty_id) is None:
+        raise HTTPException(status_code=400, detail="Банк-контрагент не найден в реестре")
+    if data.counterparty_id is None and (data.used_amount < 0 or data.used_amount > data.limit_amount):
         raise HTTPException(status_code=400, detail="«Выбрано» — от нуля до лимита")
 
 
@@ -214,33 +226,44 @@ def _check_credit_line(data: CreditLineIn):
 def list_credit_lines(db: Session = Depends(get_db),
                       current_user: User = Depends(require_permission("settings_balances", "view"))):
     rows = db.query(CreditLine).order_by(CreditLine.is_active.desc(), CreditLine.id).all()
-    return [_credit_line_out(c) for c in rows]
+    return _lines_out(db, rows)
+
+
+@router.get("/credit-lines/counterparties")
+def credit_line_counterparties(db: Session = Depends(get_db),
+                               current_user: User = Depends(require_permission("settings_balances", "view"))):
+    """Кого можно выбрать банком линии — реестр контрагентов (имя и ИНН), под тем же правом, что сами линии."""
+    rows = db.query(Counterparty.id, Counterparty.name, Counterparty.inn).order_by(Counterparty.name).all()
+    return [{"id": r.id, "name": r.name, "inn": r.inn} for r in rows]
 
 
 @router.post("/credit-lines")
 def create_credit_line(data: CreditLineIn, db: Session = Depends(get_db),
                        current_user: User = Depends(require_permission("settings_balances", "edit"))):
-    _check_credit_line(data)
-    c = CreditLine(**data.model_dump(), updated_at=datetime.utcnow(), updated_by=current_user.id)
+    _check_credit_line(data, db)
+    body = {**data.model_dump(), **({"used_amount": 0} if data.counterparty_id else {})}   # с контрагентом ручное не пишем
+    c = CreditLine(**body, updated_at=datetime.utcnow(), updated_by=current_user.id)
     db.add(c)
     db.commit()
     log_action(db, current_user, "credit_line_create", "credit_line", c.id,
-               f"{c.bank}: лимит {c.limit_amount}, выбрано {c.used_amount}")
-    return _credit_line_out(c)
+               f"{c.bank}: лимит {c.limit_amount}" + (f", банк-контрагент #{c.counterparty_id}" if c.counterparty_id else f", выбрано {c.used_amount}"))
+    return _lines_out(db, [c])[0]
 
 
 @router.put("/credit-lines/{line_id}")
 def update_credit_line(line_id: int, data: CreditLineIn, db: Session = Depends(get_db),
                        current_user: User = Depends(require_permission("settings_balances", "edit"))):
-    _check_credit_line(data)
+    _check_credit_line(data, db)
     c = db.query(CreditLine).get(line_id)
     if not c:
         raise HTTPException(status_code=404, detail="Кредитная линия не найдена")
-    was = f"лимит {c.limit_amount}, выбрано {c.used_amount}, {'вкл' if c.is_active else 'выкл'}"
+    was = f"лимит {c.limit_amount}, контрагент #{c.counterparty_id or '—'}, выбрано {c.used_amount}, {'вкл' if c.is_active else 'выкл'}"
     for k, v in data.model_dump().items():
+        if k == "used_amount" and data.counterparty_id:      # заморожено: у линии с контрагентом «выбрано» — из операций
+            continue
         setattr(c, k, v)
     c.updated_at, c.updated_by = datetime.utcnow(), current_user.id
     db.commit()
     log_action(db, current_user, "credit_line_update", "credit_line", c.id,
-               f"{c.bank}: {was} → лимит {c.limit_amount}, выбрано {c.used_amount}, {'вкл' if c.is_active else 'выкл'}")
-    return _credit_line_out(c)
+               f"{c.bank}: {was} → лимит {c.limit_amount}, контрагент #{c.counterparty_id or '—'}, {'вкл' if c.is_active else 'выкл'}")
+    return _lines_out(db, [c])[0]

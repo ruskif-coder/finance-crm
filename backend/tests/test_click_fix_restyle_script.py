@@ -3,6 +3,8 @@
 `html_code`, больше ничего (статус, лимиты, ссылка клика не трогаются)."""
 import importlib
 
+import pytest
+
 from app.dsp import creatives as cr
 
 S = importlib.import_module("scripts.2026-11-09_click_fix_restyle")
@@ -44,3 +46,47 @@ def test_apply_backs_up_and_edits_only_html(monkeypatch, tmp_path):
     assert cr.CLICK_FIX_STYLE in dsp.html
     assert open(rep["applied"][0]["backup"], encoding="utf-8").read() == OLD
     assert S.run(apply=True, client=dsp, db=object())["ok"] == 1            # повтор — без правок
+
+
+# ── нацеливание (владелец 10.11.2026: «надо накатить и на все нацеливания») ──────────────────────────────────────
+
+def test_targeting_mode_takes_targeting_copies_and_demo_client(monkeypatch, tmp_path):
+    """Копии нацеливания живут у демоклиента (другой partner_xxhash) и в РК не входят — режим `targeting` берёт их из
+    комплектов (`ms_targeting_creative_xxhash`) и правит клиентом демоклиента. Ломается, если режим возьмёт креативы РК или
+    пойдёт в DSP не от демоклиента."""
+    monkeypatch.setattr(S, "BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(S, "targeting_candidates", lambda db, only=None: [
+        {"id": 7, "xxhash": "TGT0000000000001", "title": "tgt7", "status": None}])
+    monkeypatch.setattr(S, "candidates", lambda *a, **k: pytest.fail("в режиме нацеливания креативы РК не берём"))
+    opened = []
+    dsp = FakeDsp(OLD)
+    monkeypatch.setattr(S, "targeting_client", lambda db: opened.append("demo") or dsp)
+    rep = S.run(apply=True, db=object(), mode="targeting")
+    assert opened == ["demo"] and [x["xxhash"] for x in rep["applied"]] == ["TGT0000000000001"]
+    assert "z-index" not in dsp.edits[0][1]["data"]["html_code"]
+
+
+def test_targeting_candidates_are_sets_with_a_copy(monkeypatch):
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        got = S.targeting_candidates(db)
+        want = db.execute(__import__("sqlalchemy").text(
+            "SELECT count(*) FROM launch_prep_creative_set WHERE ms_targeting_creative_xxhash IS NOT NULL")).scalar()
+        assert len(got) == want and all(x["xxhash"] for x in got)
+    finally:
+        db.close()
+
+
+def test_targeting_client_opens_demo_partner_from_config():
+    """Настоящий путь без подмен: кабинет нацеливания — из `dsp.config.targeting_cabinet` (ломалось на импорте 10.11.2026)."""
+    from app.database import SessionLocal
+    from app.dsp.config import targeting_cabinet
+    db = SessionLocal()
+    try:
+        partner, _ = targeting_cabinet(db)
+        if not partner:
+            pytest.skip("на стенде не задан кабинет нацеливания")
+        assert S.targeting_client(db).partner_xxhash == partner
+    finally:
+        db.close()

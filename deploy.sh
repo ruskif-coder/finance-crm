@@ -642,6 +642,20 @@ EOF
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] уборка (сухой прогон)" >> $LOG
       docker exec finance_backend python -m scripts.2026-08-30_retention_sweep >> $LOG 2>&1
     fi
+    # Предрелизные дампы (`pre_release_*`) снимаются перед каждой выкладкой и сами не убирались: к 10.11.2026
+    # их накопилось 114 (3,2 ГБ). Держим 10 свежих — по ВРЕМЕНИ файла: имена писались в разных форматах
+    # (`pre_release_v2.6.28_20260924_0941`, `pre_release_2026-11-06_v2737`), по имени порядок неверен.
+    # Копия каждого до релиза забирается на локальную машину (навык deploying-to-prod).
+    PRE_OLD=$(ls -1t "$BACKUPS_DIR"/pre_release_*.sql 2>/dev/null | tail -n +11)
+    if [ -n "$PRE_OLD" ]; then
+      PRE_N=$(printf '%s\n' "$PRE_OLD" | wc -l)
+      if [ "$MODE" = "apply" ]; then
+        printf '%s\n' "$PRE_OLD" | tr '\n' '\0' | xargs -0 rm -f
+        echo "предрелизные дампы: удалено $PRE_N, оставлено 10 свежих" >> $LOG
+      else
+        echo "предрелизные дампы: удалил бы $PRE_N" >> $LOG
+      fi
+    fi
     tail -n 3 $LOG
     ;;
 

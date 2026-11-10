@@ -185,7 +185,8 @@ export function forecastOf(na, nowMs, cal) {
  * Вкладка «Ждут сканов»: документы внесены, а ДС так и не подписан (внесли с предупреждением «ДС не подписан») — ждём скан подписанного ДС.
  * Скан прикладывает бухгалтер или аккаунт; после этого ds_signed = true, ds_scan_url заполнен, заявка уходит из вкладки.
  */
-export const waitsScan = r => r.status === 'done' && !r.ds_signed;
+// стенд: скан подписанного ждём только у пакета на бумаге — у ЭДО подпись придёт из ЭДО (владелец 10.11.2026)
+export const waitsScan = r => r.status === 'done' && !r.ds_signed && r.channel === 'бумага';
 export const inTab = (r, tab) => tab === 'all' ? true : tab === 'scan' ? waitsScan(r) : r.status === tab;
 
 /** Метки строки очереди */

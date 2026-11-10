@@ -302,7 +302,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
   const lateMissing = readOnly ? ev.missing.filter(m => /^(PDF|XML)/.test(m.label)) : [];   // внесено без файла — догрузить
   const lateAttach = !!readOnly;
   const bar = readOnly ? lateMissing : ev.missing.map(m => ({ ...m })).concat(ev.warns.map(label => ({ label, tone: 'warn' })));
-  const head = readOnly ? (lateMissing.length ? `Внесено ${msk(r.done.at).dm} — догрузите:` : !r.ds_signed ? `Внесено ${msk(r.done.at).dm} — ждём скан подписанного ДС` : `Внесено ${msk(r.done.at).dm} — заявка в архиве`) : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
+  const head = readOnly ? (lateMissing.length ? `Внесено ${msk(r.done.at).dm} — догрузите:` : waitsScan(r) ? `Внесено ${msk(r.done.at).dm} — ждём скан подписанного ДС` : `Внесено ${msk(r.done.at).dm} — заявка в архиве`) : ev.ready ? (ev.warns.length ? 'Можно вносить — проверьте:' : 'Всё на месте — можно вносить') : 'Не хватает:';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, minHeight: 'calc(100vh - 110px)' }}>
@@ -312,7 +312,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.01em' }}>{r.buyer.name}</span>
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>ИНН {r.buyer.inn} · КПП {r.buyer.kpp}</span>
         <Chip tone={st[1]}>{st[0]}</Chip>
-        <Chip tone={r.ds_signed ? 'ok' : 'warn'}>{r.ds_signed ? 'ДС подписан' : readOnly ? 'ждём скан подписанного ДС' : 'ДС создан, не подписан'}</Chip>
+        <Chip tone={r.ds_signed ? 'ok' : 'warn'}>{r.ds_signed ? 'ДС подписан' : waitsScan(r) ? 'ждём скан подписанного ДС' : 'ДС создан, не подписан'}</Chip>
         {/* как выставляем (владелец 06.11.2026): признак договора; бумага — печать и сканы, не задан — пакет сам не уйдёт в «выставление» */}
         {r.channel ? <Chip tone={r.channel === 'бумага' ? 'warn' : 'need'} title="Канал выдачи из договора">выставляем: {r.channel}</Chip>
           : <Chip tone="bad" title="У договора не задан канал выдачи — заполните в окне «Добавить данные» или в карточке договора">канал выдачи не задан</Chip>}
@@ -472,10 +472,10 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             <Btn onClick={doReturn} disabled={!ret.reason && !ret.text.trim()} style={{ borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}>Вернуть аккаунту</Btn></span>
         </> : <>
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px 8px', flexWrap: 'wrap', flex: '1 1 0', minWidth: 0 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly ? (lateMissing.length || !r.ds_signed ? 'var(--warning-fg)' : 'var(--income-fg)') : ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', color: readOnly ? (lateMissing.length || waitsScan(r) ? 'var(--warning-fg)' : 'var(--income-fg)') : ev.ready ? 'var(--income-fg)' : 'var(--text-secondary)' }}>{head}</span>
             {bar.map(m => <span key={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 10px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: TONE[m.tone].bg, color: TONE[m.tone].fg }}><Dot c={TONE[m.tone].dot} /><span style={{ whiteSpace: 'nowrap' }}>{m.label}</span></span>)}
           </span>
-          {readOnly && !r.ds_signed && <Btn primary onClick={pickScan} style={{ height: 38, padding: '0 18px' }}><Clip />Приложить скан ДС</Btn>}
+          {waitsScan(r) && <Btn primary onClick={pickScan} style={{ height: 38, padding: '0 18px' }}><Clip />Приложить скан ДС</Btn>}
           <span style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
             {!readOnly && saved && <span style={{ color: saved === 'error' ? 'var(--danger-fg)' : undefined }}>{saved === 'error' ? 'не сохранено · повторить' : 'черновик сохранён · ' + saved}</span>}
             <span title="Ctrl+Enter — внести и к следующему · ↑ ↓ — соседняя заявка · Esc — закрыть возврат" style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 8px', border: '1px solid var(--border-card)', borderRadius: 7, color: 'var(--text-muted)', cursor: 'help' }}>Ctrl+Enter · ↑↓</span>

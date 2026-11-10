@@ -180,9 +180,11 @@ def _done(db, cp_ids):
 
 
 def _credit_lines(db):
+    from app.credit_lines import used_of
     from app.models import CreditLine
-    return [{"bank": c.bank, "limit_amount": c.limit_amount or 0, "used_amount": c.used_amount or 0}
-            for c in db.query(CreditLine).filter(CreditLine.is_active.is_(True)).all()]
+    lines = db.query(CreditLine).filter(CreditLine.is_active.is_(True)).all()
+    used = used_of(db, lines)          # по операциям тела кредита (10.11.2026); у линии без контрагента — ручное
+    return [{"bank": c.bank, "limit_amount": c.limit_amount or 0, "used_amount": used[c.id]} for c in lines]
 
 
 def load(db, user) -> dict:

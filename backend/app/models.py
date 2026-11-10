@@ -295,13 +295,15 @@ class Operation(Base):
 
 
 class CreditLine(Base):
-    """Кредитная линия (миграция 2026-11-02_credit_lines.sql). Свободно = лимит − выбрано; «выбрано» вводится руками —
-    тело кредита в статьях не выделено. Закрытую линию выключают (`is_active`), а не удаляют."""
+    """Кредитная линия (миграции 2026-11-02_credit_lines.sql, 2026-11-10_credit_line_counterparty.sql). Свободно = лимит − выбрано.
+    С 10.11.2026 «выбрано» считается по оплаченным операциям тела кредита (разметка `loan_body`) с банком-контрагентом линии
+    (`app.credit_lines`); ручное `used_amount` заморожено — только у линий без контрагента. Закрытую линию выключают, не удаляют."""
     __tablename__ = "credit_lines"
     id = Column(Integer, primary_key=True)
     bank = Column(String, nullable=False)
     limit_amount = Column(Numeric(15, 2, asdecimal=False), nullable=False)
     used_amount = Column(Numeric(15, 2, asdecimal=False), nullable=False, default=0)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id", ondelete="SET NULL"))   # банк — по его операциям «выбрано»
     as_of = Column(Date)
     note = Column(Text)
     is_active = Column(Boolean, nullable=False, default=True)
