@@ -30,6 +30,7 @@ import {
 } from './accDocsLogic';
 import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow, Field, borderFor, StepHead, Sum, TONE, Clip } from './accDocsParts';
 import { parseDocFileName } from '@/lib/docFileName.mjs';   // стенд: № и дата из имени файла 1С (10.11.2026)
+import { pctComma } from '@/lib/salesFormat';
 
 const AD_RISE = 'adRise 0.4s cubic-bezier(0.22,1,0.36,1) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
 const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['scan', 'Ждут сканов', 'var(--warning)'], ['all', 'Все', null]];   // стенд: «Ждут сканов» — после «Внесены» (владелец 09.11.2026)
@@ -317,6 +318,9 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         {r.channel ? <Chip tone={r.channel === 'бумага' ? 'warn' : 'need'} title="Канал выдачи из договора">выставляем: {r.channel}</Chip>
           : <Chip tone="bad" title="У договора не задан канал выдачи — заполните в окне «Добавить данные» или в карточке договора">канал выдачи не задан</Chip>}
         {r.status === 'done' && <EdoChip edo={r.edo} />}
+        {/* для сведения (владелец 11.11.2026): суммы заявки уже со скидкой — она в цене единицы, отдельной строки нет */}
+        {r.sk_in_invoice?.length > 0 && <Chip tone="info" title="Скидка СК в счёт уже учтена в цене единицы и в суммах этой заявки — отдельной строкой её не вносить">
+          со скидкой в счёт {r.sk_in_invoice.map(x => pctComma(x.pct)).join(', ')}</Chip>}
         <span title="Ожидание в рабочих часах: пн–пт, 9–18 МСК" style={{ fontFamily: MONO, fontSize: 12, cursor: 'help', color: r.status === 'wait' ? (tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg) : 'var(--text-muted)' }}>
           {r.status === 'wait' ? `ждёт ${ageLabel(h)} · с ${msk(r.since).dm}` : r.status === 'returned' ? `возвращено ${r.returned ? msk(r.returned.at).dm : ''}` : `внесено ${msk(r.done.at).dm}`}</span>
         {/* стенд: аккаунты сделок пакета — второй строкой слева (владелец 09.11.2026: «вот сюда нужно вывести аккаунта сделки») */}

@@ -8,7 +8,7 @@ import api, { auth } from '@/lib/api'
 import { MONO, UI, btn, inp, Segmented } from '@/components/salesTableKit'
 import { isAdmin } from '@/lib/auth'
 import { fmtDateTimeShort } from '@/lib/dates'
-import { rub2 } from '@/lib/salesFormat'
+import { rub2, pctComma } from '@/lib/salesFormat'
 import { CAP, CARD, Note, SETTING_LABEL, num, plural, sameSettings } from '@/components/master/kit'
 
 // Кнопки внутри узкой панели (330px) — компактные, в одну строку.
@@ -159,6 +159,11 @@ export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, 
         <div style={{ fontSize: 12, marginTop: 4, color: sumOk ? 'var(--income-fg)' : 'var(--danger-fg)' }}>
           {sumOk ? '= сумме сделок к закрытию' : `не сходится с суммой сделок ${rub2(m.deals_total_net)}`}</div>
       </div>
+      {/* для сведения (владелец 11.11.2026): скидка СК в счёт — в цене единицы строк размещения, отдельной строки в ДС нет */}
+      {lay.sk_in_invoice?.length > 0 && (
+        <Note tone="info" style={{ marginTop: 10 }}>Документы со скидкой в счёт: {lay.sk_in_invoice.map(x => `${x.deal} — ${pctComma(x.pct)}`).join(', ')}.
+          Скидка уже в цене единицы размещения — отдельной строки в ДС и УПД нет.</Note>
+      )}
 
       {m.prev && (
         <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 12, background: diff.length ? 'var(--warning-bg)' : 'var(--income-tint)',

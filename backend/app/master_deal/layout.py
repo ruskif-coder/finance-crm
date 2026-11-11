@@ -71,29 +71,39 @@ def lines(db: Session, m: MasterDeal) -> list:
     return out
 
 
-def _discounts(rows: list) -> list:
-    """Скидка СК «в счёт» (владелец 15.10.2026): по каждой сделке — строка с минусом от суммы её строк В ЭТОМ ДС, чтобы сумма
-    пакета совпадала с суммой сделок «к закрытию». Бренд и услуга — как у базовой строки сделки: скидка идёт в тот же комплект."""
-    out = []
+def _fold_discounts(rows: list) -> list:
+    """Скидка СК «в счёт» — через цену единицы закупки (владелец 11.11.2026, со слов бухгалтера). Прежде (15.10) — строка
+    «Скидка СК» с минусом; заявка бухгалтеру её не видела, и счета M-0032…35 ушли в 1С без скидки. Строки размещения сделки
+    уменьшаются на её % СК: сумма — до той же суммы «к закрытию» (база − скидка, остаток копеек последней строке), цена единицы
+    × (1 − %), объём закупки прежний. Допы СК не облагаются (07.11.2026). Новые строки — входные не меняются."""
+    out = list(rows)
     for deal_id in dict.fromkeys(r["deal_id"] for r in rows):
-        mine = [r for r in rows if r["deal_id"] == deal_id]
-        pct = mine[0].get("sk_pct") or 0
-        # Только базовая услуга: допы СК не облагаются (владелец 07.11.2026) — в ДС одних допов строки скидки нет.
-        own = [r for r in mine if r["kind"] == "base"]
-        base = sum(r["net"] for r in own)
+        idx = [i for i, r in enumerate(rows) if r["deal_id"] == deal_id and r["kind"] == "base"]
+        pct = float(rows[idx[0]].get("sk_pct") or 0) if idx else 0.0
+        base = sum(rows[i]["net"] for i in idx)
         if pct <= 0 or base <= 0:
             continue
-        r0 = own[0]
-        svc = r0["service"]
-        out.append({**{k: r0[k] for k in ("deal_id", "deal", "brand", "sk_pct")}, "service": svc,
-                    "id": f"sk:{deal_id}:{len(out)}", "kind": "discount", "position": f"Скидка СК {pct:g} %",
-                    "model": "Скидка в счёт", "volume": None, "unit_price": None, "net": -_r2(base * pct / 100.0)})
+        # Доли — от сумм МП (src), как у сверки (`closing._money`): двойное масштабирование сдвигало копейку между строками.
+        weights = [((rows[i].get("src") or {}).get("amount") or rows[i]["net"]) for i in idx]
+        nets = M.scale_to(weights, _r2(_r2(base) - _r2(base * pct / 100.0)))
+        for i, net in zip(idx, nets):
+            up = rows[i].get("unit_price")
+            out[i] = {**rows[i], "net": net, "unit_price": _r2(float(up) * (1 - pct / 100.0)) if up else up}
     return out
+
+
+def sk_in_invoice(rows: list) -> list:
+    """Сделки пакета со скидкой в счёт — для плашки «документы со скидкой в счёт» (только для сведения, 11.11.2026)."""
+    seen: dict = {}
+    for r in rows:
+        if r["kind"] == "base" and (r.get("sk_pct") or 0) > 0:
+            seen.setdefault(r["deal"], float(r["sk_pct"]))
+    return [{"deal": d, "pct": p} for d, p in seen.items()]
 
 
 def _key(r: dict, by_brand: bool, by_service: bool) -> tuple:
     # у допов услуга не делит — доп относится к бренду (ТЗ §4)
-    svc = by_service and (r["kind"] == "base" or (r["kind"] == "discount" and r["service"]))
+    svc = by_service and r["kind"] == "base"
     return ((r["brand"] if by_brand else None), (r["service"] if svc else None))
 
 
@@ -138,14 +148,14 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     for kind, title, rows in parts:
         if not rows:
             continue
-        rows = rows + _discounts(rows)
+        rows = _fold_discounts(rows)
         no = (f"{base_no}-01" if kind == "addons" else str(base_no)) if base_no else ("n-01" if kind == "addons" else "n")
         groups: dict = {}
         for r in rows:
             groups.setdefault(_key(r, st["ds_by_brand"], st["ds_by_service"]), []).append(r)
         kits: dict = {}
         for r in rows:
-            if r["net"] != 0:                # позиции с нулём комплект не образуют; скидка идёт в комплект своей сделки
+            if r["net"] != 0:                # позиции с нулём комплект не образуют
                 kits.setdefault(_key(r, st["upd_by_brand"], st["upd_by_service"]), []).append(r)
         upds = []
         for (br, sv), rs in kits.items():
@@ -171,7 +181,8 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
                 g.pop("_src", None)
     total = _r2(sum(ds["net"] for ds in ds_list))
     return {"vat_rate": vat, "ds": ds_list, "total_net": total, "total_gross": _r2(sum(ds["gross"] for ds in ds_list)),
-            "upd_count": upd_no, "lines": len(ls), "has_paid_extras": bool(paid_extras), "settings": st}
+            "upd_count": upd_no, "lines": len(ls), "has_paid_extras": bool(paid_extras), "settings": st,
+            "sk_in_invoice": sk_in_invoice(ls)}
 
 
 def row_volume(r: dict, net: float, kv: float):

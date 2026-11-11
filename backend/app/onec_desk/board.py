@@ -169,6 +169,7 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
         # Как выставляем (владелец 06.11.2026: «забыли буху показать»): признак договора, а ушедшее клиенту — по своему каналу
         "channel": _channel(db, m),
         "accounts": _accounts(db, k.annex_id),
+        "sk_in_invoice": kit_sk_note(db, m, a, lines),
     }
     unseen_fix = False
     if status == "wait":
@@ -257,3 +258,32 @@ def request_for(db: Session, m, k, now: Optional[datetime] = None) -> Optional[d
     kit = next((u for u in TA.upds_of(db, m) if u["upd_no"] == k.upd_no), {})
     cal = CL.sets(CL.work_calendar(db))
     return request(db, m, k, kit, n_kits, _events(db, [k.id]).get(k.id, []), cal, now, c=c, buyer=buyer)
+
+
+def _deal_ids(db: Session, m) -> list:
+    return list(db.execute(text("SELECT deal_id FROM master_deal_items WHERE master_deal_id = :m ORDER BY id"), {"m": m.id}).scalars())
+
+
+def sk_in_bill(db: Session, m, only: Optional[set] = None) -> list:
+    """Сделки пакета со скидкой СК в счёт (только для сведения, владелец 11.11.2026); `only` — id сделок комплекта."""
+    from app.final_recon import sk as SK
+    from app.sales.models import SalesDeal
+    out = []
+    for i in _deal_ids(db, m):
+        if only is not None and i not in only:
+            continue
+        d = db.get(SalesDeal, i)
+        sk = SK.of_deal(db, d) if d is not None else {}
+        if sk.get("mode") == "скидка в счёт" and float(sk.get("percent") or 0) > 0:
+            out.append({"deal": d.code, "pct": float(sk["percent"])})
+    return out
+
+
+def kit_sk_note(db: Session, m, a, lines: list) -> list:
+    """Плашка заявки «со скидкой в счёт»: сделки СВОЕГО комплекта, чьё размещение в нём есть (доп СК не облагается).
+    ДС по старому правилу (строка «Скидка СК», до 11.11.2026) — без плашки: такую строку заявка не видит, и «скидка уже
+    в цене» было бы неправдой (ревью 11.11.2026)."""
+    if a is not None and any((r or {}).get("kind") == "discount" for r in (a.rows or [])):
+        return []
+    ids = {x.get("deal_id") for x in lines if x.get("kind") == "размещение" and x.get("deal_id")}
+    return sk_in_bill(db, m, ids) if ids else []

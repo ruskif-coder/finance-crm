@@ -185,7 +185,8 @@ def test_send_needs_confirmed_recon_and_pin_change_drops_it(env):
 
 
 def test_sk_discount_shown_in_layout_and_sum_matches(env):
-    """Владелец 15.10: скидка СК «в счёт» видна в раскладке — сумма пакета = сумме сделок к закрытию."""
+    """Владелец 15.10: сумма пакета = сумме сделок к закрытию. С 11.11.2026 скидка в счёт — в цене строк, строки «Скидка СК» нет,
+    а пакет помечен для плашки «документы со скидкой в счёт»."""
     db, (d1, d2), u = env
     from app.final_recon import closing as CL
     from app.final_recon import sk as SK
@@ -198,10 +199,11 @@ def test_sk_discount_shown_in_layout_and_sum_matches(env):
     for st in ({}, {"addons_separate": False}, {"upd_by_service": True, "ds_by_service": True}):
         lay = LY.layout(db, m, st)
         rows = [r for ds in lay["ds"] for g in ds["groups"] for r in g["rows"]]
-        assert any(r["kind"] == "discount" and r["deal"] == d1.code for r in rows)
+        assert not any(r["kind"] == "discount" for r in rows), "строки «Скидка СК» в ДС нет"
+        assert lay["sk_in_invoice"] == [{"deal": d1.code, "pct": 10.0}]
         expect = sum(CL.compute(db, d)["total_net"] for d in (d1, d2))
         assert lay["total_net"] == pytest.approx(expect, abs=0.05)
-        assert all(k["net"] > 0 for ds in lay["ds"] for k in ds["upds"]), "комплект из одной скидки не образуется"
+        assert all(k["net"] > 0 for ds in lay["ds"] for k in ds["upds"]), "комплекты с деньгами"
 
 
 def test_start_no_below_issued_is_allowed_when_the_number_is_free(monkeypatch):

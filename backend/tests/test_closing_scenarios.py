@@ -173,7 +173,7 @@ def test_layout_all_settings_combinations(env):
     db, deals, u = env
     for d in deals:
         _ready(db, d)
-    SK.set_deal(db, deals[1], "скидка в счёт", 7, u)          # СК в пакете — видна в раскладке
+    SK.set_deal(db, deals[1], "скидка в счёт", 7, u)          # СК в пакете — в цене строк и в плашке
     CL.confirm(db, deals[1], True, None)
     out = MS.send_with(db, deals[0], deals[1:], u, target="new")
     m = db.get(MasterDeal, out["master"]["id"])
@@ -190,7 +190,8 @@ def test_layout_all_settings_combinations(env):
                                     "upd_by_brand": c, "upd_by_service": e, "moved": moved})
             _check(lay, deals_total)
             seen_addons |= any(ds["kind"] == "addons" for ds in lay["ds"])
-            assert any(r["kind"] == "discount" for ds in lay["ds"] for g in ds["groups"] for r in g["rows"]), "скидка СК видна"
+            assert not any(r["kind"] == "discount" for ds in lay["ds"] for g in ds["groups"] for r in g["rows"]), "скидка — в цене"
+            assert deals[1].code in [x["deal"] for x in lay["sk_in_invoice"]], "пакет помечен: скидка в счёт"
     assert seen_addons, "ДС допов ни разу не построен"
     # сохранение и перечитывание — то же самое
     PK.save_settings(db, m, {"addons_separate": True, "bonus_addons": "hide", "moved": paid[:1]}, u)

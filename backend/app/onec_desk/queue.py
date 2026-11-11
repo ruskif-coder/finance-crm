@@ -80,7 +80,7 @@ def _lines(db: Session, k, annex, values: dict, rate: float) -> list:
     for r in tpl_doc._upd_own(db, k, list(annex.rows or []), dict(values)) if annex is not None else []:
         net = round(float(r.get("amount") or 0), 2)
         vat = round(net * rate / 100, 2)
-        out.append({"row_id": r.get("row_id"), "service": r.get("doc_position") or r.get("position") or "", "brand": r.get("brand") or "",
+        out.append({"row_id": r.get("row_id"), "deal_id": r.get("deal_id"), "service": r.get("doc_position") or r.get("position") or "", "brand": r.get("brand") or "",
                     "kind": "доп" if r.get("kind") == "extra" else "размещение", "bonus": bool(r.get("bonus")),
                     "model": r.get("model") or "", "volume": r.get("volume"), "unit_price": r.get("unit_price"),
                     "date_from": r.get("date_from"), "date_to": r.get("date_to"),

@@ -312,12 +312,13 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras
     if sk["mode"] == "скидка в счёт" and total_net is not None:
         total_net = _r2(total_net - sk_net)
     mp_disc, double = double_sk(base, sk)
-    # НДС — по строкам, как в ДС и УПД (владелец 22.10.2026): строки базы под сумму сверки, платные допы, скидка в счёт строкой.
+    # НДС — по строкам, как в ДС и УПД (владелец 22.10.2026): строки базы под сумму сверки, платные допы. Скидка в счёт — в цене
+    # строк базы, отдельной строки нет (11.11.2026, как `layout._fold_discounts`).
     total_vat = None
     if total_net is not None:
-        nets = (M.scale_to([r["amount"] or 0 for r in base], base_ds or 0)
-                + [e["amount"] or 0 for e in extras if not e.get("bonus")]
-                + ([-sk_net] if sk["mode"] == "скидка в счёт" and sk_net else []))
+        in_bill = sk_net if sk["mode"] == "скидка в счёт" else 0.0
+        nets = (M.scale_to([r["amount"] or 0 for r in base], _r2((base_ds or 0) - in_bill))
+                + [e["amount"] or 0 for e in extras if not e.get("bonus")])
         total_vat = M.doc_vat(nets, vat)
     return {"mode": mode, "amounts": amounts, "base_ds": base_ds, "paid_extras": paid_extras, "vat": vat, "total_net": total_net,
             "total_vat": total_vat,
@@ -326,7 +327,7 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras
 
 
 DOUBLE_SK = ("Скидка вычтется дважды: в строках медиаплана уже скидка {mp} %, а по агентским условиям — «скидка в счёт» {sk} %. "
-             "Уберите скидку из медиаплана (она войдёт в ДС строкой «Скидка СК») или поправьте СК по этой сделке")
+             "Уберите скидку из медиаплана (скидка в счёт уменьшит цену в ДС сама) или поправьте СК по этой сделке")
 
 
 DOUBLE_SK_GAP = 1.0      # п.п.: скидка в МП так близко к % СК — это сама СК, вписанная второй раз

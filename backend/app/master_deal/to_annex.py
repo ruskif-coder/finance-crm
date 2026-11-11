@@ -53,9 +53,8 @@ def number_label(no, sub_no, kind: str = "дс") -> str:
 
 
 def _snapshot(ds: dict) -> list:
-    """Строки ДС для документа: исходная строка МП с суммой и объёмом по раскладке; строка скидки — своя. Заголовок группы
-    документа (`brand`) — подпись группы раскладки (бренд · услуга)."""
-    from app.sales.annex import PLACEMENT_NETWORK
+    """Строки ДС для документа: исходная строка МП с суммой и объёмом по раскладке, у размещения — и с ценой единицы по раскладке
+    (скидка СК в счёт уменьшает цену, 11.11.2026). Заголовок группы документа (`brand`) — подпись группы раскладки (бренд · услуга)."""
     out = []
     for g in ds["groups"]:
         label = " · ".join(x for x in (g["brand"], g["service"]) if x) or None
@@ -63,10 +62,8 @@ def _snapshot(ds: dict) -> list:
             src = r.get("src") or {}
             row = {**src, "deal_id": r["deal_id"], "brand": label, "kind": "extra" if r["kind"] in ("extra", "bonus") else r["kind"],
                    "volume": r["volume"], "amount": r["net"] if r["net"] else None, "bonus": r["kind"] == "bonus"}
-            if r["kind"] == "discount":
-                row.update({"network": PLACEMENT_NETWORK, "position": r["position"], "doc_position": None, "geo": None, "format": None,
-                            "device": None, "rotation": None, "model": "Скидка в счёт", "unit_price": None,
-                            "date_from": None, "date_to": None})
+            if r["kind"] == "base":
+                row["unit_price"] = r.get("unit_price")
             out.append(row)
     return jsonable_encoder(out)
 

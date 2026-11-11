@@ -47,16 +47,19 @@ def test_postpay_sk_is_counted_from_the_base_service_only(money):
     assert mo["total_net"] == 120000.0, "постоплата сумму ДС не меняет"
 
 
-def test_discount_line_in_the_master_ds_ignores_addons():
-    rows = [{"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": "Услуга", "sk_pct": 30.0, "kind": "base", "net": 100000.0},
-            {"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": "Услуга", "sk_pct": 30.0, "kind": "extra", "net": 20000.0}]
-    disc = LY._discounts(rows)
-    assert len(disc) == 1 and disc[0]["net"] == -30000.0
+def test_discount_in_bill_lowers_only_the_base_service_rows():
+    rows = [{"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": "Услуга", "sk_pct": 30.0, "kind": "base", "net": 100000.0,
+             "unit_price": 100.0},
+            {"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": "Услуга", "sk_pct": 30.0, "kind": "extra", "net": 20000.0,
+             "unit_price": 20000.0}]
+    out = LY._fold_discounts(rows)
+    assert [r["net"] for r in out] == [70000.0, 20000.0]
 
 
-def test_no_discount_line_in_a_ds_of_addons_only():
-    rows = [{"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": None, "sk_pct": 30.0, "kind": "extra", "net": 20000.0}]
-    assert LY._discounts(rows) == []
+def test_ds_of_addons_only_is_not_discounted():
+    rows = [{"deal_id": 1, "deal": "AAA111", "brand": "Бренд", "service": None, "sk_pct": 30.0, "kind": "extra", "net": 20000.0,
+             "unit_price": 20000.0}]
+    assert LY._fold_discounts(rows) == rows
 
 
 def test_agency_terms_base_is_the_base_service(monkeypatch):
