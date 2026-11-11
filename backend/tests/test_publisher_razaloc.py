@@ -160,3 +160,33 @@ def test_gateway_razaloc_does_not_open_someone_elses_recon():
     finally:
         db.rollback()
         db.close()
+
+
+def test_month_file_takes_only_agreed_recons_of_that_month_sorted_by_site():
+    """Кнопка «Разаллокация ↓» на доске сверок (владелец 11.11.2026): тот же файл, что видят площадки, но за месяц целиком.
+    Поломка, которую ловит: в файл попала несогласованная сверка (её итога нет) или сверка соседнего месяца."""
+    db = SessionLocal()
+    try:
+        pubs = [r[0] for r in db.execute(__import__("sqlalchemy").text(
+            "SELECT id FROM sales_publishers WHERE coalesce(domain, name) IS NOT NULL ORDER BY coalesce(domain, name) LIMIT 3"))]
+        if len(pubs) < 3:
+            pytest.skip("на стенде меньше трёх площадок")
+        a = PublisherRequest(kind="сверка", publisher_id=pubs[1], period="2031-01", verdict="согласовано")
+        b = PublisherRequest(kind="сверка", publisher_id=pubs[0], period="2031-01", verdict="согласовано")
+        open_ = PublisherRequest(kind="сверка", publisher_id=pubs[2], period="2031-01")   # сверка — одна на площадку×месяц
+        other = PublisherRequest(kind="сверка", publisher_id=pubs[0], period="2031-02", verdict="согласовано")
+        db.add_all([a, b, open_, other])
+        db.flush()
+        assert [r.id for r in R.month_requests(db, "2031-01")] == [b.id, a.id]
+        assert R.month_requests(db, "2031-03") == []
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_month_file_needs_the_interaction_right_and_says_when_nothing_is_agreed(client):
+    app.dependency_overrides[get_current_user] = lambda: _User("role_13")
+    assert client.get("/api/publisher-recon/razaloc.xlsx?period=2031-03").status_code == 403
+    app.dependency_overrides[get_current_user] = lambda: _User("admin")
+    r = client.get("/api/publisher-recon/razaloc.xlsx?period=2031-03")
+    assert r.status_code == 409 and "согласован" in r.json()["detail"]

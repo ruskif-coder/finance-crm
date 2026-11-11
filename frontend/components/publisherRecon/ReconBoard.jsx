@@ -33,7 +33,7 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
   const [filter, setFilter] = useState(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)       // идёт загрузка доски (07.11.2026: «видно, что данные подгружаются»)
-  const [exporting, setExporting] = useState(false)   // готовится Excel
+  const [exporting, setExporting] = useState('')   // какой файл готовится: 'recon' | 'razaloc'
   const [toast, flash] = useToast()
 
   const latest = useLatest()
@@ -60,6 +60,11 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
       flash(`${r.site}: сверка отправлена`)
       load()
     } catch (e) { flash(e?.response?.data?.detail || 'Не удалось отправить') } finally { setBusy(false) }
+  }
+  const download = async (what, url) => {
+    if (exporting) return
+    setExporting(what)
+    try { await downloadFile(url, null, flash) } finally { setExporting('') }
   }
   const sendAll = async () => {
     if (!c.ready || busy) return
@@ -111,14 +116,16 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
             {month !== current && (
               <span onClick={() => setMonth(current)} style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>к текущему</span>)}
             {/* Выгрузка месяца на экране (владелец 06.11.2026): сводная + площадка на своей вкладке */}
-            <span onClick={async () => {
-              if (exporting) return
-              setExporting(true)
-              try { await downloadFile(`/publisher-recon/export.xlsx?period=${month}`, null, flash) } finally { setExporting(false) }
-            }}
+            <span onClick={() => download('recon', `/publisher-recon/export.xlsx?period=${month}`)}
               title="Сводная на первой вкладке, дальше каждая площадка с кампаниями"
-              style={{ ...actBtn('g', exporting), fontSize: 12.5, gap: 8, cursor: exporting ? 'wait' : 'pointer' }}>
-              {exporting ? <><Cube variant="spinner" size={14} />Готовлю файл…</> : 'Выгрузить в Excel ↓'}</span>
+              style={{ ...actBtn('g', !!exporting), fontSize: 12.5, gap: 8, ...(exporting ? { cursor: 'wait' } : {}) }}>
+              {exporting === 'recon' ? <><Cube variant="spinner" size={14} />Готовлю файл…</> : 'Выгрузить в Excel ↓'}</span>
+            {/* Разаллокация месяца (владелец 11.11.2026) — тот же файл, что площадка скачивает в кабинете, все согласованные разом */}
+            <span onClick={() => c.done && download('razaloc', `/publisher-recon/razaloc.xlsx?period=${month}`)}
+              title={c.done ? `Как её видят площадки: вкладка на площадку. Согласовано ${c.done} из ${c.all} — несогласованных в файле нет`
+                : 'Разаллокация появится после согласования хотя бы одной сверки'}
+              style={{ ...actBtn('g', !!exporting || !c.done), fontSize: 12.5, gap: 8, ...(exporting ? { cursor: 'wait' } : {}) }}>
+              {exporting === 'razaloc' ? <><Cube variant="spinner" size={14} />Готовлю файл…</> : `Разаллокация ↓ · ${c.done}`}</span>
             {canEdit && (
               <span onClick={sendAll} title={c.ready ? 'Активировать карточки в кабинетах всех готовых площадок' : 'Готовых сверок нет'}
                 style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: 'var(--on-accent)', whiteSpace: 'nowrap',

@@ -33,6 +33,20 @@ def scale_to(amounts: List[float], target: float) -> List[float]:
     return [float(x) for x in out]
 
 
+def split_int(total: int, weights: List[float]) -> Optional[List[int]]:
+    """Целое `total` по весам: доли вниз, остаток — наибольшим дробным частям (при равных — первым). Весов нет — None.
+    Одно правило на всю систему: им делят итог сверки по размещениям и показы площадки по ЕРИД в отчёте ОРД."""
+    s = sum(w for w in weights if w > 0)
+    if not weights or s <= 0:
+        return None
+    raw = [total * max(w, 0) / s for w in weights]
+    out = [int(x) for x in raw]
+    rest = total - sum(out)
+    for i in sorted(range(len(raw)), key=lambda i: (-(raw[i] - out[i]), i))[:rest]:
+        out[i] += 1
+    return out
+
+
 def line_vat(net, rate_pct: Optional[float]) -> float:
     """НДС строки: стоимость без НДС × ставка, «половина вверх» до копейки."""
     if not rate_pct or not net:

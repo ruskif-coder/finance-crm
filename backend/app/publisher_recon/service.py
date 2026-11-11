@@ -171,16 +171,12 @@ def remind(db: Session, req: PublisherRequest, today: Optional[date] = None) -> 
 def spread(total: int, weights: Dict[int, int]) -> Dict[int, int]:
     """Итог по размещениям пропорционально нашему факту; остаток округления — наибольшим дробным частям.
     Без факта — поровну. Сумма всегда равна `total`."""
+    from app.final_recon.money import split_int
     keys = sorted(weights)
     if not keys:
         return {}
-    base = sum(weights.values())
-    raw = {k: (total * weights[k] / base if base else total / len(keys)) for k in keys}
-    out = {k: int(raw[k]) for k in keys}
-    rest = total - sum(out.values())
-    for k in sorted(keys, key=lambda k: (-(raw[k] - out[k]), k))[:rest]:
-        out[k] += 1
-    return out
+    parts = split_int(total, [weights[k] for k in keys]) or split_int(total, [1] * len(keys))
+    return dict(zip(keys, parts))
 
 
 def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date] = None) -> PublisherRequest:

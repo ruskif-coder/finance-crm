@@ -96,6 +96,7 @@ PASSED_THROUGH = {
     "DSP_DEMO_API_URL": "compose",
     # ── система приоритезации (19.10.2026) ──
     "PRIO_API_TOKEN": "compose",
+    "ADFOX_OAUTH_TOKEN": "compose",          # Adfox API: ночной забор показов (11.11.2026)
     "PRIO_API_URL": "compose",
     # Выключатель записи во внешние системы для стенда (аудит 21.10.2026, app/external_writes.py)
     "EXTERNAL_WRITES": "compose",

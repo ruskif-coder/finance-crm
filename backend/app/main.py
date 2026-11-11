@@ -57,6 +57,7 @@ logger = logging.getLogger("finance")
 from app.sales import models as sales_models  # noqa: F401,E402 — регистрирует таблицы дашборда продаж в Base.metadata
 from app import diadoc_models  # noqa: F401,E402 — реестр документов Диадока (миграция 2026-08-20_diadoc_documents.sql)
 from app.ord import models as ord_models          # noqa: F401,E402 — регистрирует таблицы в create_all
+from app.ord import report_models as ord_report_models  # noqa: F401,E402
 from app.launch_prep import models as launch_prep_models  # noqa: F401,E402 — модуль креативов (миграция 2026-08-26_launch_prep_creatives.sql)
 from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учётки кабинета (миграция 2026-08-28_publisher_cabinet.sql)
 from app.ad import models as ad_models  # noqa: F401,E402 — дашборд трафика/РК (миграция 2026-09-01_ad_campaigns.sql)
@@ -584,6 +585,8 @@ app.include_router(bugs.router, prefix="/api/bugs", tags=["bugs"])
 # Техобслуживание: состояние читает каждый вошедший, объявляет только админ.
 app.include_router(maintenance_api.router, prefix="/api/maintenance", tags=["maintenance"])
 app.include_router(diadoc.router, prefix="/api/diadoc", tags=["diadoc"])
+from app.routers import ord_reports  # noqa: E402 — «ОРД → Отчёты» (11.11.2026); раньше `ord`: свой префикс внутри /api/ord
+app.include_router(ord_reports.router, prefix="/api/ord/reports", tags=["ord"])
 app.include_router(ord.router, prefix="/api/ord", tags=["ord"])
 # Модуль креативов: сбор запуска. Живёт на карточке сделки, отдельного экрана
 # не имеет, поэтому записи в карте навигации у него нет — только право.

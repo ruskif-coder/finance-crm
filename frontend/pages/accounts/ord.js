@@ -33,6 +33,7 @@ import { errText } from '../../lib/loadError'
 import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import { can, getPermissions } from '../../lib/auth'
+import OrdReports from '../../components/ord/OrdReports'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { Cube } from '../../components/LogoLoader'
 
@@ -47,6 +48,7 @@ const plural = (n) => {
 
 const TABS = [
   { key: 'initial', label: 'Изначальные договоры' },
+  { key: 'reports', label: 'Отчёты' },
   { key: 'finals', label: 'Доходные в ОРД' },
   { key: 'contracts', label: 'Наши договоры в ОРД' },
   { key: 'pending', label: 'Зависшие отправки' },
@@ -172,6 +174,7 @@ export default function OrdDirectory() {
   const load = async () => {
     setErr('')
     if (tab === 'pending') { await loadStuck(); return }
+    if (tab === 'reports') return            // данные вкладки грузит OrdReports
     try {
       if (tab === 'finals') {
         const r = await api.get('/ord/finals', { ...auth(), params: { state: finState } })
@@ -350,7 +353,7 @@ export default function OrdDirectory() {
               style={{ ...inp, width: 300, marginLeft: 8 }} />
           )}
           <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 12 }}>
-            строк: {tab === 'pending' ? stuck.length : rows.length}
+            {tab !== 'reports' && `строк: ${tab === 'pending' ? stuck.length : rows.length}`}
           </span>
           {/* Контур — ВСЕГДА рядом с кнопкой, а не в настройках: демо и прод это разные
               кабинеты, и «сверено» без контура ничего не значит. Демо у нас ушёл дальше
@@ -373,7 +376,7 @@ export default function OrdDirectory() {
               {syncing ? (<><Cube variant="spinner" size={14} /> сверяю {syncing}…</>) : 'Сверить с ОРД'}
             </button>
           )}
-          {mayEdit && (
+          {mayEdit && tab !== 'reports' && (
             <label style={{ ...primaryBtn, cursor: busy ? 'default' : 'pointer' }}>
               {busy ? 'Загрузка…' : 'Загрузить выгрузку'}
               <input type="file" accept=".xlsx" multiple onChange={upload}
@@ -381,6 +384,10 @@ export default function OrdDirectory() {
             </label>
           )}
         </div>
+
+        {/* «Отчёты» (владелец 11.11.2026): отчёт ОРД за месяц, выгрузка и импорт правок — свой компонент */}
+        {tab === 'reports' && <OrdReports />}
+        {tab !== 'reports' && (<>
 
         {!!err && (
           <div style={{ ...card, padding: 12, marginBottom: 12, color: 'var(--dot-overdue)' }}>
@@ -702,6 +709,7 @@ export default function OrdDirectory() {
             )}
           </div>
         </div>
+        </>)}
       </div>
 
       {/* Привязка руками: доходный в кабинете есть, а совпадения по номеру не нашлось.

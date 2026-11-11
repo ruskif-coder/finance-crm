@@ -100,6 +100,11 @@ ACTION_LABELS = {
     "traffic_creative_script": "Скрипт, вшиваемый в креатив",
     "import_apply": "Импорт операций из файла",
     "ord_resolve_submission": "Разбор зависшей отправки в ОРД",
+    "adfox_api_sync": "Adfox через API: записаны показы",
+    # Отчёт ОРД за месяц (11.11.2026)
+    "ord_report_import": "Отчёт ОРД: загружены правки из Excel",
+    "ord_report_reset": "Отчёт ОРД: правки сброшены",
+    "ord_report_snapshot": "Отчёт ОРД: снят разрез по ЕРИД",
     "weborama_provision": "Пиксели Weborama по РК",
     "weborama_attach": "РК привязана к проекту и кампании Weborama",
     "dsp_provision": "Выгрузка креативов РК в DSP",

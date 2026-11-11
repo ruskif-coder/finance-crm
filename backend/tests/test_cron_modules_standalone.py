@@ -35,6 +35,8 @@ CRON_MODULES = [
     "app.traffic.site_monitor",
     "app.sales.plan_snapshot",          # 24.10.2026: снимок «Плана продаж»
     "app.premod.sync",                  # 07.11.2026: забор очереди премодерации SSP
+    "app.ord.erid_snapshot",            # 11.11.2026: снимок разреза по ЕРИД для отчёта ОРД
+    "app.adfox.stats",                  # 11.11.2026: показы Adfox через API
 ]
 
 PROBE = (

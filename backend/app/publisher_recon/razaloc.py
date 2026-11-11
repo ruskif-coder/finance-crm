@@ -147,6 +147,19 @@ def of_request(db: Session, req) -> dict:
     return {**out, "site": site, "period": req.period, "vat_known": vat is not None}
 
 
+def month_requests(db: Session, period: str) -> list:
+    """Согласованные сверки месяца по алфавиту площадок — файл «Разаллокация ↓» с доски сверок (владелец 11.11.2026):
+    тот же, что площадка скачивает в кабинете, но все площадки месяца разом. Несогласованных в нём нет — у них нет итога."""
+    from app.publisher_recon.board import AGREED
+    from app.publisher_requests import PublisherRequest
+    ids = [r[0] for r in db.execute(text("""
+        SELECT q.id FROM publisher_request q JOIN sales_publishers p ON p.id = q.publisher_id
+         WHERE q.kind = 'сверка' AND q.period = :m AND q.verdict = :a
+         ORDER BY lower(coalesce(p.domain, p.name)), q.id"""), {"m": period, "a": AGREED})]
+    by_id = {r.id: r for r in db.query(PublisherRequest).filter(PublisherRequest.id.in_(ids or [0]))}
+    return [by_id[i] for i in ids]
+
+
 def response(db: Session, reqs):
     """Файл согласованных сверок — общий для нашей стороны и шлюза кабинета; площадка на своей вкладке (владелец 29.10.2026).
     До согласования итога нет — 409, и тогда файла нет целиком: половина площадок месяца выглядела бы как вся разаллокация."""

@@ -178,6 +178,15 @@ def export_xlsx(period: str, db: Session = Depends(get_db), user: User = Depends
                                                     f"filename*=UTF-8''{quote(f'Сверки площадок {period}.xlsx')}"})
 
 
+@router.get("/razaloc.xlsx")
+def razaloc_month_xlsx(period: str, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Разаллокация месяца — как её видят площадки, вкладка на площадку; только согласованные сверки (владелец 11.11.2026)."""
+    reqs = R.month_requests(db, _period(period))
+    if not reqs:
+        raise HTTPException(409, "За этот месяц нет согласованных сверок — разаллокации ещё нет")
+    return R.response(db, reqs)
+
+
 @router.post("/{request_id}/withdraw")
 def withdraw(request_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
     """Отозвать сверку «на корявые пальцы» (владелец 06.11.2026): пока не согласована. Сверка стирается, строка снова
