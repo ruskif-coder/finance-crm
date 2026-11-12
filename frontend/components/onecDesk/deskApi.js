@@ -9,6 +9,7 @@ export const deskApi = {
   draft: (id, form) => api.patch(`${base}/kit/${id}/draft`, form, auth()).then(r => r.data),
   submit: (id, form) => api.post(`${base}/kit/${id}/submit`, form, auth()).then(r => r.data),
   giveBack: (id, body) => api.post(`${base}/kit/${id}/return`, body, auth()).then(r => r.data),
+  invoiceXml: (id, onError) => downloadFile(`${base}/kit/${id}/invoice-xml`, null, onError),
   redo: (id, reason) => api.post(`${base}/kit/${id}/redo`, { reason }, auth()).then(r => r.data),
   comment: (id, text) => api.post(`${base}/kit/${id}/comment`, { text }, auth()).then(r => r.data),
   seen: (id) => api.post(`${base}/kit/${id}/seen`, null, auth()).then(r => r.data),

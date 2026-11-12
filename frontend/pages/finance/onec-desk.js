@@ -171,6 +171,7 @@ export default function OnecDeskPage() {
     onEditClose: mayEdit ? () => setCloseEdit(true) : undefined,
     onReload: load,
     onLoadArchive: loadArchive,
+    onInvoiceXml: (code) => byCode[code] && deskApi.invoiceXml(byCode[code].kit_id, setErr),
     onRedo: mayRedo ? (code) => byCode[code] && setRedo(byCode[code]) : undefined,
   }
 

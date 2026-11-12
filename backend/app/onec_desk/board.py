@@ -173,6 +173,11 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
         "accounts": _accounts(db, k.annex_id),
         "sk_in_invoice": kit_sk_note(db, m, a, lines),
     }
+    if files.get("xml"):        # XML УПД 1С загружен — сверка реквизитов сторон с нашими карточками (12.11.2026)
+        from app import own_company
+        from app.onec_desk import invoice_xml as IX
+        own = own_company.for_contract(db, c) if c is not None else None
+        req["requisites"] = IX.requisites(db, m, k, own.id if own else None, buyer.id if buyer else None)
     unseen_fix = False
     if status == "wait":
         req["draft"] = dict(k.onec_draft or {}) or None

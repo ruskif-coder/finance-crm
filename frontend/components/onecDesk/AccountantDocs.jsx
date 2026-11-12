@@ -39,7 +39,7 @@ const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
 const short = name => name.replace(/ ООО$/, '');
 
-export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, onLoadArchive, archiveLoaded, onRedo, now }) {
+export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, onLoadArchive, archiveLoaded, onRedo, onInvoiceXml, now }) {
   const nowMs = typeof now === 'number' ? now : Date.parse(now || data.now);
   const cal = data.settings.calendar;
   const [tab, setTab] = useState('wait');
@@ -244,7 +244,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
           {!r ? <Card style={{ padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, alignSelf: 'start' }}>
               <span style={{ fontSize: 17, fontWeight: 800, color: 'var(--income-fg)' }}>Очередь пуста</span>
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.</span></Card>
-            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, pickScan, onDsFile, onOpenFile, removeFile,
+            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, onInvoiceXml, pickScan, onDsFile, onOpenFile, removeFile,
                 past: sortQueue(reqs.filter(x => x.buyer.inn === r.buyer.inn && x.code !== r.code && x.status === 'done')).slice(0, 24), select,
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
@@ -293,7 +293,26 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
 }
 
 /* ───────── рабочая панель заявки ───────── */
-function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, pickScan, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
+/** Реквизиты сторон в УПД 1С против наших карточек (владелец 12.11.2026): «расходится» — красным, «дополнить» — жёлтым.
+ * Считает сервер, когда к заявке приложен XML УПД (`requisites`; `null` — XML нет, сверять не с чем). */
+function Requisites({ list }) {
+  if (list == null) return null;
+  if (!list.length) return <div style={{ padding: '7px 12px', borderRadius: 12, background: TONE.ok.bg, border: `1px solid ${TONE.ok.border}`, fontSize: 12.5, fontWeight: 700, color: TONE.ok.fg }}>Реквизиты сторон в УПД совпадают с нашими карточками ✓</div>;
+  const bad = list.some(x => x.kind === 'расходится'), t = bad ? TONE.bad : TONE.warn;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.fg }}>Реквизиты в УПД и в наших карточках: {bad ? 'есть расхождения' : 'нашу карточку надо дополнить'}</span>
+      {list.map((x, i) => (
+        <span key={i} style={{ display: 'grid', gridTemplateColumns: '92px 130px minmax(0,1fr)', gap: 8, alignItems: 'baseline', fontSize: 12 }}>
+          <span style={{ fontWeight: 700, color: x.kind === 'расходится' ? 'var(--danger-fg)' : 'var(--warning-fg)' }}>{x.kind}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{x.who} · {x.field}</span>
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>в 1С: {x.onec}{x.ours ? <span style={{ color: 'var(--text-muted)' }}> · у нас: {x.ours}</span> : <span style={{ color: 'var(--text-muted)' }}> · у нас пусто</span>}</span>
+        </span>))}
+    </div>
+  );
+}
+
+function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, pickScan, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, onInvoiceXml, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
   const h = workHours(Date.parse(r.since), nowMs, cal), tone = ageTone(h);
   const st = r.status === 'done' ? ['внесено', 'ok'] : r.status === 'returned' ? ['возвращено аккаунту', 'warn'] : ev.ready ? ['готово к внесению', 'ok'] : ['ждёт бухгалтера', 'info'];
   const exp = ev.exp, line = r.lines[0], allCp = lastCopy === r.code + ':all';
@@ -332,7 +351,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           {r.accounts && r.accounts.length ? <>{r.accounts.length > 1 ? 'аккаунты' : 'аккаунт'}: <b style={{ color: 'var(--text)', fontWeight: 600 }}>{r.accounts.join(', ')}</b></> : 'аккаунт сделки не указан'}
         </span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>{/* по праву «Мастер-сделки · возврат стадии» (12.11.2026): внесённое — снова в работу */}{r.status === 'done' && onRedo && <Btn onClick={() => onRedo(r.code)}>Вернуть на переделку</Btn>}<Btn onClick={() => onExcel && onExcel(r.code)}>Excel пакета</Btn><Btn onClick={() => onOpenDeal && onOpenDeal(r.code)}>мастер-сделка {r.code} ↗</Btn></span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>{/* по праву «Мастер-сделки · возврат стадии» (12.11.2026): внесённое — снова в работу */}{r.status === 'done' && onRedo && <Btn onClick={() => onRedo(r.code)}>Вернуть на переделку</Btn>}{r.status === 'done' && onInvoiceXml && <Btn onClick={() => onInvoiceXml(r.code)}>XML счёта для Диадока</Btn>}<Btn onClick={() => onExcel && onExcel(r.code)}>Excel пакета</Btn><Btn onClick={() => onOpenDeal && onOpenDeal(r.code)}>мастер-сделка {r.code} ↗</Btn></span>
       </Card>
 
       {/* п.7: пришла повторно */}
@@ -413,6 +432,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
                     <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: x.ok ? 'var(--income-fg)' : 'var(--danger-fg)' }}>{x.value}</span>
                     <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{x.ok ? 'как в сделке' : 'в сделке ' + x.want}</span></span>))}</div>}
               </div>); })()}
+            <Requisites list={r.requisites} />
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 180px', gap: 10 }}>
               <Field label="№ УПД" note={dupRow.upd ? 'такой № уже: ' + dupRow.upd : f.fromXml ? 'из XML' : ''} noteTone={dupRow.upd ? 'warn' : ''}><Input mono value={f.updNo} onChange={e => setF({ updNo: e.target.value })} placeholder="из 1С или XML" readOnly={readOnly} style={{ borderColor: borderFor(dupRow.upd ? 'warn' : '') }} /></Field>
               <Field label="дата" note={updDN} noteTone={updDT}><Input mono value={f.updDate} onChange={e => setF({ updDate: e.target.value })} placeholder="дд.мм.гггг" readOnly={readOnly} style={{ borderColor: borderFor(updDT) }} /></Field>

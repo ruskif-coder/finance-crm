@@ -123,11 +123,8 @@ def _all_found(basis: Optional[str], services: list) -> bool:
     return bool(want) and all(text_key(b) in keys for b in want)
 
 
-def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str] = None) -> dict:
-    """→ {number, date, net, vat, gross, buyer: {inn, kpp}, contract, contract_1c, basis}. Принимает и XML, и архив ЭДО.
-    contract_no — № договора сделки: если среди оснований есть он (в написании 1С — «Договор РМ 30-02-2025»), отдаём НАШ
-    номер — экран и `rules.evaluate` сравнивают строки; `contract_1c` — как записано в УПД. Иначе — основание с «договор» в
-    названии или первое: тогда сверка покажет несовпадение."""
+def _root(content: bytes) -> tuple:
+    """(корень, СвСчФакт) XML УПД или архива ЭДО — один вход для `parse` и `parties` (ревью 12.11.2026: проверки не разойдутся)."""
     if not content:
         raise DeskError(400, "XML пустой")
     content = unpack(content)
@@ -140,6 +137,15 @@ def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str
     sf = _find(root, "СвСчФакт")
     if sf is None:
         raise DeskError(400, "Это не XML УПД: нет сведений о счёте-фактуре (СвСчФакт)")
+    return root, sf
+
+
+def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str] = None) -> dict:
+    """→ {number, date, net, vat, gross, buyer: {inn, kpp}, contract, contract_1c, basis}. Принимает и XML, и архив ЭДО.
+    contract_no — № договора сделки: если среди оснований есть он (в написании 1С — «Договор РМ 30-02-2025»), отдаём НАШ
+    номер — экран и `rules.evaluate` сравнивают строки; `contract_1c` — как записано в УПД. Иначе — основание с «договор» в
+    названии или первое: тогда сверка покажет несовпадение."""
+    root, sf = _root(content)
     buyer = _find(sf, "СвПокуп")
     ul = _find(buyer, "СвЮЛУч") if buyer is not None else None
     ip = _find(buyer, "СвИП") if buyer is not None else None
@@ -168,3 +174,30 @@ def parse(content: bytes, contract_no: Optional[str] = None, basis: Optional[str
         # у УПД из нескольких строк основания строк идут через перевод строки — каждое должно найтись (06.11.2026)
         "basis": (basis if _all_found(basis, services) else "\n".join(services)),
     }
+
+
+def _party(el) -> Optional[dict]:
+    """Сторона УПД: наименование, ИНН, КПП, адрес текстом и банк (у продавца) — для XML счёта и сверки реквизитов."""
+    if el is None:
+        return None
+    ul, ip = _find(el, "СвЮЛУч"), _find(el, "СвИП")
+    fio = _find(ip, "ФИО") if ip is not None else None
+    name = _attr(ul, "НаимОрг") or (" ".join(x for x in (_attr(fio, "Фамилия"), _attr(fio, "Имя"), _attr(fio, "Отчество")) if x) if fio is not None else None)
+    adr = _find(el, "Адрес")
+    address = None
+    if adr is not None:
+        inf = _find(adr, "АдрИнф")
+        # структурный адрес (АдрРФ: коды региона, индекс) с нашим текстовым не сравнить — сверяем только текстовый (ревью)
+        address = _attr(inf, "АдрТекст")
+    bank = None
+    b = _find(el, "БанкРекв")
+    if b is not None and _attr(b, "НомерСчета"):
+        sb = _find(b, "СвБанк")
+        bank = {"account": _attr(b, "НомерСчета"), "bik": _attr(sb, "БИК"), "corr": _attr(sb, "КорСчет"), "name": _attr(sb, "НаимБанк")}
+    return {"name": name, "inn": _attr(ul, "ИННЮЛ") or _attr(ip, "ИННФЛ"), "kpp": _attr(ul, "КПП"), "address": address, "bank": bank}
+
+
+def parties(content: bytes) -> dict:
+    """{seller, buyer} из XML УПД 1С (или архива ЭДО). Сверку с нашими реквизитами делает `requisites.diff`."""
+    _, sf = _root(content)
+    return {"seller": _party(_find(sf, "СвПрод")), "buyer": _party(_find(sf, "СвПокуп"))}

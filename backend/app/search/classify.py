@@ -30,7 +30,8 @@ def _is_erid(q: str) -> bool:
 def classify(q: str) -> dict:
     q = (q or "").strip()
     if DEAL_CODE.match(q):
-        return {"kind": "deal_code", "types": ["deal"]}
+        # и пакет закрытия, в котором эта сделка (владелец 12.11.2026: «показывал в том числе мастер-сделку»)
+        return {"kind": "deal_code", "types": ["deal", "master_deal"]}
     if INN.match(q):
         return {"kind": "inn", "types": ["counterparty", "contract", "ord_contract"]}
     if MASTER_CODE.match(q):

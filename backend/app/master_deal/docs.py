@@ -58,6 +58,16 @@ def _desk(db: Session, upd_no: int, state, u) -> dict:
     return {"state": state, "returned": returned, "question": question}
 
 
+def doc_url(a, has_file: bool = False) -> Optional[str]:
+    """Кнопка «ДС pdf»: собранный документ, а у ДС, подписанного вне системы, — загруженный файл клиента (сборка нашего
+    документа для него запрещена: 12.11.2026 кнопка отказывала). Внешний ДС без файла — только ссылка на Диадок
+    (`edo_link`, статус «уже в ЭДО»): скачивать нечего, кнопки нет."""
+    from app.sales import annex_external as X
+    if X.is_external(a):
+        return f"/annexes/{a.id}/external-file" if has_file else None
+    return f"/annexes/{a.id}/docx"
+
+
 def build(db: Session, m) -> dict:
     from app.master_deal.models import MasterDealUpd
     from app.sales.models import SalesAnnex
@@ -76,6 +86,7 @@ def build(db: Session, m) -> dict:
                                                      FROM sales_deal_annex_allocation x JOIN sales_deals d ON d.id = x.deal_id
                                                     WHERE x.annex_id = ANY(:a) GROUP BY x.annex_id"""), {"a": [a.id for a in annexes] or [0]})}
     from app.master_deal import to_annex as TA
+    from app.sales import annex_external as X
     numbers = {x["id"]: x["number"] for x in TA.annexes_of(db, m)}      # черновик тоже со своим номером: «ДС № 2-01»
     ds = []
     for a in annexes:
@@ -86,7 +97,10 @@ def build(db: Session, m) -> dict:
             "kind": "extra" if a.kind == "addons" else "base", "primary": a.issue_kind == "primary",
             "services": _services(a.rows), "gross": float(a.total_amount or 0), "confirmed": confirmed,
             "net": round(sum(float(r.get("amount") or 0) for r in (a.rows or [])), 2) if a.rows is not None else None,
-            "doc_url": f"/annexes/{a.id}/docx", "scan": scan, "sign": DSG.view(db, a, channel),
+            "doc_url": doc_url(a, has_file=scan is not None), "scan": scan,
+            "sign": DSG.view(db, a, channel),
+            "external": X.is_external(a),                              # подписан вне системы: просмотра нашего документа нет
+            "edo_link": a.edo_link if X.is_external(a) else None,     # внешний ДС уже в Диадоке (12.11.2026)
             "kits": [{"upd_no": k[0], "group": " · ".join(x for x in (k[2], k[3]) if x) or "весь пакет", "gross": float(k[4] or 0),
                       "net": float(k[8] or 0), "deals": (codes.get(a.id) or "").split(", ") if codes.get(a.id) else [], "onec": bool(k[5]),
                       "invoice_no": k[6], "upd_doc_no": k[7],

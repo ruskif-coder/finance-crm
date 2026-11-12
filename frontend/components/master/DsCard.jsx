@@ -10,7 +10,7 @@ import { MONO } from '@/components/salesTableKit'
 import { downloadFile } from '@/lib/download'
 import { grpDash, rub2 } from '@/lib/salesFormat'
 import { Dot, groupLabel, lineBtn } from '@/components/master/kit'
-import { DocButton, KitDocs, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
+import { DocButton, InEdo, KitDocs, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
 import { BasisRow } from '@/components/master/UpdBasis'
 import { SVC_DOT } from '@/lib/masterStatus'
 
@@ -86,7 +86,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
       outline: flash ? '2px solid var(--accent)' : 'none', transition: 'outline .2s, border-color 300ms ease' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{doc?.number || `ДС № ${ds.no}`}</span>
-        {!!doc && <SignBadge s={sign || 'none'} />}
+        {!!doc && !doc.edo_link && <SignBadge s={sign || 'none'} />}      {/* «уже в ЭДО» — свой статус ниже */}
         {canEdit && !!doc && <SignActions code={code} target={{ annex_id: doc.annex_id }} sign={doc.sign} onDone={onDone} setErr={setErr} />}
         <span style={{ display: 'inline-flex', alignItems: 'center', background: bg, color: fg, borderRadius: 7, padding: '3px 9px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'center' }}>{label}</span>
         {!!doc?.services?.length && (
@@ -97,7 +97,8 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
             ))}
           </span>
         )}
-        {!!doc && (
+        {!!doc?.edo_link && <InEdo link={doc.edo_link} />}
+        {!!doc?.doc_url && (
           <span style={{ alignSelf: 'center' }}>
             <DocButton label="ДС pdf" off={false} paper={scanOpen(doc)} scan={doc.scan} onDoc={() => downloadFile(doc.doc_url, null, setErr)}
               onScan={() => downloadScan(code, doc.scan, setErr)} onPick={() => onPick(`a${doc.annex_id}`)} />

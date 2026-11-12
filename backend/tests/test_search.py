@@ -83,7 +83,7 @@ def _admin(db):
 
 def test_classify_patterns():
     assert classify.classify("DEMO09")["kind"] == "deal_code"
-    assert classify.classify("DEMO09")["types"] == ["deal"]
+    assert classify.classify("DEMO09")["types"] == ["deal", "master_deal"]      # и пакет закрытия этой сделки (12.11.2026)
     assert classify.classify("7701234567")["kind"] == "inn"
     assert classify.classify("770123456789")["kind"] == "inn"
     assert set(classify.classify("7701234567")["types"]) == {"counterparty", "contract",

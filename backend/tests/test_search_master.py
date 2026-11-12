@@ -51,3 +51,46 @@ def test_code_typed_in_russian_or_without_dash():
     assert MT._code_form("м-1172") == "M-1172"
     assert MT._code_form("M1172") == "M-1172"
     assert MT._code_form("Альфарм") == "Альфарм"
+
+
+def test_deal_code_finds_its_master_deal_too(db):
+    """Владелец 12.11.2026: «в поиске по сайту, чтобы тоже показывал в том числе мастер-сделку» — по коду исходной сделки."""
+    from sqlalchemy import text
+    from app.search import classify
+    row = db.execute(text("""SELECT d.code, m.code FROM master_deal_items i JOIN sales_deals d ON d.id = i.deal_id
+                              JOIN master_deals m ON m.id = i.master_deal_id WHERE d.code IS NOT NULL LIMIT 1""")).first()
+    if row is None:
+        import pytest
+        pytest.skip("на стенде нет сделок в пакетах")
+    assert "master_deal" in classify.classify(row[0])["types"]
+    ctx = {"user": SimpleNamespace(id=None), "master_own": ("ok", None)}
+    rows = MT.master_deals(db, row[0], 5, 0, ctx)
+    assert rows and rows[0]["title"] == row[1] and row[0] in rows[0]["subtitle"]
+
+
+def test_registry_rows_carry_deal_codes_for_search():
+    """Поиск реестра мастер-сделок по коду исходной сделки (12.11.2026): строка реестра несёт коды своих сделок."""
+    from app.database import SessionLocal
+    from app.master_deal import registry as RG
+    db = SessionLocal()
+    try:
+        rows = RG.rows(db, SimpleNamespace(id=None, role=SimpleNamespace(key="admin", is_master=True)))
+    finally:
+        db.close()
+    if not rows:
+        import pytest
+        pytest.skip("на стенде нет мастер-сделок")
+    assert all("deal_codes" in r for r in rows) and any(r["deal_codes"] for r in rows)
+
+
+def test_partial_query_does_not_reveal_a_deal_code(db):
+    """Ревью 12.11.2026: по куску текста пакет найдётся, но код сделки в подписи — только при точном совпадении."""
+    from sqlalchemy import text
+    row = db.execute(text("""SELECT d.code FROM master_deal_items i JOIN sales_deals d ON d.id = i.deal_id
+                              WHERE d.code IS NOT NULL LIMIT 1""")).first()
+    if row is None:
+        import pytest
+        pytest.skip("на стенде нет сделок в пакетах")
+    ctx = {"user": SimpleNamespace(id=None), "master_own": ("ok", None)}
+    rows = MT.master_deals(db, row[0][:4], 50, 0, ctx)
+    assert rows and not any(f"сделка {row[0]}" in r["subtitle"] for r in rows)

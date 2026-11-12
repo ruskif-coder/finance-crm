@@ -8,6 +8,7 @@ import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
 import { SIGN, signAction } from '@/lib/masterSteps'
 import { MONO, UI } from '@/components/salesTableKit'
+import safeHref from '@/lib/safeHref'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ICON = {
@@ -89,6 +90,22 @@ export const signFrame = (s, upd = false) => ({ 'подписан у нас': 'v
 /** Половина «скан» у кнопки документа — только у бумаги, ушедшей клиенту (ждём скан или он уже приложен). */
 export const scanOpen = (doc) => doc?.sign?.channel === 'бумага' && ['выставлен', 'подписан'].includes(doc?.sign?.state)
 export const scanKey = (t) => (t.annex_id != null ? `a${t.annex_id}` : `u${t.upd_no}`)
+
+/** ДС, подписанный вне системы, уже в Диадоке (владелец 12.11.2026): статус «уже в ЭДО» и ссылка туда вместо скачивания —
+ * своего файла у такого ДС может не быть. Общая для карточки ДС и расхлопа реестра. */
+export function InEdo({ link, small = false }) {
+  const href = safeHref(link)
+  return (
+    <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'center' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-tint)', color: 'var(--accent-fg)', border: '1px solid var(--accent-border)',
+        borderRadius: small ? 6 : 7, padding: small ? '2px 7px' : '3px 9px', fontSize: small ? 10 : 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+        <Svg d={OK} size={small ? 10 : 11} />уже в ЭДО</span>
+      {!!href && <a href={href} target="_blank" rel="noopener noreferrer" title="Открыть ДС в Диадоке"
+        style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 9px', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 7,
+          background: 'var(--bg-card)', color: 'var(--accent)', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }}>в Диадоке ↗</a>}
+    </span>
+  )
+}
 
 export function SignBadge({ s, small = false }) {
   const [label, bg, bd, fg] = SIGN[s] || SIGN.none

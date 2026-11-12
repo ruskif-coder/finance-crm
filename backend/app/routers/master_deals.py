@@ -569,6 +569,21 @@ def master_zip(code: str, diadoc: bool = False, db: Session = Depends(get_db), u
                              headers={"Content-Disposition": f"attachment; filename=\"{code}.zip\"; filename*=UTF-8''{quote(name)}"})
 
 
+@router.get("/{code}/upd/{upd_no}/invoice-xml")
+def master_invoice_xml(code: str, upd_no: int, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
+    """XML счёта комплекта для Диадока (формат ФНС, КНД 1110379, 12.11.2026)."""
+    from app.master_deal.models import MasterDealUpd
+    from app.onec_desk import invoice_xml as IX
+    m = _master_ro(db, code, user)
+    k = db.query(MasterDealUpd).filter_by(master_deal_id=m.id, upd_no=upd_no).first()
+    if k is None:
+        raise HTTPException(404, f"УПД № {upd_no} в пакете нет")
+    try:
+        return IX.response(*IX.for_kit(db, m, k))
+    except IX.InvoiceXmlError as e:
+        raise HTTPException(e.status, e.message)
+
+
 @router.get("/{code}/files/{file_id}")
 def master_file_download(code: str, file_id: int, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
     from fastapi.responses import FileResponse

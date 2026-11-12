@@ -75,7 +75,8 @@ export default function MasterDealsRegistry() {
   const byMonth = useMemo(() => rows.filter(r => !month || r.period === month), [rows, month])
   const bySearch = useMemo(() => {
     const s = q.trim().toLowerCase()
-    return byMonth.filter(r => !s || [r.code, r.contract?.number, r.counterparty, r.payer, ...r.advertisers, ...r.brands].join(' ').toLowerCase().includes(s))
+    // и по коду исходной сделки (владелец 12.11.2026): «T6WY56» находит пакет, в котором она
+    return byMonth.filter(r => !s || [r.code, r.contract?.number, r.counterparty, r.payer, ...r.advertisers, ...r.brands, ...(r.deal_codes || [])].join(' ').toLowerCase().includes(s))
   }, [byMonth, q])
   const inTab = useCallback((r) => (tab === KEEP ? !hidden.has(r.status) : r.status === tab), [tab, hidden])
   const shown = useMemo(() => bySearch.filter(r => inTab(r) || moved[r.code]), [bySearch, inTab, moved])
@@ -120,7 +121,7 @@ export default function MasterDealsRegistry() {
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, padding: '0 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, flex: '0 1 320px', minWidth: 220 }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" strokeWidth="1.9" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" /></svg>
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="код, договор, контрагент, бренд…"
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="код пакета или сделки, договор, контрагент, бренд…"
               style={{ flex: '1 1 auto', minWidth: 0, border: 0, outline: 'none', background: 'transparent', fontSize: 13, fontFamily: UI, color: 'var(--text-primary)' }} />
           </span>
           <span data-pop-root style={{ position: 'relative', display: 'inline-flex' }}>

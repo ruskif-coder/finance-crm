@@ -45,6 +45,12 @@ def diadoc_kinds() -> set:
     return set(KINDS)
 
 
+def diadoc_file(f, external_ids: set) -> bool:
+    """Файл пакета — в архив для Диадока? Счёт, УПД и XML из 1С; и файл ДС, подписанного вне системы (это сам ДС клиента,
+    владелец 12.11.2026). Сканы подписанной бумаги — нет: в ЭДО их не грузят."""
+    return f.kind in diadoc_kinds() or (f.annex_id is not None and f.annex_id in external_ids)
+
+
 def build(db: Session, m, diadoc: bool = False) -> tuple:
     """(имя архива, байты). Пустой пакет (ДС ещё нет и сканов нет) — архив с одним «не вошло.txt»."""
     from app.files_safe import existing_upload_path
@@ -81,11 +87,21 @@ def build(db: Session, m, diadoc: bool = False) -> tuple:
         if diadoc:
             from sqlalchemy import text as sa_text
             from app.master_deal.docs import _onec_files
-            q = q.filter(MasterDealFile.kind.in_(list(diadoc_kinds())))
+            ext = {a["id"] for a in TA.annexes_of(db, m) if X.is_external(db.get(SalesAnnex, a["id"]))}
             kits = [{"upd_no": r[0]} for r in db.execute(sa_text("SELECT upd_no FROM master_deal_upds WHERE master_deal_id = :m ORDER BY upd_no"),
                                                          {"m": m.id})]
             skipped.extend(missing_onec(kits, _onec_files(db, m)))
+            from app.master_deal.models import MasterDealUpd
+            from app.onec_desk import invoice_xml as IX
+            for k in db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).order_by(MasterDealUpd.upd_no):
+                try:                        # XML счёта по формату ФНС — Диадок заполнит карточку сам (12.11.2026)
+                    xname, xdata = IX.for_kit(db, m, k)
+                    put(z, xname, xdata)
+                except IX.InvoiceXmlError as e:
+                    skipped.append(f"Комплект {k.upd_no}: XML счёта не собран — {e.message}")
         for f in q.order_by(MasterDealFile.id):
+            if diadoc and not diadoc_file(f, ext):
+                continue
             try:
                 with open(existing_upload_path(f.path), "rb") as fh:
                     put(z, DN.for_package_file(db, m, f), fh.read())     # то же имя, что при скачивании файла по одному

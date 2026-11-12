@@ -9,7 +9,10 @@ import { downloadFile } from '@/lib/download'
 import { rub0 } from '@/lib/salesFormat'
 import { SVC_DOT } from '@/lib/masterStatus'
 import { MONO } from '@/components/salesTableKit'
-import { SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
+import { useEffect, useState } from 'react'
+import { can, getPermissions } from '@/lib/auth'
+import { InEdo, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
+import DsViewer from '@/components/onecDesk/DsViewer'
 import { SendBadge, SendButton, sendFrame, sendMode } from '@/components/master/registry/SendMark'
 
 const GRID = { display: 'grid', gridTemplateColumns: '260px minmax(120px,1fr) 150px max-content', gap: 10, alignItems: 'center' }
@@ -79,21 +82,24 @@ function KitRow({ k, i, code, onPick, setErr, canEdit, onDone, mode }) {
           <Svg size={10} w={2.2}><circle cx="12" cy="12" r="8" /><path d={ICON.clock} /></Svg>счёт · УПД · отчёт — после 1С</span>
       ) : (
         <span data-noexp style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
-          {canEdit && mode === 'send' && <SendButton code={code} target={{ upd_no: k.upd_no }} sign={k.sign} label={`комплект ${i}`} onDone={onDone} setErr={setErr} />}
           {/* PDF из 1С — тот же файл, что в карточке пакета (до 12.11.2026 у этих кнопок не было клика) */}
           <Doc label="Счёт" num={k.invoice_no} ready={!!k.onec_files?.invoice} onClick={() => downloadScan(code, k.onec_files.invoice, setErr)}
             title={k.onec_files?.invoice ? `Счёт${k.invoice_no ? ` № ${k.invoice_no}` : ''} · скачать PDF из 1С` : 'PDF счёта из 1С не загружен'} />
           <Doc label="УПД" num={k.upd_doc_no} ready={!!k.onec_files?.upd} onClick={() => downloadScan(code, k.onec_files.upd, setErr)}
             title={k.onec_files?.upd ? `УПД${k.upd_doc_no ? ` № ${k.upd_doc_no}` : ''} · скачать PDF из 1С` : 'PDF УПД из 1С не загружен'}
             tail={scanOpen(k) ? <ScanTail scan={k.scan} what="УПД" onScan={() => downloadScan(code, k.scan, setErr)} onPick={() => onPick(`u${k.upd_no}`)} /> : null} />
+          {!!k.invoice_no && <Doc label="Счёт xml" ready onClick={() => downloadFile(`/master-deals/${code}/upd/${k.upd_no}/invoice-xml`, null, setErr)}
+            title="XML счёта для Диадока по формату ФНС: Диадок заполнит карточку счёта сам" />}
           <Doc label="Отчёт" ready={false} title="Отчёт из 1С в систему пока не загружается" />
+          {/* отметка отправки — последней справа (владелец 12.11.2026) */}
+          {canEdit && mode === 'send' && <SendButton code={code} target={{ upd_no: k.upd_no }} sign={k.sign} label={`комплект ${i}`} onDone={onDone} setErr={setErr} />}
         </span>
       )}
     </div>
   )
 }
 
-function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode }) {
+function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode, onView }) {
   const edit = canEdit && EDIT_STATUSES.has(status)
   const extra = d.kind === 'extra'
   return (
@@ -101,7 +107,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
       <div style={{ ...GRID, padding: '6px 10px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
           <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>{d.number}</span>
-          {mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}
+          {d.edo_link ? <InEdo link={d.edo_link} small /> : mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}
           {canEdit && mode !== 'send' && <SignActions code={code} target={{ annex_id: d.annex_id }} sign={d.sign} onDone={onDone} setErr={setErr} small />}
         </span>
         <span title={`Услуги в ДС: ${d.services.join(', ')}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
@@ -119,7 +125,6 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
         </span>
         <Money net={d.net} gross={d.gross} />
         <span style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
-          {canEdit && mode === 'send' && <SendButton code={code} target={{ annex_id: d.annex_id }} sign={d.sign} label={d.number} onDone={onDone} setErr={setErr} />}
           {edit && (
             <Link href={`/directory/annexes/${d.annex_id}`} data-noexp
               title={status === 'согласование' ? 'Редактировать ДС — согласование у юриста начнётся заново' : 'Редактировать ДС в конструкторе'}
@@ -128,12 +133,19 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
               <Svg size={12}><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z" /><path d="M13.5 6.5l3 3" /></Svg>
             </Link>
           )}
-          <span data-noexp style={{ display: 'inline-flex', height: 24, border: '1px solid var(--border-card)', borderRadius: 7, overflow: 'hidden', background: 'var(--bg-card)' }}>
+          {!!onView && !d.external && (
+            <span data-noexp onClick={() => onView(d)} title="Посмотреть ДС — окном, с кнопками «Скачать Word» и «Скачать PDF»"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', boxSizing: 'border-box', border: '1px solid var(--border-card)',
+                borderRadius: 7, background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+              <Svg size={12}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></Svg>ДС</span>
+          )}
+          {!!d.doc_url && <span data-noexp style={{ display: 'inline-flex', height: 24, border: '1px solid var(--border-card)', borderRadius: 7, overflow: 'hidden', background: 'var(--bg-card)' }}>
             <span title="ДС — скачать" onClick={() => downloadFile(d.doc_url, null, setErr)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 9px', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
               <Svg d={ICON.dl} />ДС pdf</span>
             {scanOpen(d) && <ScanTail scan={d.scan} what="ДС" onScan={() => downloadScan(code, d.scan, setErr)} onPick={() => onPick(`a${d.annex_id}`)} />}
-          </span>
+          </span>}
+          {canEdit && mode === 'send' && <SendButton code={code} target={{ annex_id: d.annex_id }} sign={d.sign} label={d.number} onDone={onDone} setErr={setErr} />}
         </span>
       </div>
       {d.kits.map((k, j) => <KitRow key={k.upd_no} k={k} i={kitStart + j} code={code} onPick={onPick} setErr={setErr} canEdit={canEdit} onDone={onDone} mode={mode} />)}
@@ -144,14 +156,18 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
 /** Все ДС пакета с отметками подписи каждого документа (02.11.2026). Скан — только у бумаги, ушедшей клиенту. */
 export default function PackDocs({ m, canEdit, onPick, setErr, onDone }) {
   const mode = sendMode(m)
+  const [view, setView] = useState(null)          // ДС, открытый окном просмотра
+  const [mayView, setMayView] = useState(false)   // просмотр берёт ДС из «Приложений» — без их права кнопки нет (ревью 12.11.2026)
+  useEffect(() => { setMayView(can(getPermissions(), 'annexes', 'view')) }, [])
   let start = 1
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: 10, alignItems: 'start' }}>
       {m.docs.ds.map(d => {
         const s = start
         start += d.kits.length
-        return <Pack key={d.annex_id} d={d} kitStart={s} status={m.status} canEdit={canEdit} code={m.code} onPick={onPick} setErr={setErr} onDone={onDone} mode={mode} />
+        return <Pack key={d.annex_id} d={d} kitStart={s} status={m.status} canEdit={canEdit} code={m.code} onPick={onPick} setErr={setErr} onDone={onDone} mode={mode} onView={mayView ? setView : null} />
       })}
+      {view && <DsViewer annexId={view.annex_id} title={view.number} onClose={() => setView(null)} onError={setErr} />}
     </div>
   )
 }

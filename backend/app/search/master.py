@@ -43,14 +43,21 @@ def master_deals(db, q, limit, offset, ctx):
     pat = f"%{_esc(q)}%"
     ql = q.lower()
     rank = case((func.lower(MasterDeal.code) == ql, 0), (MasterDeal.code.ilike(f"{_esc(q)}%", escape="\\"), 1), else_=2)
+    # по коду исходной сделки — пакет, в котором она (12.11.2026)
+    by_deal = {r[0]: r[1] for r in db.execute(text("""SELECT i.master_deal_id, d.code FROM master_deal_items i
+                                                       JOIN sales_deals d ON d.id = i.deal_id WHERE d.code ILIKE :p
+                                                      ORDER BY d.code DESC"""), {"p": pat})}
     rows = (db.query(MasterDeal, Contract.contract_number, Contract.counterparty_name)
             .outerjoin(Contract, Contract.id == MasterDeal.contract_id)
             .filter(MasterDeal.code.ilike(pat, escape="\\") | Contract.contract_number.ilike(pat, escape="\\")
-                    | Contract.counterparty_name.ilike(pat, escape="\\"))
+                    | Contract.counterparty_name.ilike(pat, escape="\\") | MasterDeal.id.in_(list(by_deal) or [0]))
             .order_by(rank, (MasterDeal.status == "архив"), MasterDeal.id.desc()).all())
     ok = _visible(db, ctx, [r[0] for r in rows])
     rows = [r for r in rows if r[0].id in ok][offset:offset + limit]
-    return [_row(m.id, m.code, " · ".join(x for x in (m.status, f"№ {num}" if num else "", cp, month_label(m.period)) if x),
+    # код сделки в подписи — только при точном совпадении: по куску запроса подпись раскрыла бы код чужой сделки пакета (ревью)
+    exact = {mid for mid, code in by_deal.items() if code.lower() == ql}
+    return [_row(m.id, m.code, " · ".join(x for x in (f"сделка {by_deal[m.id]}" if m.id in exact else "", m.status,
+                                                       f"№ {num}" if num else "", cp, month_label(m.period)) if x),
                  f"/accounts/master/{m.code}", m.status == "архив") for m, num, cp in rows]
 
 
