@@ -7,36 +7,17 @@ import Link from 'next/link'
 import { MONO, UI, PortalPopover } from '@/components/salesTableKit'
 import { StatusPill } from '@/components/closing/StatusPill'
 import { fmtDateFull, rub2 } from '@/lib/salesFormat'
-import { CARD, lineBtn, Note, NW } from '@/components/master/kit'
+import { CARD, Note, NW } from '@/components/master/kit'
 import { CLOSE_MODE, MasterStatusPill } from '@/lib/masterStatus'
 import EfficiencyRow from '@/components/master/EfficiencyRow'
 import StagePipeline from '@/components/master/StagePipeline'
+import RevertStage from '@/components/master/RevertStage'
 
 // хендофф «реестр + карточка»: код·название · статус · сверка · режим · цена за ед.·модель · к закрытию до НДС · с НДС · ×
 const GRID = 'minmax(0,2fr) 150px minmax(0,1.2fr) 100px 110px 150px 150px 26px'
 const VERDICT = { ok: 'var(--income-fg)', warn: 'var(--warning-fg)', bad: 'var(--danger-fg)', off: 'var(--text-muted)' }
 
-/** Ручные шаги статуса: вперёд — у кого есть редактирование (кнопки нет без права — сервер ответит 403), назад — мастер и админ. */
-function StatusMoves({ m, busy, onStatus }) {
-  const a = m.status_actions || {}
-  if (!onStatus || (!a.next && !a.prev)) return null
-  const noChannel = a.next === 'выставление' && !a.channel
-  const btn = lineBtn({ tone: 'secondary', size: 'sm', busy })
-  return (
-    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'baseline' }}>
-      {a.prev && <button type="button" disabled={busy} style={btn} title="Вернуть статус на шаг назад — мастер или админ"
-        onClick={() => window.confirm(`Вернуть пакет в «${a.prev}»?`) && onStatus(a.prev)}>← {a.prev}</button>}
-      {a.next && <button type="button" disabled={busy || noChannel}
-        style={{ ...btn, color: 'var(--accent-fg)', borderColor: 'var(--accent-fg)', opacity: noChannel ? 0.45 : 1 }}
-        title={noChannel ? 'У договора не задано «Выставление» — ЭДО или бумага (реестр договоров)' : undefined}
-        onClick={() => onStatus(a.next)}>{a.next === 'выставление' && a.channel ? `выставление · ${a.channel}` : a.next} →</button>}
-      {noChannel && <span style={{ fontSize: 11, color: 'var(--danger-fg)' }}>у договора не задано ЭДО / бумага</span>}
-    </span>
-  )
-}
-
-
-export default function MasterHeader({ m, locked, busy, onAdd, onRemove, onStatus, canEdit, onApply, onScans }) {
+export default function MasterHeader({ m, locked, busy, onAdd, onRemove, canEdit, onApply, onScans }) {
   const [pop, setPop] = useState(false)
   useEffect(() => {
     if (!pop) return undefined
@@ -67,7 +48,8 @@ export default function MasterHeader({ m, locked, busy, onAdd, onRemove, onStatu
           {' · '}{m.payer?.name || 'плательщик не задан'}{m.payer?.inn ? <>, ИНН <span style={{ fontFamily: MONO, ...nw }}>{m.payer.inn}</span></> : ''}
           {' · '}<span style={nw}>период <span style={{ fontFamily: MONO }}>{m.period}</span></span>
         </span>
-        <StatusMoves m={{ ...m, status_actions: { ...(m.status_actions || {}), next: null } }} busy={busy} onStatus={onStatus} />
+        {/* назад — штатным возвратом с причиной и правом (12.11.2026), а не шагом «← статус» */}
+        <RevertStage m={m} onDone={onApply} />
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
           <span style={{ fontFamily: MONO, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>{rub2(m.layout.total_gross)}</span>
           <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>с НДС</span>

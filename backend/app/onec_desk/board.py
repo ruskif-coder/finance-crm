@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.onec_desk import close as CL
 from app.onec_desk import files as OF
 from app.onec_desk import rules as R
+from app.master_deal.status import ARCHIVE
 from app.onec_desk.service import DONE, OPEN, RETURNED
 
 DONE_LIMIT = 300
@@ -153,6 +154,7 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
     files = OF.files_of(db, m, k)
     req = {
         "code": m.code if n_kits == 1 else f"{m.code} · УПД {k.upd_no}", "master": m.code, "kit_id": k.id, "upd_no": k.upd_no,
+        "master_status": m.status,      # окно «Вернуть на переделку»: пакет дальше 1С вернётся на «ждём 1С» (12.11.2026)
         "status": status, "since": _iso(since),
         "wait_work_hours": round(R.work_hours(since.replace(tzinfo=timezone.utc), now, *cal), 2) if since and status == "wait" else None,
         "buyer": {"name": (buyer.name if buyer else c.counterparty_name) or "", "inn": (buyer.inn if buyer else c.inn) or "",
@@ -206,7 +208,7 @@ def _iso_day(v, end: bool = False) -> Optional[str]:
     return s[:10] + ("T23:59:00+03:00" if end else "T00:00:00+03:00")
 
 
-def board(db: Session, now: Optional[datetime] = None) -> dict:
+def board(db: Session, now: Optional[datetime] = None, archive: bool = False) -> dict:
     """GET /onec-desk/board — вся страница: сейчас, настройки бухгалтерии, наше юрлицо, заявки."""
     from app import own_company
     from app.master_deal import to_annex as TA
@@ -215,12 +217,17 @@ def board(db: Session, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     st = CL.settings(db, now)
     cal = CL.sets(st["calendar"])
-    rows = db.execute(text("""SELECT k.id FROM master_deal_upds k JOIN master_deals m ON m.id = k.master_deal_id
-                               WHERE (m.status = ANY(:open) AND k.onec_state IS NULL) OR k.onec_state = :r
-                               UNION ALL
-                              SELECT id FROM (SELECT k.id FROM master_deal_upds k WHERE k.onec_state = :d
-                                               ORDER BY k.onec_at DESC NULLS LAST LIMIT :n) x"""),
-                      {"open": list(OPEN), "r": RETURNED, "d": DONE, "n": DONE_LIMIT}).scalars().all()
+    if archive:       # «Загрузить архив» (владелец 12.11.2026): пакеты, закрытые оплатой и подписью, — только по кнопке
+        rows = db.execute(text("""SELECT k.id FROM master_deal_upds k JOIN master_deals m ON m.id = k.master_deal_id
+                                   WHERE m.status = :a"""), {"a": ARCHIVE}).scalars().all()
+    else:
+        rows = db.execute(text("""SELECT k.id FROM master_deal_upds k JOIN master_deals m ON m.id = k.master_deal_id
+                                   WHERE m.status <> :a AND ((m.status = ANY(:open) AND k.onec_state IS NULL) OR k.onec_state = :r)
+                                   UNION ALL
+                                  SELECT id FROM (SELECT k.id FROM master_deal_upds k JOIN master_deals m ON m.id = k.master_deal_id
+                                                   WHERE k.onec_state = :d AND m.status <> :a
+                                                   ORDER BY k.onec_at DESC NULLS LAST LIMIT :n) x"""),
+                          {"open": list(OPEN), "r": RETURNED, "d": DONE, "n": DONE_LIMIT, "a": ARCHIVE}).scalars().all()
     kits = db.query(MasterDealUpd).filter(MasterDealUpd.id.in_(rows or [0])).all()
     evs = _events(db, [k.id for k in kits])
     by_master: dict = {}
@@ -239,7 +246,9 @@ def board(db: Session, now: Optional[datetime] = None) -> dict:
         for k in sorted(ks, key=lambda x: x.upd_no):
             r = request(db, m, k, upds.get(k.upd_no, {}), n_kits, evs.get(k.id, []), cal, now, c=c, buyer=buyer)
             if r is not None:
-                out.append(r)
+                out.append({**r, "archived": archive})
+    if archive:
+        return {"requests": out}
     from app.onec_desk import upstream as UP
     up = UP.upstream(db, st["month"])     # «ещё не дошли» (09.11.2026) → прогноз «Ещё в пути» второй строкой плашки срока (хендофф 09.11)
     return {"now": now.astimezone(R.MSK).isoformat(), "settings": st, "seller": seller, "requests": out,

@@ -61,11 +61,6 @@ def label(db: Session, m) -> str:
     return m.status
 
 
-def _can_back(user) -> bool:
-    role = getattr(user, "role", None)
-    return getattr(role, "key", None) == "admin" or bool(getattr(role, "is_master", False))
-
-
 def _step(db: Session, m, d: int) -> Optional[str]:
     seq = sequence(db, m)
     i = seq.index(m.status) if m.status in seq else -1
@@ -80,9 +75,9 @@ def _issue():
 
 def actions(db: Session, m, user) -> dict:
     """Что показать в карточке: куда можно руками вперёд и назад (None — кнопки нет)."""
-    nxt, prv = _step(db, m, 1), _step(db, m, -1)
+    nxt = _step(db, m, 1)
     return {"next": nxt if nxt and m.status not in SYSTEM[:-1] else None,
-            "prev": prv if prv and prv not in SYSTEM[:-1] and m.status not in SYSTEM and _can_back(user) else None,
+            "prev": None,      # назад — «Вернуть стадию» с причиной (revert.py, 12.11.2026), не шагом статуса
             "channel": channel_of(db, m) if m.status in (WAIT_1C, ISSUE) else None}
 
 
@@ -118,10 +113,8 @@ def move(db: Session, m, to: str, user) -> None:
     if to == _step(db, m, 1):
         _check_forward(db, m, to)
     elif to == _step(db, m, -1):
-        if m.status in SYSTEM:
-            raise StatusError(409, "Назад отсюда — своей кнопкой: «Вернуть в раскладку» или снятие подтверждения ДС")
-        if not _can_back(user):
-            raise StatusError(403, "Вернуть статус назад может мастер или админ")
+        # 12.11.2026: шаг назад без причины не снимал ответ 1С и отметки — пакет терялся у бухгалтера. Назад — только так:
+        raise StatusError(409, "Назад — кнопкой «← Вернуть стадию» в карточке: с причиной, сбросом документов и уведомлением")
     else:
         raise StatusError(409, f"Двигаем на один шаг: из «{m.status}» — в соседний статус")
     m.status, m.updated_at = to, datetime.utcnow()
@@ -198,7 +191,13 @@ def _todo_issue(db: Session, m) -> Optional[dict]:
         if not channel_of(db, m):
             return _t("в договоре не задано ЭДО или бумага", "аккаунт", "bad")
         left = IS.not_sent(db, m)
-        return _t(f"выставить клиенту · осталось {len(left)}", "аккаунт") if left else _t("всё выставлено — ждём оплату", "финансы")
+        if not left:
+            return _t("всё выставлено — ждём оплату", "финансы")
+        if is_paper(db, m):
+            return _t(f"выставить клиенту · осталось {len(left)}", "аккаунт")
+        total = IS.state(db, m)["total"]       # реестр v3: «отправить клиенту в Диадок · 3 документа» → «осталось 2 из 3»
+        tail = f"{total} {_docs_word(total)}" if len(left) == total else f"осталось {len(left)} из {total}"
+        return _t(f"отправить клиенту в Диадок · {tail}", "аккаунт")
     if m.status == WAIT_PAY:
         return _t("ждём оплату", "финансы")
     left = IS.unsigned(db, m)
@@ -214,6 +213,19 @@ def _due_days(db: Session) -> int:
     return due_days(db)
 
 
+def send_count(db: Session, m) -> Optional[dict]:
+    """Сколько документов пакета ещё не ушло клиенту — кнопка строки «Отправить · 3» / «Отправить · ещё 2» (реестр v3)."""
+    if m.status != ISSUE:
+        return None
+    st = _issue().state(db, m)
+    return {"left": st["total"] - st["sent"], "total": st["total"]}
+
+
+def _docs_word(n: int) -> str:
+    from app.sales.rubles import plural
+    return plural(n, ("документ", "документа", "документов"))
+
+
 def row_step(db: Session, m) -> Optional[str]:
     """Действие прямо из строки реестра (хендофф 19.10.2026): шаги-отметки без ввода данных; остальное — «открыть».
     docs_1c / docs / paid / archive; contract — красная ссылка в договор; None — «открыть».
@@ -223,7 +235,9 @@ def row_step(db: Session, m) -> Optional[str]:
             return "contract"
         return None if _desk_pending(db, m) else "docs_1c"
     if m.status == ISSUE:
-        return "docs" if channel_of(db, m) else "contract"
+        if not channel_of(db, m):
+            return "contract"
+        return "docs" if is_paper(db, m) else "send"       # ЭДО — «Отправить · N» раскрывает строку (реестр v3)
     if m.status == WAIT_PAY and is_paper(db, m):
         return "paid"
     if m.status in (WAIT_PAY, WAIT_SCANS):

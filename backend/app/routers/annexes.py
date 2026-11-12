@@ -398,6 +398,8 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     значения подставляются при сборке и остаются живыми. Черновик: правки в `blocks.edits`. Подтверждённое, пока не ушло в 1С: пункт зоны
     аккаунта пересобирает документ на той же версии шаблона (номер и дата прежние), основание закрывающих правится внутри замороженного документа."""
     a = _annex(db, annex_id, user)
+    if payload.key == CLOSING_KEY and X.is_external(a):
+        return _edit_external_basis(db, a, payload.text, user)
     _assert_not_external(a)
     c = _contract(db, a.contract_id)
     frozen = tpl_doc.is_frozen(a)
@@ -442,6 +444,20 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     db.commit()
     log_action(db, user, "annex_edit", "contract", c.id, f"#{a.id}: правка блока {key}" + (" (возвращён по шаблону)" if payload.text is None else ""))
     return {"ok": True, "edits": edits}
+
+
+def _edit_external_basis(db: Session, a: SalesAnnex, text_: Optional[str], user) -> dict:
+    """Основание закрывающих у ДС, подписанного вне системы (владелец 12.11.2026): текст файла клиента системе не известен —
+    основание УПД задают здесь, пока УПД этого ДС не внесён в 1С (`annex_external.set_closing`)."""
+    try:
+        X.set_closing(db, a, text_)
+    except X.ExternalError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    db.commit()
+    log_action(db, user, "annex_edit", "contract", a.contract_id,
+               f"#{a.id}: основание внешнего ДС" + (" (возвращено по шаблону)" if not (text_ or "").strip() else ""))
+    return {"ok": True, "closing": X.closing_view(db, a)}
 
 
 class DateIn(BaseModel):
@@ -816,6 +832,7 @@ def _external_view(db: Session, a) -> dict:
              .outerjoin(SalesAddonService, SalesAddonService.id == SalesAnnexItem.addon_id)
              .filter(SalesAnnexItem.annex_id == a.id).order_by(SalesAnnexItem.id).all())
     return {"edo_link": a.edo_link, "file": {"id": f.id, "name": f.filename} if f else None,
+            "closing": X.closing_view(db, a),
             "items": [{"service_id": it.service_id, "addon_id": it.addon_id, "service": sname or aname,
                        "addon": it.addon_id is not None, "amount": it.amount, "volume": it.volume, "unit": it.unit,
                        "date_from": it.period_from, "date_to": it.period_to}

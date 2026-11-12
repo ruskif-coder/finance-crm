@@ -13,6 +13,7 @@ import { can, getPermissions } from '../../lib/auth'
 import { fmtDate as fmtD } from '../../lib/dates'
 import safeHref from '../../lib/safeHref'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
+import AnnexQuickEdit from './AnnexQuickEdit'
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const num = (v) => parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.')) || 0
@@ -159,8 +160,10 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
   )
 }
 
-/** Блок подписанного вне системы ДС: документ, сумма и услуги — вместо конструктора и выгрузки. */
-export function ExternalAnnexView({ annex, ext, section }) {
+/** Блок подписанного вне системы ДС: документ, сумма и услуги — вместо конструктора и выгрузки. Основание закрывающих
+ * (владелец 12.11.2026): текст файла клиента системе не известен, поэтому основание УПД задают здесь — свой текст или
+ * сгенерированный по базовому шаблону услуг ДС; правится, пока УПД этого ДС не внесён в 1С. */
+export function ExternalAnnexView({ annex, ext, section, canEdit, onChanged }) {
   const [err, setErr] = useState('')
   const download = async () => {
     setErr('')
@@ -194,6 +197,16 @@ export function ExternalAnnexView({ annex, ext, section }) {
           <span style={{ color: 'var(--text-muted)' }}>Сумма ДС с НДС</span><span style={{ fontFamily: MONO, fontWeight: 700 }}>{grp(annex.total_amount)}</span>
         </div>
       </div>
+      {!!ext.closing && (
+        <div style={{ marginTop: 18 }}>
+          <AnnexQuickEdit title="Основание для закрывающих документов"
+            hint={ext.closing.locked ? 'УПД по этому ДС уже в 1С — основание не правится' : 'как в подписанном ДС; попадёт в УПД и счёт'}
+            source={ext.closing.template} edited={ext.closing.edited} inheritedFrom={ext.closing.inherited_from}
+            values={ext.closing.values} canEdit={!!canEdit && !ext.closing.locked} copy
+            generate={{ label: 'Сгенерировать по базовому шаблону услуги', text: ext.closing.generated }}
+            onSave={async (t) => { await api.put(`/annexes/${annex.id}/edits`, { key: 'closing_basis', text: t }, auth()); if (onChanged) await onChanged() }} />
+        </div>
+      )}
     </div>
   )
 }

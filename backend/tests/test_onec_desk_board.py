@@ -431,3 +431,27 @@ def test_accountant_attaches_signed_ds_scan_and_request_turns_signed(env, tmp_pa
     k.annex_id = None
     with pytest.raises(DeskError):
         OF.save_ds_scan(db, m, k, user, filename="скан.pdf", content=b"%PDF-1.4 x")
+
+
+# ── архив (владелец 12.11.2026): пакеты после оплаты уходят из выдачи, грузятся только по кнопке ──────────
+
+def _ids(rows):
+    return {(r["code"]) for r in rows}
+
+
+def test_archived_pack_leaves_the_board_and_comes_by_button(env):
+    """Поломка: архивный пакет по-прежнему грузится со страницей (300 последних внесённых тянут и архив), или кнопка
+    «Загрузить архив» приносит то, что и так на экране."""
+    db, m, k, *_ = env
+    from app.onec_desk import board as BD
+    k.onec_state, k.onec_at = "внесён", datetime(2026, 11, 1)
+    m.status = ST.ARCHIVE
+    db.flush()
+    code = BD.request_for(db, m, k)["code"]
+    assert code not in _ids(BD.board(db)["requests"])
+    arch = BD.board(db, archive=True)["requests"]
+    assert code in _ids(arch)
+    assert all(r["archived"] for r in arch)
+    m.status = ST.WAIT_PAY
+    db.flush()
+    assert code in _ids(BD.board(db)["requests"]) and code not in _ids(BD.board(db, archive=True)["requests"])

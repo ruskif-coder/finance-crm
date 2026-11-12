@@ -70,7 +70,8 @@ export default function EfficiencyRow({ eff }) {
         <Kpi label="Маржа" value={t.margin_pct == null ? '—' : pctComma(t.margin_pct)} fg={tone} hint="прибыль / ДС до СК"
           title={`Прибыль / сумма ДС до СК${t.gross !== t.revenue ? ` (${rub0(t.gross)}): скидка в счёт в базу маржи возвращается` : ''}`} />
       </div>
-      {!!eff.full && <FullRow f={eff.full} />}
+      {/* доп. СК нет — строки нет (владелец 12.11.2026): одни прочерки только отвлекают */}
+      {!!eff.full?.extra && <FullRow f={eff.full} />}
       {warns.filter(w => w !== skWarn).map(w => (
         <span key={w} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 9, fontSize: 11.5, color: 'var(--warning-fg)' }}>
           <span aria-hidden style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--warning)', flex: '0 0 6px' }} />{w}.

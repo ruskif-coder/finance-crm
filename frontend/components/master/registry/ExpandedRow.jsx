@@ -10,8 +10,9 @@ import { fmtDateTimeShort } from '@/lib/dates'
 import { SVC_DOT } from '@/lib/masterStatus'
 import { MONO } from '@/components/salesTableKit'
 import { ScansPanel } from '@/components/master/docParts'
-import ChannelChip from '@/components/master/registry/ChannelChip'
 import PackDocs, { Money } from '@/components/master/registry/PackDocs'
+import StepBar from '@/components/master/registry/StepBar'
+import { stepBar } from '@/lib/masterStepBar'
 import { CAPS } from '@/components/master/registry/kit'
 
 const HEAD = { ...CAPS, fontWeight: 700, letterSpacing: '.1em' }
@@ -23,7 +24,7 @@ function Deals({ deals }) {
       <span style={HEAD}>Сделки пакета · {deals.length}</span>
       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 360, overflowY: 'auto' }}>
         {deals.map(d => (
-          <span key={d.id} style={{ display: 'grid', gridTemplateColumns: '78px minmax(0,1fr) minmax(0,1fr) 22px 150px', gap: 8, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border-row)', minWidth: 0 }}>
+          <span key={d.id} style={{ display: 'grid', gridTemplateColumns: '78px minmax(0,1.5fr) minmax(0,1fr) 22px 150px', gap: 8, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border-row)', minWidth: 0 }}>
             <Link href={`/sales/deals/${d.code}`} style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--accent)' }}>{d.code}</Link>
             <span title={d.brand || ''} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.brand || '—'}</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, fontSize: 11.5, color: 'var(--text-secondary)' }}>
@@ -81,18 +82,21 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
   const total = ds.length + kits.length * 3
   const ready = ds.length + kits.filter(k => k.onec).length * 3          // ДС скачивается всегда; счёт, УПД, отчёт — после 1С
   return wrap(
-    <div data-noexp style={{ display: 'grid', gridTemplateColumns: 'minmax(0,0.8fr) minmax(0,2.4fr) 270px', background: 'var(--bg-card)', border: '1px solid var(--accent-border)', borderRadius: 12, overflow: 'hidden', cursor: 'default' }}>
+    <div data-noexp style={{ display: 'grid', gridTemplateColumns: 'minmax(480px,1fr) minmax(0,2.3fr) 270px', background: 'var(--bg-card)', border: '1px solid var(--accent-border)', borderRadius: 12, overflow: 'hidden', cursor: 'default' }}>
       <Deals deals={m.deals} />
       <div style={{ ...COL, gap: 8, borderLeft: '1px solid var(--border-inner)' }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={HEAD}>ДС · комплекты · документы</span>
           {!!ds.length && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{ready} из {total} готово</span>}
-          <ChannelChip way={channel} height={22} />
-          {!!ds.length && (
+          {/* реестр v3 §4: канал уже есть колонкой строки — здесь серая справка, синий цвет только у действий */}
+          <span title="Как документы уходят клиенту — из договора" style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+            · канал: {channel === 'ЭДО' ? 'ЭДО (Диадок)' : channel || 'не задан'}</span>
+          {!!ds.length && !stepBar(m, canEdit).zip && (
             <span onClick={() => downloadFile(`/master-deals/${code}/zip`, null, setErr)} title="Скачать все готовые файлы пакета одним архивом"
               style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--accent)', cursor: 'pointer' }}>скачать всё · zip</span>
           )}
         </span>
+        <StepBar m={m} canEdit={canEdit} onDone={apply} setErr={setErr} />
         {!ds.length && <span style={{ padding: '8px 0', borderTop: '1px solid var(--border-row)', fontSize: 11.5, color: 'var(--text-faint)' }}>ДС ещё не собраны — комплекты и документы появятся после раскладки</span>}
         {!!ds.length && <PackDocs m={m} canEdit={canEdit} onPick={setPicked} setErr={setErr} onDone={apply} />}
         <div style={{ maxWidth: 1120 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={canEdit} onChanged={apply} /></div>

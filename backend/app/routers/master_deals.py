@@ -3,7 +3,7 @@
 Здесь только ручки: разбор запроса, область видимости, журнал. Логика — пакет `app/master_deal` (scope, registry, view, files,
 status, issue, deal_stages, …). Пишущие ручки берут пакет через `_master_rw`: все сделки пакета в области пользователя и строка
 пакета заблокирована до коммита (аудит 20.10: иначе запись проходила, а ответ был 403; две параллельные отметки шли обе)."""
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, constr
@@ -32,6 +32,7 @@ router = APIRouter()
 # Область видимости — от реестра сделок: «свои» видят пакеты, где есть их сделка.
 MD_VIEW = require_permission("master_deals", "view")
 MD_EDIT = require_permission("master_deals", "edit")
+MD_REVERT = require_permission("master_deals_revert", "edit")      # возврат стадии (12.11.2026)
 
 
 # ── пакет и область ───────────────────────────────────────────────────────────────────────────────
@@ -322,6 +323,59 @@ def master_revert(code: str, db: Session = Depends(get_db), user: User = Depends
     return _done(db, user, m, "master_deal_revert", f"возврат в раскладку, удалено черновиков ДС: {n}")
 
 
+# ── возврат стадии и «Обновить из сделки» (владелец 12.11.2026) ─────────────────────────────────────
+
+class BackIn(BaseModel):
+    to: constr(max_length=20)
+    reason: constr(max_length=500)
+
+
+@router.post("/{code}/back", dependencies=[Depends(MD_EDIT)])     # правка пакета И право «возврат стадии»
+def master_back(code: str, payload: BackIn, db: Session = Depends(get_db), user: User = Depends(MD_REVERT)):
+    """Вернуть пакет на более раннюю стадию с причиной: «ждём 1С» — комплекты снова у бухгалтера, «согласование» — ДС
+    пересобираются. Бухгалтеру и аккаунту — уведомление почтой и в телеграм."""
+    from app.master_deal import revert as RV
+    m = _master_rw(db, code, user)
+    try:
+        out = RV.revert(db, m, payload.to, user, payload.reason)
+    except RV.RevertError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    CN.reverted(db, m, out["was"], payload.reason.strip(), out, user)
+    moved = DST.journal_tail(out["deals"], MST.ISSUE if m.status not in DST.STAGE else m.status)
+    lost = (f"; ответ 1С снят с комплектов: {out['in_1c']}" if out["in_1c"] else "") + (f"; ДС на пересборку: {out['ds']}" if out["ds"] else "")
+    return _done(db, user, m, "master_deal_back", f"возврат «{out['was']}» → «{m.status}»: {payload.reason.strip()}{lost}{moved}")
+
+
+@router.post("/{code}/refresh")
+def master_refresh(code: str, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """«Обновить из сделки»: ДС и комплекты пакета по текущим данным, номера и даты прежние. Только на «согласовании»."""
+    from app.master_deal import revert as RV
+    m = _master_rw(db, code, user)
+    try:
+        out = RV.refresh(db, m, user)
+    except RV.RevertError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    return _done(db, user, m, "master_deal_refresh", "обновлено из сделки — " + ", ".join(out["ds"]))
+
+
+@router.post("/{code}/agreed")
+def master_agreed(code: str, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """«ДС проверены → в 1С»: после возврата на «согласование» ДС уже с номерами — пакет идёт к бухгалтеру."""
+    from app.master_deal import revert as RV
+    m = _master_rw(db, code, user)
+    was = m.status
+    try:
+        RV.agreed(db, m)
+    except RV.RevertError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    if m.status != was:
+        CN.status_changed(db, m, was, user)
+    return _done(db, user, m, "master_deal_status", f"ДС проверены — «{was}» → «{m.status}»")
+
+
 @router.post("/{code}/confirm-ds")
 def master_confirm_ds(code: str, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
     """Подтвердить ДС пакета одним действием (основной, затем допы) тем же путём, что кнопка в конструкторе ДС, но одной транзакцией:
@@ -441,6 +495,45 @@ def master_doc_sign(code: str, payload: DocSignIn, db: Session = Depends(get_db)
     return _done(db, user, m, "master_deal_doc_sign", f"{IS.doc_label(doc)} — «{doc.sign_state}»{why}{moved}")
 
 
+class DocRef(BaseModel):
+    annex_id: Optional[int] = None
+    upd_no: Optional[int] = None
+
+
+class SentIn(BaseModel):
+    items: List[DocRef] = []                             # пусто — все документы пакета
+    on: bool = True                                      # False — снять ошибочную отметку
+    state: Literal["выставлен", "подписан у нас"] = "выставлен"     # бумага: «подписан у нас» для всех разом
+    reason: Optional[constr(max_length=500)] = None      # трек отправки бумаги
+
+
+@router.post("/{code}/sent")
+def master_sent(code: str, payload: SentIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """Отметки отправки клиенту по нескольким документам сразу (реестр v3, 12.11.2026): главная кнопка полосы — «отправил все»,
+    «отменить» у документа — снять ошибочную. Отправлено всё — пакет сам уходит в «ждём оплату»."""
+    from app.master_deal import doc_sign as DSG
+    from app.master_deal import issue as IS
+    m = _master_rw(db, code, user)
+    if payload.items:
+        docs = [IS.find_doc(db, m, x.annex_id, x.upd_no) for x in payload.items]
+        if any(d is None for d in docs):
+            raise HTTPException(404, "Такого документа в пакете нет (или ДС ещё не подтверждён)")
+    else:
+        docs = IS.docs(db, m)
+    was = m.status
+    try:
+        IS.send_docs(db, m, docs, payload.on, user, state=payload.state, reason=payload.reason)
+    except DSG.SignError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    moved = DST.journal_tail(DST.follow(db, m, was, user), m.status)
+    if m.status != was:
+        CN.status_changed(db, m, was, user)
+    what = ", ".join(IS.doc_label(d) for d in docs)
+    verb = f"«{payload.state}»" if payload.on else "отметка отправки снята"
+    return _done(db, user, m, "master_deal_doc_sign", f"{what} — {verb}{moved}")
+
+
 @router.post("/{code}/files")
 async def master_file_upload(code: str, file: UploadFile = File(...), annex_id: Optional[int] = Form(None),
                              upd_no: Optional[int] = Form(None), db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
@@ -464,13 +557,14 @@ async def master_file_upload(code: str, file: UploadFile = File(...), annex_id: 
 
 
 @router.get("/{code}/zip")
-def master_zip(code: str, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
-    """«Скачать всё · zip»: ДС пакета (.docx) и сканы; что не собралось — в «не вошло.txt»."""
+def master_zip(code: str, diadoc: bool = False, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
+    """«Скачать всё · zip»: ДС пакета (.docx) и сканы; что не собралось — в «не вошло.txt». `diadoc` — «Скачать для Диадока»
+    (реестр v3): ДС и файлы из 1С без сканов, недостающее у комплектов — в «не вошло.txt» (владелец 12.11.2026)."""
     from io import BytesIO
     from urllib.parse import quote
     from fastapi.responses import StreamingResponse
     from app.master_deal import bundle
-    name, data = bundle.build(db, _master_ro(db, code, user))
+    name, data = bundle.build(db, _master_ro(db, code, user), diadoc=diadoc)
     return StreamingResponse(BytesIO(data), media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename=\"{code}.zip\"; filename*=UTF-8''{quote(name)}"})
 

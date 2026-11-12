@@ -6,18 +6,20 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { STEP } from '@/lib/masterSteps'
+import { SCROLL_LABEL, nextAction, stagesOf } from '@/lib/masterNext'
 import { MASTER_TONE } from '@/lib/masterStatus'
 import { MONO } from '@/components/salesTableKit'
 import StepConfirm from '@/components/master/StepConfirm'
 import { lineBtn } from '@/components/master/kit'
 
 const TAIL = { 'ждём сканы': 'оплачено, без подписанных в архив не уехать', 'ждём оплату': 'документы у клиента' }
-const WAITING = { 'согласование': 'ДС у юриста и на подтверждении', 'ждём закрытия': 'ДС на старте выпущен — ждём итоговой сверки', 'ждём 1С': 'Ждём счёт и УПД от бухгалтерии', 'ждём оплату': 'Ждём оплату' }
+const WAITING = { 'ждём 1С': 'Ждём счёт и УПД от бухгалтерии', 'ждём оплату': 'Ждём оплату' }
 
 export default function StagePipeline({ m, canEdit, onDone, onScans }) {
   const [asking, setAsking] = useState(false)
-  const seq = m.sequence || []
-  const cur = seq.indexOf(m.status)
+  // этапы словами процесса: итоговая сверка → сборка ДС → согласование ДС (владелец 12.11.2026)
+  const { items: seq, current: cur } = stagesOf(m)
+  const act = nextAction(m)
   const step = canEdit ? STEP[m.step] : null
   const t = m.todo
   // «прикрепить сканы подписанных · не хватает 3» → заголовок и пояснение, как в макете
@@ -28,11 +30,11 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 14, alignItems: 'center', padding: '12px 14px', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9, minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 3, minWidth: 0 }}>
-        {seq.map((s, i) => {
-          const tone = MASTER_TONE[s] || MASTER_TONE['черновик']
+        {seq.map(({ key, label: s }, i) => {
+          const tone = MASTER_TONE[key] || MASTER_TONE['черновик']
           const now = i === cur
           return (
-            <span key={s} style={{ flex: now ? '2.2 1 0' : '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <span key={key} style={{ flex: now ? '2.2 1 0' : '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
               <span style={{ height: 7, borderRadius: 2, background: now ? tone[3] : i < cur ? 'var(--accent-soft)' : 'var(--border-inner)' }} />
               <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 color: now ? tone[2] : i < cur ? 'var(--text-muted)' : 'var(--text-faint)', fontWeight: now ? 700 : 500 }}>{s}</span>
@@ -42,10 +44,11 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
       </div>
       <span style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }}>сейчас</span>
-        <b style={{ fontSize: 13.5, fontWeight: 700, color: t?.tone === 'bad' ? 'var(--danger-fg)' : 'var(--text-primary)' }}>{t ? head : 'пакет закрыт'}</b>
-        {!!tail && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{tail}</span>}
-        {!!t && <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{t.who}</span>}
+        <b style={{ fontSize: 13.5, fontWeight: 700, color: t?.tone === 'bad' ? 'var(--danger-fg)' : 'var(--text-primary)' }}>{act ? act.text : t ? head : 'пакет закрыт'}</b>
+        {!act && !!tail && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{tail}</span>}
+        {!!(act || t) && <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{act ? act.who : t.who}</span>}
       </span>
+      {!!act?.hint && <span style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45, marginTop: -4 }}>{act.hint}</span>}
       </div>
       <span data-pop-root style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
         {step && !step.expand ? (
@@ -57,6 +60,13 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
           <button type="button" onClick={onScans} style={{ ...btn, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Сканы ниже ↓</button>
         ) : m.step === 'contract' ? (
           <Link href={`/directory/contracts?q=${encodeURIComponent(m.contract?.number || '')}`} style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--danger-fg)', textDecoration: 'none' }}>в договор</Link>
+        ) : act?.link ? (
+          <Link href={act.link.href} style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: 0, background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>{act.link.label}</Link>
+        ) : act?.scroll ? (
+          <button type="button" onClick={() => document.querySelector(`[data-step-target="${act.scroll}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            style={{ ...btn, border: '1px solid var(--accent-border)', background: 'var(--bg-card)', color: 'var(--accent)' }}>{SCROLL_LABEL[act.scroll]}</button>
+        ) : act ? (
+          <span style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'default' }}>{act.who === 'юрист' ? 'ДС у юриста' : 'действие — внизу карточки'}</span>
         ) : WAITING[m.status] ? (
           <span style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'default' }}>{WAITING[m.status]}</span>
         ) : null}

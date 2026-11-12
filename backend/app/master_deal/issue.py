@@ -132,3 +132,23 @@ def mark_doc(db: Session, m, doc, state: str, user, reason: Optional[str] = None
     DS.mark(db, doc, state, user, reason=reason)
     db.flush()
     return sync(db, m)
+
+
+def send_docs(db: Session, m, docs_: list, on: bool, user, state: str = DS.SENT, reason: Optional[str] = None) -> bool:
+    """Отметить отправку клиенту (on) или снять её у документов пакета — по одному или все оставшиеся разом (реестр v3,
+    12.11.2026). Уже отправленные не трогаем: второе «выставлен» сдвинуло бы срок ожидания подписанных. Снять — только пока
+    пакет на «выставлении»: последняя отметка уже увела его в «ждём оплату». True — пакет сменил статус."""
+    from app.master_deal.status import ISSUE
+    if m.status != ISSUE:
+        raise DS.SignError(409, "Отметки отправки ставят и снимают на «выставлении»; пакет уже в «" + m.status + "»")
+    # «подписано у нас» — бумага, следующий шаг сам не наступает; отклонённый клиентом сначала переделывают (ревью 12.11.2026)
+    done = (DS.OURS, DS.REJECTED) + DS.OUT if state == DS.OURS else DS.OUT
+    for d in docs_:
+        if on and d.sign_state not in done:
+            if d.sign_state == DS.ISSUED and DS.is_annex(d):
+                DS.mark(db, d, DS.AGREED, user)      # v3: шага «согласован клиентом» на экране нет — проходит сам, в истории
+            DS.mark(db, d, state, user, reason=reason)
+        elif not on:
+            DS.unsend(db, d, user)
+    db.flush()
+    return sync(db, m) if on and state == DS.SENT else False

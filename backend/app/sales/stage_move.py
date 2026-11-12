@@ -226,12 +226,35 @@ def manual_guard(db, deal, target, user, catalog: Optional[Catalog] = None) -> O
             return (f"С этапа стадии «{cur.name}» сделка уходит в «{own.name}», а не в «{target.name}»" if own
                     else f"С этапа стадии «{cur.name}» срыва нет — сделка уже в документообороте")
         return None
+    if getattr(target, "stage_key", None) == "archive" and not getattr(target, "is_lost", False):
+        return archive_block(db, deal)
     if target.is_terminal or cur.is_terminal or not cat.is_before(cur.id, target.id):
-        return None                                   # назад / в архив / из терминала — своими правилами в вызывающем
+        return None                                   # назад / из терминала — своими правилами в вызывающем
     nxt = next_stage(db, deal, cat)
     if nxt is not None and target.id != nxt.id and not is_master(user):
         return f"Через стадию двигает только мастер: следующая для этой сделки — «{nxt.name}»"
     return None
+
+
+def archive_block(db, deal) -> Optional[str]:
+    """«Архив успешных сделок» руками — только когда пакет сделки закрыт: все ДС и УПД подписаны (бумага — сканом, ЭДО —
+    отметкой). Владелец 12.11.2026: «не давать по всей системе уходить в терминальную стадию без сканов» — для всех сделок,
+    в том числе заведённых задним числом. Пакет в «архиве» уводит свои сделки сам (`deal_stages.follow`), бонусное «Закрыть без
+    документов» — своей ручкой: обе дороги мимо ручного перевода."""
+    from app.master_deal import issue as IS
+    from app.master_deal import status as MST
+    from app.master_deal.models import MasterDeal, MasterDealItem
+    it = db.query(MasterDealItem).filter(MasterDealItem.deal_id == deal.id).first()
+    if it is None:
+        return ("Сделка не в мастер-сделке: в «Архив успешных сделок» — через пакет закрытия, когда документы подписаны "
+                "(бонусное размещение — «Закрыть без документов» на итоговой сверке)")
+    m = db.get(MasterDeal, it.master_deal_id)
+    if m.status == MST.ARCHIVE:
+        return None
+    left = IS.unsigned(db, m)
+    paper = MST.is_paper(db, m)
+    tail = (f": не подписаны {', '.join(left)}" + (" — нужны сканы" if paper else "")) if left else f" — он на «{m.status}»"
+    return f"Пакет {m.code} не закрыт{tail}. В архив сделка уйдёт вместе с пакетом"
 
 
 def refusal_text(plan: Plan) -> str:

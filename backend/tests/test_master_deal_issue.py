@@ -84,7 +84,8 @@ def test_no_docs_no_archive(env):
 
 
 @pytest.mark.parametrize("docs,status,text,tone", [
-    ([("выставлен", "ДС № 2"), (None, "УПД № 1")], "выставление", "выставить клиенту · осталось 1", "info"),
+    ([("выставлен", "ДС № 2"), (None, "УПД № 1")], "выставление", "отправить клиенту в Диадок · осталось 1 из 2", "info"),
+    ([("согласован", "ДС № 2"), (None, "УПД № 1"), (None, "УПД № 2")], "выставление", "отправить клиенту в Диадок · 3 документа", "info"),
     ([("выставлен", "ДС № 2"), ("отклонён", "УПД № 1")], "выставление", "клиент отклонил: УПД № 1", "bad"),
     ([("подписан", "ДС № 2"), ("отклонён", "УПД № 1")], "ждём оплату", "клиент отклонил: УПД № 1", "bad"),
     ([("подписан", "ДС № 2"), ("выставлен", "УПД № 1")], "ждём оплату", "ждём оплату", "info"),
@@ -104,7 +105,8 @@ def test_waiting_for_signed_turns_red_after_due_days(env):
 
 
 @pytest.mark.parametrize("status,channel,signed,want", [
-    ("выставление", "ЭДО", False, "docs"),
+    ("выставление", "ЭДО", False, "send"),
+    ("выставление", "бумага", False, "docs"),
     ("выставление", None, False, "contract"),
     ("ждём оплату", "бумага", False, "paid"),
     ("ждём оплату", "ЭДО", False, "docs"),
@@ -128,13 +130,19 @@ def test_waiting_for_closing_is_start_packs_only_and_not_a_closed_status():
     assert ST.todo(None, _M("ждём закрытия", start=True))["who"] == "аккаунт"
 
 
-def test_back_from_waiting_for_signed_to_payment_keeps_docs(env):
+def test_back_by_status_step_is_refused(env):
+    """Назад — «Вернуть стадию» (revert.py, 12.11.2026); на «ждём оплату» он документов не трогает — test_master_revert."""
     m = _M("ждём сканы", channel="бумага")
-    env["docs"] = [_d("выставлен", "ДС № 2", "бумага")]
-    ST.move(None, m, "ждём оплату", _U())
-    assert m.status == "ждём оплату" and env["docs"][0].sign_state == "выставлен", "назад — не отмена отправки документов"
+    with pytest.raises(ST.StatusError):
+        ST.move(None, m, "ждём оплату", _U())
 
 
 @pytest.mark.parametrize("name,ok", [("скан.pdf", True), ("скан.JPG", True), ("все.zip", False), ("x.rar", False)])
 def test_one_file_one_document_no_archives(name, ok):
     assert IS.scan_ext_ok(name) is ok
+
+
+def test_send_count_is_for_the_row_button(env):
+    env["docs"] = [_d("выставлен", "ДС № 2"), _d(None, "УПД № 1"), _d(None, "УПД № 2")]
+    assert ST.send_count(None, _M("выставление")) == {"left": 2, "total": 3}
+    assert ST.send_count(None, _M("ждём оплату")) is None

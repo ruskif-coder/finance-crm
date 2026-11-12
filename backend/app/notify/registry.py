@@ -203,6 +203,14 @@ register(Event(
     recipients=_COLLECTOR, channels={"app": True, "digest": True},
 ))
 register(Event(
+    key="master_reverted", direction="account", group="Закрытие месяца",
+    title="Мастер-сделку вернули на стадию",
+    description="Пакет вернули назад с причиной: документы переделываются — счёт и УПД из 1С, отметки отправки или ДС больше не действуют.",
+    tone="warn", action="Открыть мастер-сделку", widget_group="Документы",
+    # бухгалтеру и аккаунту сделки, почтой и в телеграм (владелец 12.11.2026)
+    recipients=_FIN_AND_ACCOUNTANT + _COLLECTOR, channels={"app": True, "tg": True, "mail": True},
+))
+register(Event(
     key="master_closed", direction="account", group="Закрытие месяца",
     title="Мастер-сделка оплачена / в архиве",
     description="Пакет оплачен или закрыт целиком.",

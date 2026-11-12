@@ -29,7 +29,7 @@ import { CAPS, KEEP } from '@/components/master/registry/kit'
 // 15 колонок хендоффа v2 (21.10.2026): ширины фиксированных — как в макете; текстовые — без жёсткого минимума (`minmax(0,…)`, доли — из
 // макета): делят свободное место и обрезаются многоточием, полный текст в title. Окно владельца ≈ 2000 px — минимумы макета (200 px)
 // туда не влезали (урок 19.10); прокрутка — лишь на окне уже 1800 px.
-const COLS = '84px 80px 150px minmax(0,1.5fr) 164px 110px minmax(0,1.3fr) minmax(0,0.7fr) minmax(0,1fr) minmax(0,1.15fr) 140px 56px 120px 120px 142px'
+const COLS = '84px 76px 150px minmax(200px,1.6fr) 150px 96px minmax(140px,1.2fr) minmax(60px,0.6fr) minmax(80px,1fr) minmax(80px,1fr) 136px 52px 104px 104px 142px'
 export default function MasterDealsRegistry() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)

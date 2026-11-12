@@ -33,13 +33,13 @@ import { parseDocFileName } from '@/lib/docFileName.mjs';   // стенд: № �
 import { pctComma } from '@/lib/salesFormat';
 
 const AD_RISE = 'adRise 0.4s cubic-bezier(0.22,1,0.36,1) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
-const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['scan', 'Ждут сканов', 'var(--warning)'], ['all', 'Все', null]];   // стенд: «Ждут сканов» — после «Внесены» (владелец 09.11.2026)
+const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['scan', 'Ждут сканов', 'var(--warning)'], ['all', 'Все', null], ['archive', 'Архив', null]];   // архив — по кнопке (владелец 12.11.2026)   // стенд: «Ждут сканов» — после «Внесены» (владелец 09.11.2026)
 const RETURN_REASONS = ['реквизиты покупателя', 'сумма не та', 'нет подписанного ДС', 'основание / период'];
 const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
 const short = name => name.replace(/ ООО$/, '');
 
-export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, now }) {
+export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, onLoadArchive, archiveLoaded, onRedo, now }) {
   const nowMs = typeof now === 'number' ? now : Date.parse(now || data.now);
   const cal = data.settings.calendar;
   const [tab, setTab] = useState('wait');
@@ -166,9 +166,9 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
             {TABS.map(([k, label, dot]) => { const on = !searching && tab === k, n = reqs.filter(x => inTab(x, k)).length;
               return <span key={k} role="tab" aria-selected={on} tabIndex={0} onClick={() => { setTab(k); setQ(''); }} onKeyDown={e => e.key === 'Enter' && (setTab(k), setQ(''))}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, boxSizing: 'border-box', padding: '0 14px', borderRadius: 12, fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
-                {dot && <Dot c={dot} s={7} />}{label}<span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>{n}</span></span>; })}
+                {dot && <Dot c={dot} s={7} />}{label}<span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>{k === 'archive' && !archiveLoaded ? '…' : n}</span></span>; })}
           </span>
-          <span style={{ marginLeft: 'auto', width: 420 }}><Input value={q} onChange={e => setQ(e.target.value)} placeholder="⌕  Поиск по всем: покупатель, ИНН, № ДС, код" aria-label="Поиск по всем заявкам" /></span>
+          <span style={{ marginLeft: 'auto', width: 420 }}><Input value={q} onChange={e => setQ(e.target.value)} placeholder={archiveLoaded ? '⌕  Поиск по всем и архиву: покупатель, ИНН, № ДС, код' : '⌕  Поиск по всем: покупатель, ИНН, № ДС, код'} aria-label="Поиск по всем заявкам" /></span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '640px minmax(0,1fr)', gap: 14, alignItems: 'stretch', flex: '1 1 auto', animation: AD_RISE, animationDelay: '0.07s' }}>
@@ -229,7 +229,11 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                   {g.items.map(x => <QueueRow key={x.code} req={x} grouped={!!g.head} sel={r && x.code === r.code} form={forms[x.code]} seen={seen[x.code]} nowMs={nowMs} cal={cal} onPick={() => select(x.code)} />)}
                 </React.Fragment>
               ))}
-              {list.length === 0 && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '40px 16px', textAlign: 'center' }}>
+              {!searching && tab === 'archive' && !archiveLoaded && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '40px 16px', textAlign: 'center' }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)' }}>Архив не загружен</span>
+                <span style={{ fontSize: 12.5, color: 'var(--text-muted)', maxWidth: 420 }}>Пакеты, закрытые оплатой и подписью. Грузятся по кнопке, чтобы не тормозить очередь; после загрузки поиск ищет и по ним.</span>
+                <button type="button" onClick={onLoadArchive} style={{ height: 34, padding: '0 16px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Загрузить архив</button></div>}
+              {list.length === 0 && !(tab === 'archive' && !archiveLoaded && !searching) && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '40px 16px', textAlign: 'center' }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: searching ? 'var(--text-secondary)' : 'var(--income-fg)' }}>{searching ? 'Ничего не найдено' : tab === 'wait' ? 'Ничего не ждёт' : tab === 'scan' ? 'Все сканы на месте' : 'Пусто'}</span>
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{searching ? 'Ищем по покупателю, ИНН, коду сделки, № ДС и договора.' : tab === 'wait' ? 'Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.' : tab === 'scan' ? 'По всем внесённым заявкам ДС подписан.' : 'В этой вкладке заявок нет.'}</span></div>}
             </div>
@@ -240,7 +244,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
           {!r ? <Card style={{ padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, alignSelf: 'start' }}>
               <span style={{ fontSize: 17, fontWeight: 800, color: 'var(--income-fg)' }}>Очередь пуста</span>
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Все заявки внесены. Новые появятся, когда аккаунт отправит пакет.</span></Card>
-            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, pickScan, onDsFile, onOpenFile, removeFile,
+            : <RequestPanel {...{ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, submit, ret, setRet, doReturn, saved: saved[r.code], note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, pickScan, onDsFile, onOpenFile, removeFile,
                 past: sortQueue(reqs.filter(x => x.buyer.inn === r.buyer.inn && x.code !== r.code && x.status === 'done')).slice(0, 24), select,
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
@@ -289,7 +293,7 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
 }
 
 /* ───────── рабочая панель заявки ───────── */
-function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, pickScan, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
+function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copyAll, lastCopy, pick, pickScan, submit, ret, setRet, doReturn, saved, note, setNoteDraft, sendNote, onOpenDeal, onExcel, onRedo, onDsFile, onOpenFile, removeFile, past, select, log, seenNow, dupRow }) {
   const h = workHours(Date.parse(r.since), nowMs, cal), tone = ageTone(h);
   const st = r.status === 'done' ? ['внесено', 'ok'] : r.status === 'returned' ? ['возвращено аккаунту', 'warn'] : ev.ready ? ['готово к внесению', 'ok'] : ['ждёт бухгалтера', 'info'];
   const exp = ev.exp, line = r.lines[0], allCp = lastCopy === r.code + ':all';
@@ -328,7 +332,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           {r.accounts && r.accounts.length ? <>{r.accounts.length > 1 ? 'аккаунты' : 'аккаунт'}: <b style={{ color: 'var(--text)', fontWeight: 600 }}>{r.accounts.join(', ')}</b></> : 'аккаунт сделки не указан'}
         </span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><Btn onClick={() => onExcel && onExcel(r.code)}>Excel пакета</Btn><Btn onClick={() => onOpenDeal && onOpenDeal(r.code)}>мастер-сделка {r.code} ↗</Btn></span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>{/* по праву «Мастер-сделки · возврат стадии» (12.11.2026): внесённое — снова в работу */}{r.status === 'done' && onRedo && <Btn onClick={() => onRedo(r.code)}>Вернуть на переделку</Btn>}<Btn onClick={() => onExcel && onExcel(r.code)}>Excel пакета</Btn><Btn onClick={() => onOpenDeal && onOpenDeal(r.code)}>мастер-сделка {r.code} ↗</Btn></span>
       </Card>
 
       {/* п.7: пришла повторно */}

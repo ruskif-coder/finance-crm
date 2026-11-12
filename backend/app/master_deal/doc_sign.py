@@ -70,14 +70,24 @@ def _allowed(doc, channel: Optional[str]) -> tuple:
     return nxt.get(st, ())
 
 
+def _last_sent(db: Session, doc) -> tuple:
+    """(когда, кто) последней отметки «выставлен» — плашка «отправлен · 12.11 15:30» в реестре v3."""
+    a, u_ = (doc.id, None) if is_annex(doc) else (None, doc.id)
+    r = db.execute(text("""SELECT e.at, coalesce(u.name, u.email) FROM doc_sign_events e LEFT JOIN users u ON u.id = e.by_user
+                            WHERE (e.annex_id = :a OR e.upd_id = :u) AND e.state = :s ORDER BY e.id DESC LIMIT 1"""),
+                   {"a": a, "u": u_, "s": SENT}).first()
+    return (r[0].isoformat(timespec="seconds") if r[0] else None, r[1]) if r else (None, None)
+
+
 def view(db: Session, doc, channel: Optional[str] = None) -> dict:
     """Для экрана: где документ, каким каналом и куда его можно отметить дальше (подпись бумаги — сканом, не кнопкой)."""
     if is_annex(doc) and doc.no is None:
         return {"state": None, "channel": None, "next": []}
     ch = doc.sign_channel or channel or _contract_channel(db, doc)
     nxt = [s for s in _allowed(doc, ch) if not (s == SIGNED and ch == PAPER)]
+    sent_at, sent_by = _last_sent(db, doc) if doc.sign_state in (SENT, SIGNED, REJECTED) else (None, None)
     return {"state": doc.sign_state, "channel": doc.sign_channel or ch, "next": nxt,
-            "needs_scan": ch == PAPER and doc.sign_state == SENT}
+            "needs_scan": ch == PAPER and doc.sign_state == SENT, "sent_at": sent_at, "sent_by": sent_by}
 
 
 def mark(db: Session, doc, state: str, user, *, reason: Optional[str] = None, source: str = "вручную") -> object:
@@ -122,6 +132,20 @@ def unsign(db: Session, doc, user, *, reason: str) -> None:
     """Снять подпись бумаги, когда убрали её скан: документ снова «выставлен» — у клиента, подписанного у нас нет."""
     doc.sign_state = SENT
     _write_event(db, doc, state=SENT, channel=doc.sign_channel, source="вручную", reason=reason, file_id=None,
+                 by_user=getattr(user, "id", None))
+
+
+UNSENT = "отправка снята"      # событие, не состояние документа: отметку «выставлен» поставили по ошибке
+
+
+def unsend(db: Session, doc, user) -> None:
+    """Снять ошибочную отметку отправки (реестр v3, 12.11.2026): документ возвращается на шаг, с которого уходил клиенту, —
+    бумага к «подписан у нас», ЭДО-ДС к «согласован», ЭДО-УПД — к «пришёл из 1С» (пусто). Подписанный и отклонённый не трогаем:
+    это ответ клиента, а не наша ошибка."""
+    if doc.sign_state != SENT:
+        raise SignError(409, f"{label(doc)}: отменить можно только отметку «выставлен», сейчас — «{doc.sign_state or 'не отправлен'}»")
+    doc.sign_state = OURS if doc.sign_channel == PAPER else (AGREED if is_annex(doc) else None)
+    _write_event(db, doc, state=UNSENT, channel=doc.sign_channel, source="вручную", reason=None, file_id=None,
                  by_user=getattr(user, "id", None))
 
 

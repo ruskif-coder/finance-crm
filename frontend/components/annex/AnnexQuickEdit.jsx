@@ -32,7 +32,8 @@ function Preview({ text, values }) {
   )
 }
 
-export default function AnnexQuickEdit({ title, hint, source, defaultText, edited, inheritedFrom, values, canEdit, copy, onSave, aside }) {
+/** `generate` — {label, text}: кнопка подставляет готовый текст в поле, не сохраняя (сохраняет человек, посмотрев). */
+export default function AnnexQuickEdit({ title, hint, source, defaultText, edited, inheritedFrom, values, canEdit, copy, onSave, aside, generate }) {
   const [text, setText] = useState(source || '')
   const [subs, setSubs] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -103,6 +104,10 @@ export default function AnnexQuickEdit({ title, hint, source, defaultText, edite
         {canEdit && (edited || !!inheritedFrom || dirty) && <button type="button" disabled={busy} onClick={() => { if (defaultText) setText(defaultText); save(null) }}
                                                  style={{ height: 32, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
           Вернуть по шаблону
+        </button>}
+        {canEdit && !!generate?.text && <button type="button" disabled={busy} onClick={() => setText(generate.text)}
+                                                style={{ height: 32, padding: '0 12px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-tint)', color: 'var(--accent-fg)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+          {generate.label}
         </button>}
         {copy && <button type="button" onClick={copyText}
                          style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>

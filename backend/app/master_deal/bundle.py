@@ -21,7 +21,31 @@ def _annex_docx(db: Session, annex_id: int) -> tuple:
     return annex_print.printable_docx(db, annex_id)
 
 
-def build(db: Session, m) -> tuple:
+_ONEC = (("invoice", "счёта (pdf)"), ("upd", "УПД (pdf)"), ("xml", "XML УПД"))
+
+
+def _and(parts: list) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " и " + parts[-1]
+
+
+def missing_onec(kits: list, files: dict) -> list:
+    """Чего из 1С нет у каждого комплекта — строки для «не вошло.txt» архива для Диадока."""
+    out = []
+    for k in kits:
+        have = files.get(k["upd_no"]) or {}
+        lack = [name for slot, name in _ONEC if slot not in have]
+        if lack:
+            out.append(f"Комплект {k['upd_no']}: нет {_and(lack)} из 1С")
+    return out
+
+
+def diadoc_kinds() -> set:
+    """В Диадок грузят электронные документы: счёт, УПД и XML УПД из 1С. Сканы подписанной бумаги туда не идут."""
+    from app.onec_desk.files import KINDS
+    return set(KINDS)
+
+
+def build(db: Session, m, diadoc: bool = False) -> tuple:
     """(имя архива, байты). Пустой пакет (ДС ещё нет и сканов нет) — архив с одним «не вошло.txt»."""
     from app.files_safe import existing_upload_path
     buf, skipped, used = BytesIO(), [], set()
@@ -53,7 +77,15 @@ def build(db: Session, m) -> tuple:
             except Exception as e:  # noqa: BLE001 — причина уходит в «не вошло.txt»
                 skipped.append(f"{a['number']}: {getattr(e, 'detail', None) or e}")
         from app.master_deal.models import MasterDealFile
-        for f in db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id).order_by(MasterDealFile.id):
+        q = db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id)
+        if diadoc:
+            from sqlalchemy import text as sa_text
+            from app.master_deal.docs import _onec_files
+            q = q.filter(MasterDealFile.kind.in_(list(diadoc_kinds())))
+            kits = [{"upd_no": r[0]} for r in db.execute(sa_text("SELECT upd_no FROM master_deal_upds WHERE master_deal_id = :m ORDER BY upd_no"),
+                                                         {"m": m.id})]
+            skipped.extend(missing_onec(kits, _onec_files(db, m)))
+        for f in q.order_by(MasterDealFile.id):
             try:
                 with open(existing_upload_path(f.path), "rb") as fh:
                     put(z, DN.for_package_file(db, m, f), fh.read())     # то же имя, что при скачивании файла по одному

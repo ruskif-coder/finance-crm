@@ -61,7 +61,7 @@ def _rows(db: Session, user) -> list:
                     "gross": round(r[11], 2) if r[11] is not None else None,
                     "ds": [a["number"] for a in TA.annexes_of(db, m)], "created_at": _iso(r[12], timespec="seconds"),
                     "advertisers": list(r[13] or []), "brands": list(r[14] or []),
-                    "contract_id": m.contract_id, "step": MST.row_step(db, m),
+                    "contract_id": m.contract_id, "step": MST.row_step(db, m), "send": MST.send_count(db, m),
                     # канал — отдельной колонкой (хендофф v2): бумажный по факту пакет остаётся бумажным, иначе — из договора
                     "channel": MST.PAPER if MST.is_paper(db, m) else MST.channel_of(db, m),
                     **({"efficiency": row_efficiency(db, m)} if fin and r[10] is not None else {})})

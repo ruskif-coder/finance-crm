@@ -107,7 +107,7 @@ export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, 
   const diff = m.prev ? Object.keys(SETTING_LABEL).filter(k => m.prev.settings[k] !== draft[k]) : []
   const sumOk = Math.abs(lay.total_net - m.deals_total_net) < 0.05
   return (
-    <div style={{ ...CARD, padding: '16px 18px', position: 'sticky', top: 12 }}>
+    <div data-step-target="layout" style={{ ...CARD, padding: '16px 18px', position: 'sticky', top: 12 }}>
       <div style={{ ...CAP, marginBottom: 10 }}>Раскладка</div>
       {m.issued_ds ? (
         <Note tone="ok">ДС № {m.issued_ds.no} выпущен {fmtDateTimeShort(m.issued_ds.at)} — раскладка закреплена. Изменить — через отзыв ДС у юриста.</Note>

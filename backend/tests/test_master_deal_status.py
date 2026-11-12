@@ -65,16 +65,13 @@ def test_issue_by_hand_only_after_accountant_entered_all_kits(monkeypatch):
     assert e.value.status == 409 and "УПД № 2" in e.value.message
 
 
-@pytest.mark.parametrize("u,ok", [(_U(), False), (_U(master=True), True), (_U(admin=True), True)])
-def test_back_one_step_only_master_or_admin(u, ok):
+@pytest.mark.parametrize("u", [_U(), _U(master=True), _U(admin=True)])
+def test_back_goes_only_through_revert_with_reason(u):
+    """12.11.2026: назад — только «Вернуть стадию» (причина, сброс, уведомление); шаг статусом назад обходил бы всё это."""
     m = _M("ждём оплату")
-    if ok:
+    with pytest.raises(ST.StatusError) as e:
         ST.move(None, m, "выставление", u)
-        assert m.status == "выставление"
-    else:
-        with pytest.raises(ST.StatusError) as e:
-            ST.move(None, m, "выставление", u)
-        assert e.value.status == 403
+    assert e.value.status == 409 and "Вернуть стадию" in e.value.message and m.status == "ждём оплату"
 
 
 def test_back_into_system_steps_goes_through_their_own_buttons():
@@ -90,9 +87,7 @@ def test_label_shows_channel():
 
 def test_actions_for_view():
     a = ST.actions(None, _M("выставление"), _U(master=True))
-    assert a["next"] == "ждём оплату" and a["prev"] == "ждём 1С"
-    a = ST.actions(None, _M("выставление"), _U())
-    assert a["next"] == "ждём оплату" and a["prev"] is None
+    assert a["next"] == "ждём оплату" and a["prev"] is None        # назад — «Вернуть стадию» (12.11.2026)
     assert ST.actions(None, _M("черновик"), _U(admin=True))["next"] is None
 
 

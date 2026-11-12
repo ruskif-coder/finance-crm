@@ -5,10 +5,11 @@ import { downloadFile } from '@/lib/download'
 const base = '/onec-desk'
 
 export const deskApi = {
-  board: () => api.get(`${base}/board`, auth()).then(r => r.data),
+  board: (archive = false) => api.get(`${base}/board`, { ...auth(), params: archive ? { archive: true } : {} }).then(r => r.data),
   draft: (id, form) => api.patch(`${base}/kit/${id}/draft`, form, auth()).then(r => r.data),
   submit: (id, form) => api.post(`${base}/kit/${id}/submit`, form, auth()).then(r => r.data),
   giveBack: (id, body) => api.post(`${base}/kit/${id}/return`, body, auth()).then(r => r.data),
+  redo: (id, reason) => api.post(`${base}/kit/${id}/redo`, { reason }, auth()).then(r => r.data),
   comment: (id, text) => api.post(`${base}/kit/${id}/comment`, { text }, auth()).then(r => r.data),
   seen: (id) => api.post(`${base}/kit/${id}/seen`, null, auth()).then(r => r.data),
   parseXml: (id) => api.post(`${base}/kit/${id}/upd-xml`, null, auth()).then(r => r.data),

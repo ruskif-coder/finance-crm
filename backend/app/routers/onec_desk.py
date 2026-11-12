@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, constr
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -106,6 +106,27 @@ def desk_return(kit_id: int, payload: TextIn, db: Session = Depends(get_db), use
         _err(e)
     why = ": ".join(x for x in ((payload.reason or "").strip(), (payload.text or "").strip()) if x)
     return _done(db, user, m, k, "onec_desk_return", f"возвращён аккаунту: {why}")
+
+
+class RedoIn(BaseModel):
+    reason: constr(max_length=500)
+
+
+@router.post("/kit/{kit_id}/redo", dependencies=[Depends(VIEW)])
+def desk_redo(kit_id: int, payload: RedoIn, db: Session = Depends(get_db),
+              user: User = Depends(require_permission("master_deals_revert", "edit"))):
+    """«Вернуть на переделку» внесённый комплект (владелец 12.11.2026, по праву «Мастер-сделки · возврат стадии»): ответ 1С
+    снят, заявка снова в «Заявках на документы»; пакет дальше «ждём 1С» возвращается туда. Бухгалтеру и аккаунту — уведомление."""
+    from app.master_deal import revert as RV
+    from app.notify import closing as CN
+    m, k = _kit(db, kit_id, lock=True)
+    try:
+        out = RV.redo_kit(db, m, k, user, payload.reason)
+    except RV.RevertError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    CN.reverted(db, m, out["was"], payload.reason.strip(), out, user)
+    return _done(db, user, m, k, "onec_desk_redo", f"вернули на переделку: {payload.reason.strip()}")
 
 
 @router.post("/kit/{kit_id}/comment")
@@ -258,10 +279,11 @@ def desk_xlsx(code: str, db: Session = Depends(get_db), user: User = Depends(VIE
 # ── «Документы для бухгалтерии» по хендоффу (05.11.2026): вся страница одним ответом, черновик, разбор XML, «Внести» ──
 
 @router.get("/board")
-def desk_board(db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    """Вся выдача экрана: сейчас, настройки бухгалтерии (срок закрытия, закрытый период, календарь), заявки."""
+def desk_board(archive: bool = False, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Вся выдача экрана: сейчас, настройки бухгалтерии (срок закрытия, закрытый период, календарь), заявки.
+    `archive` — только заявки пакетов в архиве, по кнопке «Загрузить архив» (владелец 12.11.2026)."""
     from app.onec_desk import board as BD
-    return BD.board(db)
+    return BD.board(db, archive=archive)
 
 
 @router.patch("/kit/{kit_id}/draft")

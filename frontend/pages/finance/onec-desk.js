@@ -30,6 +30,41 @@ function withFiles(data) {
 }
 
 /** Срок закрытия месяца: дата и время, отметка «закрыт». */
+/** «Вернуть на переделку» (12.11.2026): окно в языке экрана, а не браузерный prompt. Что произойдёт — словами, причина обязательна. */
+function RedoModal({ req, onSave, onClose }) {
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const save = async () => {
+    setBusy(true); setErr('')
+    try { await onSave(reason.trim()); onClose() }
+    catch (e) { setErr(errText(e, 'Не удалось вернуть на переделку')) } finally { setBusy(false) }
+  }
+  const later = ['выставление', 'ждём оплату', 'ждём сканы', 'архив'].includes(req.master_status)
+  return (
+    <Modal title={`Вернуть на переделку · ${req.code}`} width={520} onClose={onClose}
+      footer={<>
+        {!!err && <span style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{err}</span>}
+        <span style={{ flex: 1 }} />
+        <button type="button" style={btn(false)} onClick={onClose}>Отмена</button>
+        <button type="button" style={{ ...primaryBtn, opacity: reason.trim() ? 1 : 0.5 }} disabled={busy || !reason.trim()} onClick={save}>Вернуть на переделку</button>
+      </>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, fontSize: 13 }}>
+        <span style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          Ответ 1С по этому комплекту снимется, заявка вернётся в «Заявки на документы» — внесёте заново.
+          {later ? ' Пакет вернётся на «ждём 1С» и пойдёт дальше сам, когда комплект внесут.' : ''} Остальные внесённые комплекты пакета не трогаем.
+          Аккаунту и бухгалтерии уйдёт уведомление с причиной.
+        </span>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Причина — что не так в документах</span>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} maxLength={500} autoFocus
+            placeholder="Например: в счёте не тот КПП покупателя" style={{ ...inp, height: 'auto', padding: '8px 10px', resize: 'vertical', fontFamily: UI }} />
+        </label>
+      </div>
+    </Modal>
+  )
+}
+
 function CloseEditor({ settings, onSave, onClose }) {
   const [at, setAt] = useState(settings.close_at.slice(0, 16))
   const [closed, setClosed] = useState(!!settings.month_closed)
@@ -71,7 +106,10 @@ export default function OnecDeskPage() {
   const [now, setNow] = useState(() => Date.now())
   const [ds, setDs] = useState(null)               // { kitId, title } — ДС открыт модалкой
   const [closeEdit, setCloseEdit] = useState(false)
-  useEffect(() => { setMounted(true); setMayEdit(can(getPermissions(), 'onec_desk', 'edit')) }, [])
+  const [archive, setArchive] = useState(null)
+  const [mayRedo, setMayRedo] = useState(false)
+  const [redo, setRedo] = useState(null)           // заявка, которую возвращаем на переделку    // «Вернуть на переделку» — по праву «Мастер-сделки · возврат стадии»     // заявки архивных пакетов — только по кнопке (владелец 12.11.2026)
+  useEffect(() => { setMounted(true); setMayEdit(can(getPermissions(), 'onec_desk', 'edit')); setMayRedo(can(getPermissions(), 'master_deals_revert', 'edit')) }, [])
   const access = pageAccess(router.pathname, mounted)
 
   const load = useCallback(async () => {
@@ -86,7 +124,17 @@ export default function OnecDeskPage() {
     return () => clearInterval(t)
   }, [access, load])
 
-  const byCode = useMemo(() => Object.fromEntries((data?.requests || []).map(r => [r.code, r])), [data])
+  const loadArchive = useCallback(async () => {
+    try { setArchive((await deskApi.board(true)).requests); setErr('') }
+    catch (e) { setErr(errText(e, 'Не удалось загрузить архив')) }
+  }, [])
+  // архивная заявка, которую вернули на переделку, приходит уже с рабочей выдачей — дубля с тем же кодом быть не должно
+  const view = useMemo(() => {
+    if (!data || !archive) return data
+    const live = new Set(data.requests.map(r => r.code))
+    return { ...data, requests: [...data.requests, ...archive.filter(r => !live.has(r.code))] }
+  }, [data, archive])
+  const byCode = useMemo(() => Object.fromEntries((view?.requests || []).map(r => [r.code, r])), [view])
   const kit = code => byCode[code]?.kit_id
   const fileOf = (up, slot) => {
     const f = up?.files?.[slot]
@@ -122,6 +170,8 @@ export default function OnecDeskPage() {
     onRemoveFile: (code, kind, file) => (file?.id ? deskApi.removeFile(kit(code), file.id).catch(asError('Не удалось убрать файл')) : null),
     onEditClose: mayEdit ? () => setCloseEdit(true) : undefined,
     onReload: load,
+    onLoadArchive: loadArchive,
+    onRedo: mayRedo ? (code) => byCode[code] && setRedo(byCode[code]) : undefined,
   }
 
   const head = <><Head><title>Закрывающие документы · Финансы | SIMB-AD ERP</title></Head><Navbar active="onec_desk" /></>
@@ -132,9 +182,11 @@ export default function OnecDeskPage() {
       {head}
       {!!err && <div style={{ maxWidth: 2500, margin: '12px auto 0', padding: '0 30px', fontSize: 13, color: 'var(--danger-fg)', fontFamily: UI }}>{err}</div>}
       {data
-        ? <AccountantDocs data={data} now={now} {...handlers} />
+        ? <AccountantDocs data={view} now={now} archiveLoaded={!!archive} {...handlers} />
         : !err && <div style={{ padding: 40, color: 'var(--text-faint)', fontFamily: UI }}>Загрузка…</div>}
       {ds && <DsViewer kitId={ds.kitId} title={ds.title} onClose={() => setDs(null)} onError={setErr} />}
+      {redo && <RedoModal req={redo} onClose={() => setRedo(null)}
+        onSave={why => deskApi.redo(redo.kit_id, why).then(() => { setArchive(null); load() })} />}
       {closeEdit && data && <CloseEditor settings={data.settings} onClose={() => setCloseEdit(false)}
         onSave={body => deskApi.saveClose(body).then(st => setData(d => ({ ...d, settings: st })))} />}
     </div>

@@ -54,9 +54,10 @@ def test_every_service_walks_to_archive_by_the_matrix():
         exp = {(r.check_key, SC.blocking_for(r, d)) for r in rows if r.stage_id == arch.id and SC.scope_matches(r.applies_when, d)}
         if got != exp:
             problems.append(f"{svc.name}: «Архив» — система {sorted(got - exp)} / матрица {sorted(exp - got)}")
+        # 12.11.2026: в архив руками — только с закрытым пакетом; у синтетической сделки пакета нет — отказ обязателен
         g = SM.manual_guard(db, d, arch, acc_user, cat)
-        if g:
-            problems.append(f"{svc.name}: «Оплата» → «Архив» заблокирован правилом ручного перевода: {g}")
+        if not (g and "мастер-сделк" in g):
+            problems.append(f"{svc.name}: «Оплата» → «Архив» без пакета не заблокирован: {g!r}")
         steps.append("Архив успешных сделок: " + ", ".join(f"{k}{'■' if b else '○'}" for k, b in sorted(exp)))
         summary.append((svc.name, fl, steps))
     db.rollback()

@@ -38,6 +38,7 @@ PLAN = {
                        **{k: ["app", "digest"] for k in ("recon_arrived", "master_deal_ready", "master_ds_created",
                                                           "master_closed")},
                        **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")},
+                       "master_reverted": ["app", "tg", "mail"],      # возврат стадии пакета (12.11.2026)
                        # Приоритезация (19.10.2026) — собирает аккаунт, ему и ответы, и автостоп.
                        **{k: ["app"] for k in ("prio_site_answered", "prio_goal_reached")},
                        "prio_stop_failed": ["app", "tg"]},
@@ -48,10 +49,12 @@ PLAN = {
                        "deal_taken_into_master": ["digest"],
                        "prio_goal_reached": ["app"],
                        **{k: ["app", "digest"] for k in ("master_deal_ready", "master_ds_created", "master_closed")},
+                       "master_reverted": ["app", "tg", "mail"],
                        **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")}},
     # Будильник «Статусов продаж» (23.10.2026) — человек ставит его себе сам, поэтому сразу во все три канала.
     "sales":          {**{k: ["app"] for k in ("mp_ready",)}, "sales_status_reminder": ["app", "tg", "mail"]},
-    "fin":            {k: ["app", "digest"] for k in ("deal_sent_to_do", "master_wait_1c")},
+    "fin":            {**{k: ["app", "digest"] for k in ("deal_sent_to_do", "master_wait_1c")},
+                       "master_reverted": ["app", "tg", "mail"]},
     "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
                        "sales_status_reminder": ["app", "tg", "mail"],
                        # Поломка фонового задания — срочно (владелец 27.09.2026): крон

@@ -466,7 +466,7 @@ export default function AnnexAssembly() {
             </div>
 
             {/* Подписан вне системы (03.11.2026): документ — файл или ссылка ЭДО, конструктора и выгрузки нет. */}
-            {!!a.external && <ExternalAnnexView annex={a} ext={a.external} section={SECTION} />}
+            {!!a.external && <ExternalAnnexView annex={a} ext={a.external} section={SECTION} canEdit={mayEdit} onChanged={load} />}
 
             {/* Недостающее названо поимённо и до кнопки: отказ выгрузки без списка
                 означал бы «сходи поищи». */}

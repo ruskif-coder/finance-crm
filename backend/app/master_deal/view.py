@@ -57,6 +57,16 @@ def _deals(db: Session, deals: list, fin: bool, special: bool = False, plan_only
     return out, (EF.with_full(db, deals, res) if special else res)
 
 
+def _revert_targets(db: Session, m) -> list:
+    from app.master_deal import revert as RV
+    return RV.targets(db, m)
+
+
+def _unconfirmed(db: Session, m) -> int:
+    from app.master_deal import revert as RV
+    return RV.unconfirmed(db, m)
+
+
 def card(db: Session, m, user, deals: list) -> dict:
     from app.master_deal import layout as LY
     from app.master_deal import package as PK
@@ -89,4 +99,5 @@ def card(db: Session, m, user, deals: list) -> dict:
         "issue": issue(db, m), "docs": MDOC.build(db, m), "events": MDOC.events(db, m),
         "sequence": list(MST.sequence(db, m)), "step": MST.row_step(db, m), "status_label": MST.label(db, m),
         "todo": MST.todo(db, m), "status_actions": MST.actions(db, m, user), "statuses": list(MST.STATUSES),
+        "revert_targets": _revert_targets(db, m), "unconfirmed": _unconfirmed(db, m),
     }

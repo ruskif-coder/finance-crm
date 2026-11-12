@@ -186,8 +186,7 @@ export function forecastOf(na, nowMs, cal) {
  * Скан прикладывает бухгалтер или аккаунт; после этого ds_signed = true, ds_scan_url заполнен, заявка уходит из вкладки.
  */
 // стенд: скан подписанного ждём только у пакета на бумаге — у ЭДО подпись придёт из ЭДО (владелец 10.11.2026)
-export const waitsScan = r => r.status === 'done' && !r.ds_signed && r.channel === 'бумага';
-export const inTab = (r, tab) => tab === 'all' ? true : tab === 'scan' ? waitsScan(r) : r.status === tab;
+export { waitsScan, inTab } from '@/lib/deskTabs';      // вкладки и архив — общий модуль с тестом (12.11.2026)
 
 /** Метки строки очереди */
 export function rowPips(req, f, seen) {

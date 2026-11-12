@@ -17,6 +17,7 @@ import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.annex_tpl import doc_kind as DK
@@ -212,3 +213,75 @@ def assert_not_external(a) -> None:
     """Выгрузка, пересоздание и правки текста — только у ДС, собранного конструктором."""
     if is_external(a):
         raise ExternalError(409, "ДС подписан вне системы — его документ: загруженный файл или ссылка ЭДО")
+
+
+# ── Основание закрывающих у внешнего ДС (владелец 12.11.2026) ─────────────────────────────────────────────────────────────
+# Хранится там же, где основание, поправленное в конструкторе ДС (`blocks.edits.closing_basis`): УПД пакета читают его той же
+# цепочкой (`annex_tpl.document.upd_closing`) — второго пути к основанию нет. Своего текста у внешнего ДС нет (документ — файл
+# клиента), поэтому без правки основание собирается по шаблону; правка — пока УПД этого ДС не внесён в 1С.
+
+def generated_basis(items) -> str:
+    """Основание по базовому шаблону услуг ДС: только допы / только размещение / и то и другое — по строкам внешнего ДС."""
+    from app.annex_tpl.assemble import closing_template_for
+    return closing_template_for([{"kind": "extra" if it.get("addon_id") else "base"} for it in items or []])
+
+
+def _items_of(db: Session, a: SalesAnnex) -> list:
+    rows = db.query(SalesAnnexItem.service_id, SalesAnnexItem.addon_id).filter(SalesAnnexItem.annex_id == a.id).all()
+    return [{"service_id": s, "addon_id": ad} for s, ad in rows]
+
+
+def _deal_ids(db: Session, a: SalesAnnex) -> list:
+    return [r[0] for r in db.execute(sa_text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})]
+
+
+def _in_1c(db: Session, a: SalesAnnex) -> bool:
+    return bool(db.execute(sa_text("SELECT 1 FROM master_deal_upds WHERE annex_id = :a AND onec_at IS NOT NULL LIMIT 1"),
+                           {"a": a.id}).first())
+
+
+def closing_view(db: Session, a: SalesAnnex) -> dict:
+    """Что показать в карточке внешнего ДС: текущее основание (шаблон с подстановками и текст), откуда оно, сгенерированное по
+    базовому шаблону услуг и можно ли править."""
+    from app.annex_tpl import document as tpl_doc
+    from app.models import Contract
+    c = db.get(Contract, a.contract_id)
+    model = tpl_doc.basis_model(db, a, c, _deal_ids(db, a)) if c is not None else {}
+    cb = model.get("closing_basis") or {}
+    items = _items_of(db, a)
+    return {"template": cb.get("template") or "", "text": cb.get("text") or "", "edited": bool(cb.get("edited")),
+            "inherited_from": cb.get("inherited_from"), "values": model.get("values") or {},
+            "generated": generated_basis(items) if items else "", "locked": _in_1c(db, a)}
+
+
+def set_closing(db: Session, a: SalesAnnex, text_: Optional[str]) -> None:
+    """Основание внешнего ДС: свой текст (подстановки — те же, что в конструкторе) или пусто — по шаблону. Без commit."""
+    from app.annex_tpl import document as tpl_doc
+    from app.annex_tpl.assemble import CLOSING_KEY, closing_resolve, closing_template_for, validate_edit
+    from app.models import Contract
+    if not is_external(a):
+        raise ExternalError(409, "Здесь основание задают только у ДС, подписанного вне системы — у нашего ДС оно в конструкторе")
+    if _in_1c(db, a):
+        raise ExternalError(409, "УПД по этому ДС уже внесён в 1С — основание не правится")
+    t = (text_ or "").strip() or None
+    if t:
+        err = validate_edit([], CLOSING_KEY, t)
+        if err:
+            raise ExternalError(400, err)
+    c = db.get(Contract, a.contract_id)
+    edits = tpl_doc.edits_of(a)
+    if t:
+        edits[CLOSING_KEY] = t
+    elif CLOSING_KEY in tpl_doc.previous_defaults(db, a, c):
+        edits[CLOSING_KEY] = None          # явный сброс: иначе вернулся бы текст прошлого ДС договора
+    else:
+        edits.pop(CLOSING_KEY, None)
+    if tpl_doc.is_frozen(a):               # внешний ДС заменил выпущенный нами: основание живёт внутри замороженной модели
+        model = tpl_doc.upgrade_frozen(db, a, c, _deal_ids(db, a))
+        rows = [r for g in (model.get("table") or {}).get("groups") or [] for r in g.get("rows") or []]
+        model["edits"] = edits
+        model["closing_basis"] = closing_resolve(t or closing_template_for(rows), model["values"], bool(t))
+        a.blocks = model
+    else:
+        a.blocks = {"edits": edits} if edits else None
+    db.flush()

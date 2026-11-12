@@ -89,6 +89,18 @@ def status_changed(db: Session, m, was: str, user) -> None:
 
 
 @_safe
+def reverted(db: Session, m, was: str, reason: str, out: dict, user) -> None:
+    """Пакет вернули назад (12.11.2026): что больше не действует — словами, чтобы бухгалтер не искала по журналу."""
+    lost = []
+    if out.get("in_1c"):
+        lost.append(f"счёт и УПД из 1С по {out['in_1c']} комплект(ам) — внести заново")
+    if out.get("ds"):
+        lost.append(f"ДС пересобираются ({out['ds']})")
+    body = f"«{was}» → «{m.status}». Причина: {reason}." + (" Не действует: " + "; ".join(lost) + "." if lost else "")
+    _master(db, "master_reverted", m, f"возвращена на «{m.status}»", body, user, tone="warn")
+
+
+@_safe
 def onec_desk(db: Session, key: str, m, user=None, upd_no=None, text=None) -> None:
     """«Документы для 1С» (05.11.2026): бухгалтер вернула комплект или спросила — сразу; внесены все комплекты — в дайджест."""
     if key == "master_onec_returned":

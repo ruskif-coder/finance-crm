@@ -4,7 +4,7 @@
  */
 import Link from 'next/link'
 import { MONO } from '@/components/salesTableKit'
-import { STEP } from '@/lib/masterSteps'
+import { STEP, stepLabel } from '@/lib/masterSteps'
 import StepConfirm from '@/components/master/StepConfirm'
 import { BTN_ARCH, BTN_LINK, BTN_STEP } from '@/components/master/registry/kit'
 
@@ -14,7 +14,7 @@ export default function ActionCell({ r, canEdit, open, onAsk, onClose, onDone, o
     <span data-pop-root style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, minWidth: 0, position: 'relative' }}>
       {step ? (
         <span style={{ position: 'relative', display: 'inline-flex' }}>
-          <button type="button" title={step.title} onClick={step.expand ? onExpand : onAsk} style={step.quiet ? BTN_ARCH : BTN_STEP}>{step.label}</button>
+          <button type="button" title={step.title} onClick={step.expand ? onExpand : onAsk} style={step.quiet ? BTN_ARCH : BTN_STEP}>{stepLabel(step, r.step, r.send)}</button>
           {open && !step.expand && <StepConfirm code={r.code} step={step} onClose={onClose} onDone={onDone} />}
         </span>
       ) : r.step === 'contract' ? (
