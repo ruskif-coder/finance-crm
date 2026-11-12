@@ -82,6 +82,29 @@ def for_annex(db: Session, a, ext: str = ".pdf", extra: Optional[str] = None, nu
     return name(short_annex(a.number or number, a.no), a.date, cp, code, extra, ext)
 
 
+def _draft_date(v):
+    from datetime import datetime
+    try:
+        return datetime.strptime(str(v).strip(), "%d.%m.%Y").date() if v else None
+    except ValueError:
+        return None
+
+
+def kit_numbers(k) -> tuple:
+    """(№ счёта, дата, № УПД, дата) комплекта по 1С: внесённое бухгалтером, а пока заявка не внесена — из её черновика,
+    куда номера читаются из XML 1С (владелец 12.11.2026, M-0010: файлы 1С уже лежали, а имя писало «№ 1 в пакете»)."""
+    if k is None:
+        return None, None, None, None
+    d = k.onec_draft if isinstance(getattr(k, "onec_draft", None), dict) else {}
+    inv = (k.onec_invoice_no, k.onec_invoice_date) if k.onec_invoice_no else ((d.get("invNo") or None), _draft_date(d.get("invDate")))
+    upd = (k.onec_upd_no, k.onec_upd_date) if k.onec_upd_no else ((d.get("updNo") or None), _draft_date(d.get("updDate")))
+    if inv[0] is None:
+        inv = (None, None)
+    if upd[0] is None:
+        upd = (None, None)
+    return inv[0], inv[1], upd[0], upd[1]
+
+
 def for_package_file(db: Session, m, f) -> str:
     """Файл пакета по виду: скан ДС → как ДС; счёт, УПД, XML из 1С — номером и датой документа 1С; скан УПД — номером УПД."""
     from app.master_deal.models import MasterDealUpd
@@ -92,8 +115,7 @@ def for_package_file(db: Session, m, f) -> str:
         if a is not None:
             return for_annex(db, a, ext, "скан подписанного")
     k = db.query(MasterDealUpd).filter_by(master_deal_id=m.id, upd_no=f.upd_no).first()
-    inv_no, inv_d = (k.onec_invoice_no, k.onec_invoice_date) if k is not None else (None, None)
-    upd_no, upd_d = (k.onec_upd_no, k.onec_upd_date) if k is not None else (None, None)
+    inv_no, inv_d, upd_no, upd_d = kit_numbers(k)
     upd = f"УПД № {upd_no}" if upd_no else (f"УПД № {f.upd_no} в пакете" if f.upd_no else "УПД")
     word, d, extra = {"счёт 1С": (f"Счёт № {inv_no}" if inv_no else "Счёт", inv_d, None),
                       "УПД 1С": (upd, upd_d, None),

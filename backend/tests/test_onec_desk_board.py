@@ -278,6 +278,16 @@ def test_contract_as_1c_writes_it_matches_ours():
     assert XP.parse(raw, "РМ 11-11-24")["contract"] != "РМ 11-11-24", "другой договор совпасть не должен"
 
 
+def test_contract_in_dative_with_date_as_1c_writes_it_matches_ours():
+    """Прод 12.11.2026, M-0010 ПОЛИСОРБ: 1С пишет основание «Договору РМ-01-06-26-1 от 01.06.2026» — падеж и дата договора.
+    Сверка XML говорила «договор не совпадает», хотя договор тот же. Другой номер по-прежнему не совпадает."""
+    from app.onec_desk import xmlparse as XP
+    raw = _xml(ct="Договору РМ-01-06-26-1 от 01.06.2026")
+    assert XP.parse(raw, "РМ-01-06-26-1")["contract"] == "РМ-01-06-26-1"
+    assert XP.parse(raw, "РМ-01-06-26-2")["contract"] != "РМ-01-06-26-2"
+    assert XP.contract_key("по договору № РМ 11-11-2025 от 11.11.2025 г.") == XP.contract_key("РМ 11-11-25")
+
+
 # ── согласованное основание идёт в документ (владелец 05.11.2026) ────────────────────────────────
 
 def test_xml_service_name_is_checked_against_agreed_basis():

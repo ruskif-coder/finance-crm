@@ -37,3 +37,21 @@ def test_annex_number_is_short_like_on_screens():
     assert DN.short_annex("Приложение № 17") == "ПР № 17"
     assert DN.short_annex(None, 7) == "ДС № 7"
     assert DN.short_annex(None, None) == "ДС без номера"
+
+
+def test_kit_number_comes_from_1c_even_before_the_accountant_submits():
+    """Владелец 12.11.2026 (M-0010): «почему порядковый номер УПД в пакете, а не номер из 1С». Файлы 1С уже загружены,
+    номера в черновике бухгалтера (прочитаны из XML), но заявка не внесена — имя писало «УПД № 1 в пакете».
+    Внесённое — главнее черновика; ни того ни другого — None (тогда «в пакете», как раньше)."""
+    from datetime import date
+    from types import SimpleNamespace as NS
+    from app import doc_names as DN
+    draft = {"updNo": "270", "updDate": "31.10.2026", "invNo": "317", "invDate": "11.11.2026"}
+    k = NS(onec_upd_no=None, onec_upd_date=None, onec_invoice_no=None, onec_invoice_date=None, onec_draft=draft)
+    assert DN.kit_numbers(k) == ("317", date(2026, 11, 11), "270", date(2026, 10, 31))
+    k2 = NS(onec_upd_no="275", onec_upd_date=date(2026, 11, 1), onec_invoice_no="320", onec_invoice_date=date(2026, 11, 12),
+            onec_draft=draft)
+    assert DN.kit_numbers(k2) == ("320", date(2026, 11, 12), "275", date(2026, 11, 1))
+    assert DN.kit_numbers(NS(onec_upd_no=None, onec_upd_date=None, onec_invoice_no=None, onec_invoice_date=None,
+                             onec_draft=None)) == (None, None, None, None)
+    assert DN.kit_numbers(None) == (None, None, None, None)
