@@ -316,3 +316,21 @@ def test_rk_started_reads_the_first_start_of_any_placement():
     c = sc.Ctx(None, NS(id=0)).preload(placements=[{"first_started_at": None}, {"first_started_at": "2026-10-01"}])
     assert c.rk_started is True
     assert sc.Ctx(None, NS(id=0)).preload(placements=[{"first_started_at": None}]).rk_started is False
+
+
+def test_final_contract_counts_the_contract_the_ord_block_resolved(db):
+    """«Доходный договор выбран» — тот же договор, что показывает блок ОРД (`resolve_final`), а не только выбранный вручную.
+
+    Поломка (QGNY4M, 13.11.2026): у плательщика единственный договор с отметкой ОРД, блок ОРД пишет «цепочка сошлась»,
+    а проверка стадии смотрела только на `ord_final_contract_id` и не пускала в «Готовятся к старту»."""
+    from app.ord.matching import resolve_final
+    from app.sales.models import SalesDeal
+    ids = [r[0] for r in db.execute(text(
+        "SELECT id FROM sales_deals WHERE ord_final_contract_id IS NULL AND payer_counterparty_id IS NOT NULL ORDER BY id DESC LIMIT 300"))]
+    auto = next((d for d in (db.get(SalesDeal, i) for i in ids) if resolve_final(db, d).contract is not None), None)
+    if auto is None:
+        pytest.skip("на стенде нет сделки с договором, найденным без ручного выбора")
+    assert sc.REGISTRY["final_contract"].fn(sc.Ctx(db, auto)).state == sc.OK
+    none = next((d for d in (db.get(SalesDeal, i) for i in ids) if resolve_final(db, d).contract is None), None)
+    if none is not None:
+        assert sc.REGISTRY["final_contract"].fn(sc.Ctx(db, none)).state == sc.NOT_YET

@@ -38,3 +38,15 @@ export function errText(e) {
   }
   return detail ? String(detail) : 'Запрос отклонён. Данные не загружены'
 }
+
+/** Текст отказа сервера для показа человеку. `detail` у FastAPI — строка, а на ошибке проверки (422) —
+ *  СПИСОК объектов `{type, loc, msg, input}`. Положенный в JSX как есть, такой список роняет страницу
+ *  (React #31: карточка сделки при назначении трафика, 13.11.2026). Здесь он становится строкой. */
+export function detailText(e, fallback) {
+  const d = e?.response?.data?.detail
+  if (typeof d === 'string' && d) return d
+  if (Array.isArray(d) && d.length) {
+    return d.map(x => (x && typeof x === 'object' ? x.msg : String(x))).filter(Boolean).join('; ') || fallback
+  }
+  return fallback
+}

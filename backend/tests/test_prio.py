@@ -55,9 +55,15 @@ def env(monkeypatch):
     if not did:
         pytest.skip("на стенде нет сделки Приоритезации")
     pubs = [r[0] for r in db.execute(text("SELECT id FROM sales_publishers WHERE is_active ORDER BY id LIMIT 2"))]
+    db.execute(text("UPDATE sales_publishers SET prio_site_id = NULL WHERE prio_site_id BETWEEN 7000 AND 8000000"))
     db.execute(text("UPDATE sales_publishers SET prio_site_id = 7000 + id WHERE id = ANY(:p)"), {"p": pubs})
+    deal = db.get(SalesDeal, did)
+    opens = S.send_opens_at(db)
+    if opens is not None:                        # отправка площадке — со стадии сборки (владелец 13.11.2026)
+        deal.our_stage_id = opens.id
+        db.flush()
     try:
-        yield db, db.get(SalesDeal, did), pubs
+        yield db, deal, pubs
     finally:
         db.rollback()
         db.close()
@@ -93,6 +99,30 @@ def test_send_needs_site_and_landing_but_not_erid(env):
     S.edit_placement(db, d, p.id, {"product_url": "https://maksavit.ru/p/1"})
     assert S.send(db, d, p.id, _U()).status == M.AT_SITE
     assert S.view(db, d)["pipeline"][1] == {"status": M.AT_SITE, "count": 1}
+
+
+def test_send_waits_for_the_assembly_stage(env):
+    """Запрос площадке уходит только после «Начать сборку» (владелец 13.11.2026: QGNY4M ушла площадкам со стадии «Бронь»).
+    Поломка: `send` не смотрит стадию сделки."""
+    db, d, pubs = env
+    p = _ready(db, d, pubs[0])
+    S.edit_placement(db, d, p.id, {"product_url": "https://maksavit.ru/p/1"})
+    opens = S.send_opens_at(db)
+    if opens is None:
+        pytest.skip("стадия сборки не размечена")
+    from app.sales import catalog as catalog_mod
+    before = [s for s in catalog_mod.Catalog(db).stages if s.id in catalog_mod.Catalog(db).flow]
+    earlier = before[[s.id for s in before].index(opens.id) - 1]
+    d.our_stage_id = earlier.id
+    db.flush()
+    with pytest.raises(S.PrioError) as e:
+        S.send(db, d, p.id, _U())
+    assert e.value.status == 409 and opens.name in e.value.message
+    row = next(x for x in S.view(db, d)["placements"] if x["id"] == p.id)
+    assert "«Начать сборку»" in row["missing"], "кнопка «Отправить» должна быть заперта с той же причиной"
+    d.our_stage_id = opens.id
+    db.flush()
+    assert S.send(db, d, p.id, _U()).status == M.AT_SITE
 
 
 def _sent(db, d, pub):

@@ -5,12 +5,14 @@
  * Список активных площадок и их номер в сервисе приоритезации. Без номера запрос
  * площадке не уходит, а «Запустить» не заводит РК. Номер правится карандашом прямо
  * в строке (право traffic_catalog → edit); пустое значение отключает площадку.
+ * «Услуга в реестре» — включена ли у площадки услуга «Приоритезация» в реестре
+ * паблишеров; номер без услуги подсвечен как расхождение.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { MONO, card, CAP, inp, chip, cell, SortHead, EditIcon } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 
-const GRID = 'minmax(220px,2fr) 150px 220px 150px'
+const GRID = 'minmax(220px,2fr) 150px 170px 220px 150px'
 const FILTERS = [['all', 'все'], ['on', 'подключены'], ['off', 'не подключены']]
 const BAD_ID = 'целое число больше нуля'
 
@@ -38,6 +40,15 @@ function StatusPill({ connected }) {
   return connected
     ? <span style={chip('var(--income-tint)', 'var(--income-fg)', 'transparent')}>подключена</span>
     : <span style={chip('transparent', 'var(--text-faint)', 'var(--border-card)')}>не подключена</span>
+}
+
+/** Услуга «Приоритезация» в реестре паблишеров. Номер задан, а услуги нет — расхождение (жёлтая). */
+function ServicePill({ service, connected }) {
+  if (service) return <span style={chip('var(--income-tint)', 'var(--income-fg)', 'transparent')}>настроена</span>
+  return connected
+    ? <span title="ID в сервисе задан, а услуги «Приоритезация» в реестре паблишеров нет"
+        style={chip('var(--warning-tint)', 'var(--warning-fg)', 'var(--warning-border)')}>не настроена</span>
+    : <span style={chip('transparent', 'var(--text-faint)', 'var(--border-card)')}>нет</span>
 }
 
 /** Ячейка номера: значение с карандашом → поле ввода (Enter — сохранить, Esc — отмена). */
@@ -115,6 +126,7 @@ export default function PrioSites({ mayEdit }) {
     .filter(r => filter === 'all' || (filter === 'on' ? r.connected : !r.connected))
     .filter(r => !s || String(r.name || '').toLowerCase().includes(s))
   const connectedCount = rows.filter(r => r.connected).length
+  const serviceCount = rows.filter(r => r.service).length
 
   return (
     <div>
@@ -143,14 +155,15 @@ export default function PrioSites({ mayEdit }) {
           <span style={{ flex: 1 }} />
           <span style={{ ...CAP, marginBottom: 0 }}>
             подключено <span style={{ color: 'var(--text-primary)' }}>{connectedCount}</span> из {rows.length}
+            {' · '}услуга в реестре <span style={{ color: 'var(--text-primary)' }}>{serviceCount}</span>
           </span>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
-          <div style={{ minWidth: 760 }}>
+          <div style={{ minWidth: 940 }}>
             <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, borderBottom: '1px solid var(--border-card)' }}>
-              {['Площадка', 'Статус', 'ID в системе приоритезации', 'Запросов в работе']
-                .map((l, i) => <SortHead key={l} label={l} right={i === 3} />)}
+              {['Площадка', 'Статус', 'Услуга в реестре', 'ID в системе приоритезации', 'Запросов в работе']
+                .map((l, i) => <SortHead key={l} label={l} right={i === 4} />)}
             </div>
             {shown.map(r => (
               <div key={r.id} style={{ display: 'grid', gridTemplateColumns: GRID, gap: 8, alignItems: 'center',
@@ -158,6 +171,7 @@ export default function PrioSites({ mayEdit }) {
                 <div style={{ ...cell, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                   title={r.name}>{r.name}</div>
                 <div style={cell}><StatusPill connected={!!r.connected} /></div>
+                <div style={cell}><ServicePill service={!!r.service} connected={!!r.connected} /></div>
                 <IdCell row={r} mayEdit={mayEdit} onSave={saveId} />
                 <div style={{ ...cell, fontFamily: MONO, textAlign: 'right' }}>{r.requests ?? 0}</div>
               </div>

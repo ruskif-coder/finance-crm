@@ -55,6 +55,24 @@ def _packages_on(db: Session, m: MasterDeal, n: int) -> list:
     return [r[0] for r in rows]
 
 
+def effective_start_no(db: Session, m: MasterDeal) -> Optional[int]:
+    """«Последний актуальный №» пакета: заданный руками — он; не задан — последний известный по договору (владелец 13.11.2026,
+    M-0026: по договору выпущено 13 ДС № 83–95, а пакет просил указать номер). Известный = наибольший из «ДС с» договора,
+    выпущенных ДС и номеров, которые уже ждут другие пакеты договора (их ДС ещё не выпущены). None — нумерация договора
+    неизвестна, номер спрашиваем. Закрепляется в пакете при создании ДС (`to_annex.create`)."""
+    if m.start_no is not None:
+        return m.start_no
+    waiting = db.execute(text("""
+        SELECT max(m.start_no + 1) FROM master_deals m
+         WHERE m.contract_id = :c AND m.id <> :me AND m.start_no IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sales_annexes a WHERE a.master_deal_id = m.id AND a.no IS NOT NULL
+                                                          AND coalesce(a.kind, '') <> 'addons')"""),
+                         {"c": m.contract_id, "me": m.id}).scalar()
+    known = [x["no"] for x in issued(db, m.contract_id)] + [_contract_start(db, m.contract_id), waiting]
+    known = [n for n in known if n is not None]
+    return max(known) if known else None
+
+
 def check_start_no(db: Session, m: MasterDeal, no: int) -> dict:
     """Проверка «последнего актуального» №. ДС пакета получит № no + 1 (допы — с суффиксом того же номера).
 

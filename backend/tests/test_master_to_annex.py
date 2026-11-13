@@ -80,13 +80,31 @@ def test_to_annex_creates_ds_matching_layout(env, settings):
     assert not db.query(SalesAnnex).filter_by(master_deal_id=m.id).count()
 
 
+def test_start_no_defaults_to_the_contract_last_number(env):
+    """Номер ДС пакета не спрашивается, если по договору он уже известен (владелец 13.11.2026, M-0026: по договору выпущено
+    13 ДС № 83–95, а пакет просил «укажите номер»). Последний известный = наибольший из «ДС с» договора, выпущенных ДС и номеров,
+    уже занятых другими пакетами; при создании ДС он закрепляется в пакете. Поломка: «не задан номер ДС» при известной нумерации."""
+    from sqlalchemy import text
+    db, deals, u = env
+    m = _package(db, deals, u, {"addons_separate": False, "bonus_addons": "hide"})
+    m.start_no = None
+    db.execute(text("UPDATE contracts SET annex_start_no = 50 WHERE id = :c"), {"c": m.contract_id})
+    db.flush()
+    known = max([50] + [x["no"] for x in PK.issued(db, m.contract_id)])
+    assert PK.effective_start_no(db, m) >= known
+    assert "не задан номер ДС" not in TA.ready(db, m)
+    TA.create(db, m, u)
+    assert m.start_no == PK.effective_start_no(db, m) and m.start_no >= known, "номер закреплён в пакете"
+
+
 def test_to_annex_refusals(env):
     db, deals, u = env
     _ready(db, deals[0])
     m = db.get(MasterDeal, MS.send(db, deals[0], u, target="new")["master"]["id"])
-    with pytest.raises(MS.MasterError) as e:                    # номер не задан
-        TA.create(db, m, u)
-    assert "номер" in e.value.message
+    if PK.effective_start_no(db, m) is None:                    # нумерация договора неизвестна — номер спрашиваем
+        with pytest.raises(MS.MasterError) as e:
+            TA.create(db, m, u)
+        assert "номер" in e.value.message
     PK.add_deal(db, m, deals[1], u)                             # несверенная сделка держит пакет
     PK.set_start_no(db, m, max((x["no"] for x in PK.issued(db, m.contract_id)), default=0), u)
     assert CL.compute(db, deals[1])["frozen"] is False

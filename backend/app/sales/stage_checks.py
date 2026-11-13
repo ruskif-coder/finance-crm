@@ -389,7 +389,14 @@ def _payer_set(c: Ctx) -> Result:
 @register("final_contract", "Доходный договор выбран",
           "Выберите договор в блоке ОРД")
 def _final_contract(c: Ctx) -> Result:
-    return _ok() if c.deal.ord_final_contract_id else _not_yet("не выбран")
+    """Тот же договор, что показывает блок ОРД: выбранный вручную ИЛИ единственный договор плательщика с отметкой ОРД
+    (`resolve_final`). Раньше смотрела только ручной выбор — блок писал «цепочка сошлась», а стадия не пускала (QGNY4M,
+    13.11.2026)."""
+    if c.deal.ord_final_contract_id:
+        return _ok()
+    from app.ord.matching import resolve_final
+    fr = c._once("final_resolution", lambda: resolve_final(c.db, c.deal))
+    return _ok() if fr.contract is not None else _not_yet("не выбран")
 
 
 @register("ord_initial_contract", "Изначальный договор в цепочке ОРД",

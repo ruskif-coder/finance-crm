@@ -143,7 +143,9 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
         parts = [("all" if paid_extras else "main", "основные и допы" if paid_extras else "основные услуги", ls)]
 
     vat = _vat(db, m, ls)
-    base_no = (m.start_no + 1) if m.start_no is not None else None
+    from app.master_deal import package as PK
+    start_no = PK.effective_start_no(db, m)          # не задан руками — последний известный по договору (13.11.2026)
+    base_no = (start_no + 1) if start_no is not None else None
     ds_list, upd_no = [], 0
     for kind, title, rows in parts:
         if not rows:

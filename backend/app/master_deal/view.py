@@ -90,7 +90,8 @@ def card(db: Session, m, user, deals: list) -> dict:
         "candidates": [] if m.issued_at_start else PK.candidates(db, m), "settings": LY.settings_of(m),
         "issued_at_start": bool(m.issued_at_start),
         "saved": {"by": _who(db, m.saved_by), "at": m.updated_at} if m.saved_by else None,
-        "start_no": m.start_no, "issued": issued_list, "last_issued": max((x["no"] for x in issued_list), default=None),
+        "start_no": m.start_no, "start_no_auto": PK.effective_start_no(db, m) if m.start_no is None else None,
+        "issued": issued_list, "last_issued": max((x["no"] for x in issued_list), default=None),
         "issued_ds": PK.issued_ds(db, m), "prev": PK.prev(db, m), "layout": lay,
         # На старте сверку не ждут — ДС на план (02.11.2026); плашка «пока сверка не завершена» ему не про то.
         "gate": {"ok": True, "wait": []} if start else MS.gate(db, m),

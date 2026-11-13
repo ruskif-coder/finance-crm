@@ -5,6 +5,7 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import BriefFiles from '@/components/deal/BriefFiles'
 import { dm, grp0 } from '@/lib/salesFormat'
@@ -237,7 +238,7 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
       : { weborama_pixel: false }
     api.put(`/sales/deals/${dealId}/campaign-extra`, body, auth())
       .then(r => { setBusy(false); setAsk(false); setNote(r.data.report_url_note || ''); onSaved(r.data) })
-      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось сохранить')) })
   }
 
   const when = deal.weborama_pixel_at
@@ -429,7 +430,7 @@ function TrafficBrief({ dealId, value, canEdit, onSaved }) {
     setBusy(true); setErr('')
     api.put(`/sales/deals/${dealId}/traffic-brief`, { traffic_brief: text }, auth())
       .then(r => { setBusy(false); onSaved(r.data.traffic_brief) })
-      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось сохранить')) })
   }
 
   return (
@@ -490,7 +491,7 @@ function DealComments({ dealId, canEdit }) {
     setBusy(true); setErr('')
     api.post(`/sales/deals/${dealId}/comments`, { text: t }, auth())
       .then(r => { setItems(x => [r.data, ...(x || [])]); setText(''); setBusy(false) })
-      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось отправить') })
+      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось отправить')) })
   }
 
   return (
@@ -801,6 +802,7 @@ export default function DealCard() {
      список кандидатов разъехался бы с первым. */
   const [tmPop, setTmPop] = useState(null)      // { rect } — поповер выбора
   const [tmList, setTmList] = useState(null)
+  const [tmErr, setTmErr] = useState('')        // отказ назначения — у строки «Трафик», не вместо всей карточки
   const openTraffic = async (e) => {
     setTmPop({ rect: e.currentTarget.getBoundingClientRect() })
     if (tmList) return
@@ -809,13 +811,19 @@ export default function DealCard() {
       setTmList(r.data.items || [])
     } catch { setTmList([]) }
   }
+  /* Адрес — по ЧИСЛОВОМУ id сделки (`deal.id`), а не по `router.query.id`: карточка открывается
+     по коду (`/sales/deals/QGNY4M`), а ручка назначения принимает только число. С кодом сервер
+     отвечал 422 списком объектов, `setErr` клал его в текст — и React ронял всю страницу
+     (владелец 13.11.2026, QGNY4M). Отказ показываем у строки, а не общим `err`: тот заменяет
+     карточку целиком. */
   const pickTraffic = async (userId) => {
     setTmPop(null)
+    setTmErr('')
     try {
-      await api.put(`/launch-prep/deal/${id}/traffic-manager`,
+      await api.put(`/launch-prep/deal/${deal.id}/traffic-manager`,
         { user_id: userId ? Number(userId) : null }, auth())
       reload()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить трафика') }
+    } catch (e) { setTmErr(detailText(e, 'Не удалось назначить трафика')) }
   }
 
   // Состояние обвязки грузит карточка, а не сама секция: секция ленивая, свёрнутый блок
@@ -863,7 +871,7 @@ export default function DealCard() {
     setLoading(true)
     api.get(`/sales/deals/${id}`, auth())
       .then(r => setDeal(r.data))
-      .catch(e => setErr(e.response?.status === 404 ? 'Сделка не найдена' : (e.response?.data?.detail || 'Ошибка загрузки')))
+      .catch(e => setErr(e.response?.status === 404 ? 'Сделка не найдена' : detailText(e, 'Ошибка загрузки')))
       .finally(() => setLoading(false))
     api.get(`/sales/deals/${id}/history`, auth()).then(r => setHistory(r.data.items || [])).catch(() => {})
     api.get('/sales/directories/stage-catalog', auth()).then(r => setPhases(r.data.phases || [])).catch(() => {})
@@ -1755,6 +1763,7 @@ export default function DealCard() {
                     )}
                   </div>
                 ))}
+                {!!tmErr && <span style={{ fontSize: 11.5, color: 'var(--danger-fg)' }}>{tmErr}</span>}
               </div>
 
               {/* история (реальная — audit_log) */}

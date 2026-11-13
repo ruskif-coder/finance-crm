@@ -190,6 +190,11 @@ def view(db: Session, deal) -> dict:
     rows = []
     idx = {}
     fact = {}
+    try:
+        _assert_assembly_stage(db, deal)
+        stage_miss = []
+    except PrioError:
+        stage_miss = ["«Начать сборку»"]          # кнопка «Отправить» заперта с той же причиной, что и ручка
     if r:
         from app.prio.autostop import facts
         fact = facts(db, [x[0] for x in db.execute(text("SELECT camp_id FROM prio_placements WHERE request_id = :r AND camp_id IS NOT NULL"),
@@ -208,7 +213,7 @@ def view(db: Session, deal) -> dict:
                          "status": pl.status, "camp_id": pl.camp_id, "toggle_on": pl.toggle_on,
                          "fact_imp": fact.get(pl.camp_id) if pl.camp_id else None,
                          "goal_reached_at": pl.goal_reached_at.isoformat(timespec="seconds") if pl.goal_reached_at else None,
-                         "missing": missing(pl, site) if pl.status == M.DRAFT else [],
+                         "missing": (stage_miss + missing(pl, site)) if pl.status == M.DRAFT else [],
                          "remark": ({"text": pl.comment, "at": pl.comment_at.isoformat(timespec="seconds") if pl.comment_at else None,
                                      "by": _user_name(db, pl.comment_by)} if pl.comment else None),
                          "reminded_at": pl.reminded_at.isoformat(timespec="seconds") if pl.reminded_at else None})
@@ -351,10 +356,29 @@ def _site(db: Session, p: M.PrioPlacement) -> Optional[int]:
     return db.execute(text("SELECT prio_site_id FROM sales_publishers WHERE id = :p"), {"p": p.publisher_id}).scalar()
 
 
+def send_opens_at(db: Session):
+    """Стадия, с которой запрос можно отправить площадке, — стадия сборки, где открываются креативы («Готовятся к старту»,
+    туда ведёт «Начать сборку»). Берётся из разметки блоков, а не именем в коде. None — разметки нет, отправка не заперта."""
+    from app.sales import catalog as catalog_mod, stage_scope
+    return stage_scope.block_opens_at(db, catalog_mod.Catalog(db), "creatives")
+
+
+def _assert_assembly_stage(db: Session, deal) -> None:
+    """Площадке — только после «Начать сборку» (владелец 13.11.2026: QGNY4M ушла площадкам со стадии «Бронь»)."""
+    from app.sales import catalog as catalog_mod
+    opens = send_opens_at(db)
+    if opens is None:
+        return
+    order = {st.id: i for i, st in enumerate(catalog_mod.Catalog(db).stages)}
+    if order.get(deal.our_stage_id, -1) < order[opens.id]:
+        raise PrioError(409, f"Запрос площадке уходит со стадии «{opens.name}» — нажмите «Начать сборку» в шапке сделки")
+
+
 def send(db: Session, deal, pid: int, user) -> M.PrioPlacement:
     p = placement(db, deal, pid)
     if p.status != M.DRAFT:
         raise PrioError(409, f"Отправить можно черновик, а площадка «{p.status}»")
+    _assert_assembly_stage(db, deal)
     miss = missing(p, _site(db, p))
     if miss:
         raise PrioError(409, "Не хватает: " + ", ".join(miss))

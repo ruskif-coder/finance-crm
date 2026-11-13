@@ -105,7 +105,7 @@ def ready(db: Session, m: MasterDeal) -> list:
     except MS.MasterError as e:
         why.append(e.message)
         prim = None
-    if m.start_no is None and prim is None:      # с первичным ДС номер уже занят на старте
+    if PK.effective_start_no(db, m) is None and prim is None:      # с первичным ДС номер уже занят на старте
         why.append("не задан номер ДС")
     if abs(lay["total_net"] - deals_total) >= 0.05:
         why.append("сумма не сходится с суммой сделок")
@@ -129,6 +129,13 @@ def create(db: Session, m: MasterDeal, user) -> list:
     why = ready(db, m)
     if why:
         raise MS.MasterError(409, "В конструктор ДС нельзя: " + ", ".join(why))
+    if m.start_no is None and PR.primary_of(db, m) is None:
+        auto = PK.effective_start_no(db, m)        # номер не задан руками — последний известный по договору, закрепляем
+        chk = PK.check_start_no(db, m, auto)
+        if not chk["ok"]:
+            raise MS.MasterError(409, chk["text"])
+        m.start_no = auto
+        db.flush()
     c = db.get(Contract, m.contract_id)
     version, reason = tpl_doc.resolve(db, c)
     if version is None:

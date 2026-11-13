@@ -71,3 +71,23 @@ def test_too_big_number_is_400_not_a_database_error(db):
     with pytest.raises(PS.PrioError) as e:
         PS.set_site(db, a, 3_000_000_000)
     assert e.value.status == 400
+
+
+def test_service_flag_follows_publisher_registry(db):
+    """Колонка «Услуга в реестре» (владелец 13.11.2026): у площадки включена услуга «Приоритезация» в реестре паблишеров.
+    Поломка: флаг берётся не из sales_publisher_services или не гаснет при выключенной услуге."""
+    a, _ = _two(db)
+    svc = db.execute(text("SELECT id FROM sales_services WHERE name = 'Приоритезация'")).scalar()
+    kind = db.execute(text("SELECT kind FROM sales_publisher_surfaces WHERE publisher_id = :p ORDER BY kind LIMIT 1"), {"p": a}).scalar()
+    if svc is None or kind is None:
+        pytest.skip("на стенде нет услуги «Приоритезация» или поверхности у площадки")
+    db.execute(text("DELETE FROM sales_publisher_services WHERE publisher_id = :p AND service_id = :s"), {"p": a, "s": svc})
+    db.flush()
+    assert {r["id"]: r for r in PS.list_sites(db)}[a]["service"] is False
+    db.execute(text("INSERT INTO sales_publisher_services (publisher_id, surface_kind, service_id, is_active) VALUES (:p, :k, :s, true)"),
+               {"p": a, "k": kind, "s": svc})
+    db.flush()
+    assert {r["id"]: r for r in PS.list_sites(db)}[a]["service"] is True
+    db.execute(text("UPDATE sales_publisher_services SET is_active = false WHERE publisher_id = :p AND service_id = :s"), {"p": a, "s": svc})
+    db.flush()
+    assert {r["id"]: r for r in PS.list_sites(db)}[a]["service"] is False
