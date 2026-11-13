@@ -9,6 +9,7 @@
 Имя файла — ON_CHETOP_<получатель>_<отправитель>_ГГГГММДД_GUID. Идентификатор участника — код ЭДО (`edo_id`), а без него —
 ИНН_КПП, как 1С называет XML УПД, который бухгалтер к нам загружает. Кодировка — windows-1251 (требование формата)."""
 import re
+import threading
 import uuid
 from datetime import date, datetime
 from typing import Optional
@@ -28,7 +29,10 @@ def _d(v) -> str:
     """ДД.ММ.ГГГГ из date или ISO-строки."""
     if isinstance(v, (date, datetime)):
         return v.strftime("%d.%m.%Y")
-    return datetime.strptime(str(v)[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+    t = str(v)[:10]
+    if len(t) == 10 and t[2] == "." and t[5] == ".":            # уже ДД.ММ.ГГГГ — как в XML УПД 1С
+        return datetime.strptime(t, "%d.%m.%Y").strftime("%d.%m.%Y")
+    return datetime.strptime(t, "%Y-%m-%d").strftime("%d.%m.%Y")
 
 
 def _m(x) -> str:
@@ -75,7 +79,12 @@ def _party(tag: str, p: dict, with_bank: bool = False) -> str:
     b = p.get("bank") if with_bank else None
     if b and b.get("account") and b.get("bik") and b.get("corr"):
         bank = f"<БанкРекв{_attrs(НомерСчета=b['account'], НаимБанк=b.get('name'), БИК=b['bik'], КорСчет=b['corr'])}/>"
-    addr = f"<Адрес><АдрИнф{_attrs(КодСтр='643', НаимСтран='Россия', АдрТекст=p['address'][:1000])}/></Адрес>" if p.get("address") else ""
+    if p.get("address_xml"):                 # адрес из УПД 1С как есть (ГАР); негодный схеме — `build` перейдёт на текст
+        addr = f"<Адрес>{p['address_xml']}</Адрес>"
+    elif p.get("address"):
+        addr = f"<Адрес><АдрИнф{_attrs(КодСтр='643', НаимСтран='Россия', АдрТекст=p['address'][:1000])}/></Адрес>"
+    else:
+        addr = ""
     return f"<{tag}><ИдСв>{ul}</ИдСв>{bank}{addr}</{tag}>"
 
 
@@ -116,13 +125,13 @@ def build(inv: dict, now: Optional[datetime] = None) -> tuple:
     now = now or msk_now()          # ДатаИнф/ВрИнф — московские: контейнер живёт по Гринвичу
     name = f"ON_CHETOP_{participant_id(inv['buyer'])}_{participant_id(inv['seller'])}_{now:%Y%m%d}_{uuid.uuid4()}"
     lines, net, vat, gross = [], 0.0, 0.0, 0.0
-    no_vat = all(_no_vat(ln.get("vat_rate")) for ln in inv["lines"])
+    no_vat = all(_line_no_vat(ln) for ln in inv["lines"])
     for i, ln in enumerate(inv["lines"], 1):
         # итог — сумма НАПЕЧАТАННЫХ строк, а не сырых чисел: иначе «всего» расходится с колонкой на копейку (ревью)
         net, vat, gross = net + float(_m(ln["net"])), vat + float(_m(ln["vat"])), gross + float(_m(ln["gross"]))
-        tax = "<БезНДС>без НДС</БезНДС>" if _no_vat(ln.get("vat_rate")) else f"<СумНал>{_m(ln['vat'])}</СумНал>"
-        lines.append(f"<СведТовЦенПок{_attrs(НомСтр=i, НаимТов=(ln['name'] or 'Услуга')[:1000], СтТовБезНДС=_m(ln['net']), СтТовУчНал=_m(ln['gross']))}>"
-                     f"<НалСт>{escape(_rate(ln.get('vat_rate')))}</НалСт><СумНал>{tax}</СумНал><СумНалБезСки>{tax}</СумНалБезСки>"
+        tax = "<БезНДС>без НДС</БезНДС>" if _line_no_vat(ln) else f"<СумНал>{_m(ln['vat'])}</СумНал>"
+        lines.append(f"<СведТовЦенПок{_attrs(НомСтр=i, НаимТов=(ln['name'] or 'Услуга')[:1000], КолТов=ln.get('qty'), ЦенаТов=ln.get('price'), СтТовБезНДС=_m(ln['net']), СтТовУчНал=_m(ln['gross']))}>"
+                     f"<НалСт>{escape(ln.get('rate_text') or _rate(ln.get('vat_rate')))}</НалСт><СумНал>{tax}</СумНал><СумНалБезСки>{tax}</СумНалБезСки>"
                      f"<ДопСведТов ПрТовРаб=\"3\"/></СведТовЦенПок>")
     b = inv.get("basis")
     basis = (f"<Основание><ОснРеквДок{_attrs(РеквНаимДок=b['name'], РеквНомерДок=b['number'], РеквДатаДок=_d(b['date']))}/></Основание>"
@@ -143,10 +152,53 @@ def build(inv: dict, now: Optional[datetime] = None) -> tuple:
         f"</Документ></Файл>"
     )
     data = ('<?xml version="1.0" encoding="windows-1251"?>' + body).encode("cp1251", errors="xmlcharrefreplace")      # «€», «₽» — ссылкой на символ, а не «?"
+    err = schema_error(data)
+    if err and any(inv[k].get("address_xml") for k in ("seller", "buyer")):
+        # адрес 1С в другой редакции ГАР — тот же адрес текстом, а не негодный файл
+        plain = {**inv, "seller": {**inv["seller"], "address_xml": None}, "buyer": {**inv["buyer"], "address_xml": None}}
+        return build(plain, now)
+    if err:
+        raise InvoiceXmlError(409, f"XML счёта не проходит схему ФНС: {err}")
     return name + ".xml", data
 
 
+def _line_no_vat(ln: dict) -> bool:
+    rt = (ln.get("rate_text") or "").strip().lower()
+    return rt == "без ндс" if rt else _no_vat(ln.get("vat_rate"))
+
+
+_SCHEMA = None
+_SCHEMA_LOCK = threading.Lock()
+
+
+def schema_error(data: bytes) -> Optional[str]:
+    """Первая ошибка схемы ФНС или None. Файл, который Диадок не примет, не отдаём вовсе (13.11.2026). Под замком: общий
+    объект схемы держит журнал последней проверки — без замка параллельный запрос прочёл бы чужую ошибку (ревью)."""
+    global _SCHEMA
+    import os
+    from lxml import etree
+    with _SCHEMA_LOCK:
+        if _SCHEMA is None:
+            _SCHEMA = etree.XMLSchema(etree.parse(os.path.join(os.path.dirname(__file__), "xsd", "ON_CHETOP_1_998_01_05_01_04.xsd")))
+        ok = _SCHEMA.validate(etree.fromstring(data))
+        return None if ok else str(_SCHEMA.error_log.last_error)
+
+
 # ── сборка из комплекта ───────────────────────────────────────────────────────────────────────────
+
+def _upd_raw(db, m, k) -> Optional[bytes]:
+    """Последний загруженный XML УПД 1С комплекта (байты) или None."""
+    from app.master_deal.models import MasterDealFile
+    from app.onec_desk import files as OF
+    f = (db.query(MasterDealFile).filter_by(master_deal_id=m.id, upd_no=k.upd_no, kind="УПД 1С xml")
+         .order_by(MasterDealFile.id.desc()).first())
+    if f is None:
+        return None
+    try:
+        return OF.read(f)
+    except Exception:  # noqa: BLE001 — файла нет на диске
+        return None
+
 
 def _upd_parties(db, m, k) -> Optional[dict]:
     """Стороны из загруженного XML УПД 1С — `None`, если XML нет или он не читается (тогда банк — из нашей карточки)."""
@@ -194,42 +246,54 @@ def response(name: str, data: bytes):
 
 
 def for_kit(db, m, k, now: Optional[datetime] = None) -> tuple:
-    """XML счёта комплекта: номер и дата — из 1С, строки и стороны — из заявки бухгалтера, банк — из XML УПД 1С (тот же счёт,
-    что 1С поставила в документы), без него — первый счёт нашего юрлица."""
+    """XML счёта комплекта — из XML УПД 1С (`from_upd`), номер и дата — счёта 1С. Сумма строк УПД должна совпасть с суммой
+    счёта 1С — иначе отказ: в Диадок не должен уйти счёт с другой суммой. Коды участников ЭДО — из наших карточек (их в УПД нет)."""
     from app.onec_desk import queue as Q
+    from app.onec_desk import xmlparse as XP
+    raw = _upd_raw(db, m, k)
+    upd = XP.upd_document(raw) if raw else None
     card = Q.card(db, k)
     seller, buyer = _ours(db, (card.get("seller") or {}).get("id")), _ours(db, (card.get("buyer") or {}).get("id"))
-    if not seller or not buyer:
-        raise InvoiceXmlError(409, "Не определены наше юрлицо или покупатель по договору")
-    lines = card.get("lines") or []
-    gross = round(sum(float(x["gross"]) for x in lines), 2)
+    row = seller.get("row")
+    signer = {"position": (row.signer_position if row else "") or "", "fio": (row.director_name if row else "") or ""}
+    inv = from_upd(upd, k.onec_invoice_no, k.onec_invoice_date, signer)
+    if not inv["number"] or not inv["date"]:
+        raise InvoiceXmlError(409, "Нет номера или даты счёта из 1С — XML счёта собирается после того, как бухгалтер внесла счёт")
+    gross = round(sum(float(x["gross"]) for x in inv["lines"]), 2)
     if k.onec_gross is not None and abs(gross - float(k.onec_gross)) > 0.01:
-        raise InvoiceXmlError(409, f"Сумма строк {gross:.2f} не совпадает с суммой счёта 1С {float(k.onec_gross):.2f} — "
+        raise InvoiceXmlError(409, f"Сумма строк УПД 1С {gross:.2f} не совпадает с суммой счёта 1С {float(k.onec_gross):.2f} — "
                                    "XML не собираем, чтобы в Диадок не ушёл счёт с другой суммой")
-    upd = _upd_parties(db, m, k)
-    b = (upd or {}).get("seller", {}) or {}
-    bank = b.get("bank")
-    if not (bank and bank.get("account") and bank.get("bik") and bank.get("corr")) and seller.get("first_bank") is not None:
-        fb = seller["first_bank"]
-        bank = {"account": fb.rs, "bik": fb.bik, "corr": fb.ks, "name": fb.bank_name}
-    row = seller["row"]
-    c, a = card.get("contract") or {}, card.get("annex") or {}
-    inv_no, inv_date = k.onec_invoice_no, k.onec_invoice_date
-    purpose = (f"Оплата по счёту № {inv_no} от {_d(inv_date)}" if inv_no and inv_date else "Оплата") + \
-        (f" по {a['number']}" if a.get("number") else "") + \
-        (f" к договору № {c['number']} от {_d(c['date'])}" if c.get("number") and c.get("date") else "") + \
-        f", в т.ч. НДС {_m(sum(float(x['vat']) for x in lines))} руб."
-    inv = {
-        "number": inv_no or "", "date": inv_date,
-        "seller": {"name": row.name, "inn": row.inn, "kpp": row.kpp, "address": row.address, "edo_id": row.edo_id, "bank": bank,
-                   "signer": {"position": row.signer_position or "", "fio": row.director_name or ""}},
-        "buyer": {k_: buyer.get(k_) for k_ in ("name", "inn", "kpp", "address", "edo_id")},
-        "basis": {"name": "Договор", "number": c.get("number"), "date": c.get("date")} if c.get("number") and c.get("date") else None,
-        "purpose": purpose,
-        "lines": [{"name": x.get("service") or "Услуга", "net": x["net"], "vat_rate": x.get("vat_rate"), "vat": x["vat"],
-                   "gross": x["gross"]} for x in lines],
-    }
+    inv["seller"]["edo_id"], inv["buyer"]["edo_id"] = seller.get("edo_id"), buyer.get("edo_id")
+    bank = inv["seller"].get("bank") or {}
+    if not bank.get("corr"):
+        # корр. счёта в УПД нет — берём его из НАШЕЙ записи того же расчётного счёта; другой счёт не подставляем (ревью 13.11.2026)
+        from app.models import CounterpartyBankAccount
+        row_b = (db.query(CounterpartyBankAccount).filter_by(counterparty_id=row.id, rs=bank.get("account")).first()
+                 if row is not None and bank.get("account") else None)
+        if row_b is None and not bank.get("account") and seller.get("first_bank") is not None:
+            row_b = seller["first_bank"]
+        if row_b is not None:
+            inv["seller"]["bank"] = {"account": row_b.rs, "bik": row_b.bik, "corr": row_b.ks, "name": row_b.bank_name}
     try:
         return build(inv, now)
     except (ValueError, KeyError, TypeError) as e:     # кривая дата или сумма в данных — отказ, а не падение архива (ревью)
         raise InvoiceXmlError(409, f"Данные счёта не собрались в XML: {e}") from None
+
+
+def from_upd(upd: Optional[dict], number, date, signer: dict) -> dict:
+    """Счёт из XML УПД 1С (13.11.2026, владелец: «пдф — наш счёт, xml — они должны совпадать»): строки, наименования услуг,
+    стороны, адреса, банк и договор — ровно как в документе 1С; номер и дата — счёта 1С (то, что внесла бухгалтер)."""
+    if not upd or not upd.get("lines"):
+        raise InvoiceXmlError(409, "Нет XML УПД из 1С у комплекта — счёт собирается по нему, чтобы совпасть с документом 1С. "
+                                   "Загрузите XML УПД в «Закрывающих документах»")
+    s_, b_ = dict(upd.get("seller") or {}), dict(upd.get("buyer") or {})
+    vat = sum(float(x["vat"]) for x in upd["lines"])
+    tail = f", в т.ч. НДС {_m(vat).replace('.', ',')} руб." if vat else ", без НДС"
+    return {
+        "number": number or "", "date": date,
+        "seller": {**s_, "edo_id": None, "signer": signer},
+        "buyer": {**b_, "edo_id": None},
+        "basis": upd.get("basis"),
+        "purpose": f"Оплата по счёту № {number} от {_d(date)}{tail}" if number and date else "Оплата",
+        "lines": upd["lines"],
+    }

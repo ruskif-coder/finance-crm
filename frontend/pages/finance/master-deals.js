@@ -22,6 +22,7 @@ import { NoAccessScreen, PortalPopover, MONO, UI } from '@/components/salesTable
 import ActionCell from '@/components/master/registry/ActionCell'
 import Chips from '@/components/master/registry/Chips'
 import ChannelChip from '@/components/master/registry/ChannelChip'
+import CopyCode from '@/components/CopyCode'
 import ExpandedRow from '@/components/master/registry/ExpandedRow'
 import StatusBar from '@/components/master/registry/StatusBar'
 import { CAPS, KEEP } from '@/components/master/registry/kit'
@@ -194,10 +195,13 @@ export default function MasterDealsRegistry() {
                     <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{monthLabel(r.period)}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                       {/* Три строки — номер, дата, контрагент (владелец 07.11.2026: дата договора обрезалась многоточием) */}
-                      <span title={r.contract?.number || ''} style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        № {r.contract?.number || '—'}</span>
+                      {/* номер и дата договора копируются по клику, строка при этом не раскрывается (владелец 12.11.2026) */}
+                      <CopyCode text={r.contract?.number} swap
+                        style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        № {r.contract?.number || '—'}</CopyCode>
                       {!!r.contract?.date && (
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>от {fmtDate(r.contract.date)}</span>)}
+                        <CopyCode text={fmtDate(r.contract.date)} swap style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          от {fmtDate(r.contract.date)}</CopyCode>)}
                       <span title={r.payer ? `Контрагент: ${r.counterparty || '—'}\nПлательщик: ${r.payer}` : (r.counterparty || '')}
                         style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party}</span>
                     </span>

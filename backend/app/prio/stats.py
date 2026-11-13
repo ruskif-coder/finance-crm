@@ -6,8 +6,9 @@
 снимку того же дня; в факт РК (`ad_campaign_stat`, источник `prio`) идёт последний снимок — апсертом, как у DSP.
 Отрицательная дельта (система уменьшила день) — не отрицательный день: факт = снимок, а в отчёт — «уменьшилось».
 
-Формат ответа `stats-all-summary` в доке не описан — разбор терпимый (ищет camp_id и показы/клики под разными именами);
-сверить на первой пробе с токеном."""
+Формат ответа сверен пробой с прода 13.11.2026: `{ok, date_start, date_end, antifraud, stats: [{camp_id, site_id, site_name,
+product_name, source, event, count, users}]}` — строка на кампанию × источник (search/catalog/context) × событие (imp/clk).
+До 12.11 `camp_id` в строках не было — разработчик добавил по нашей просьбе."""
 import logging
 import sys
 from datetime import date, datetime, timedelta
@@ -38,8 +39,7 @@ def _num(d: dict, keys) -> Optional[int]:
     return None
 
 
-def parse(body: Any) -> dict:
-    """Ответ → {camp_id: {"shows", "clicks", "by_type"}}. Список строк или словарь по camp_id — оба вида."""
+def _items(body: Any) -> list:
     if isinstance(body, dict):
         items = body.get("stats") or body.get("campaigns") or body.get("data") or body.get("items")
         if items is None:
@@ -48,18 +48,51 @@ def parse(body: Any) -> dict:
         items = body
     if isinstance(items, dict):                         # {"stats": {"123": {...}}} — словарь по camp_id вместо списка
         items = [dict(v, camp_id=k) for k, v in items.items() if isinstance(v, dict) and str(k).isdigit()]
-    out = {}
-    for it in items or []:
-        if not isinstance(it, dict) or it.get("camp_id") is None:
+    return [it for it in items or [] if isinstance(it, dict) and it.get("camp_id") is not None]
+
+
+def _long(out: dict, it: dict) -> bool:
+    """Строка настоящего формата (проба 13.11.2026): кампания × источник × событие, значение — `count`. True — разобрана."""
+    ev = str(it.get("event") or "").lower()
+    kind = "shows" if ev in _SHOW else "clicks" if ev in _CLICK else None
+    val = _num(it, ("count", "value"))
+    if kind is None or val is None:
+        return False
+    acc = out.setdefault(int(it["camp_id"]), {"shows": 0, "clicks": 0, "by_type": {}})
+    acc[kind] += val
+    src = str(it.get("source") or "").lower()
+    if src:
+        t = acc["by_type"].setdefault(src, {"shows": 0, "clicks": 0})
+        t[kind] += val
+    return True
+
+
+def _wide(out: dict, it: dict) -> None:
+    """Строка с показами и кликами полями (так формат описывали до пробы) — оставлено на случай смены формата обратно."""
+    by = {t: {"shows": _num(it[t], _SHOW), "clicks": _num(it[t], _CLICK)} for t in _TYPES if isinstance(it.get(t), dict)}
+    shows, clicks = _num(it, _SHOW), _num(it, _CLICK)
+    if shows is None and by:
+        shows = sum(v["shows"] or 0 for v in by.values())
+    if clicks is None and by:
+        clicks = sum(v["clicks"] or 0 for v in by.values())
+    out[int(it["camp_id"])] = {"shows": shows or 0, "clicks": clicks or 0, "by_type": by or None}
+
+
+def parse(body: Any) -> dict:
+    """Ответ → {camp_id: {"shows", "clicks", "by_type"}}. Настоящий формат — длинный (`event` + `count`, 13.11.2026);
+    широкий (показы/клики полями) тоже понимается. Тестовая площадка `site_id: 0` («supertest», 31.10.2026: 34 354 клика)
+    отбрасывается. Строка длинного формата с незнакомым событием в итог не попадает — `parse_strict` назовёт это сбоем."""
+    out: dict = {}
+    for it in _items(body):
+        if it.get("site_id") in (0, "0"):
             continue
-        by = {t: {"shows": _num(it[t], _SHOW), "clicks": _num(it[t], _CLICK)} for t in _TYPES if isinstance(it.get(t), dict)}
-        shows = _num(it, _SHOW)
-        clicks = _num(it, _CLICK)
-        if shows is None and by:
-            shows = sum(v["shows"] or 0 for v in by.values())
-        if clicks is None and by:
-            clicks = sum(v["clicks"] or 0 for v in by.values())
-        out[int(it["camp_id"])] = {"shows": shows or 0, "clicks": clicks or 0, "by_type": by or None}
+        if "event" in it:
+            _long(out, it)
+        else:
+            _wide(out, it)
+    for v in out.values():
+        if v.get("by_type") == {}:
+            v["by_type"] = None
     return out
 
 
@@ -79,9 +112,11 @@ def parse_strict(body: Any) -> dict:
     Формат `stats-all-summary` в доке не описан, разбор угадывает. Незнакомый вид раньше давал пустой результат и «успешный»
     прогон: факт не писался, автостоп по плану молча не работал, тревоги не было."""
     got = parse(body)
-    if not got and _has_payload(body):
+    ours = [it for it in _items(body) if it.get("site_id") not in (0, "0")]
+    bad = [it for it in ours if "event" in it and not _long({}, it)]      # незнакомое событие или нет `count` (13.11.2026)
+    if bad or (not got and _has_payload(body) and (ours or not _items(body))):
         from app.prio.client import PrioApiError
-        raise PrioApiError(f"ответ stats-all-summary не разобран (формат изменился?): {str(body)[:300]}")
+        raise PrioApiError(f"ответ stats-all-summary не разобран (формат изменился?): {str(bad[:2] or body)[:300]}")
     return got
 
 

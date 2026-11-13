@@ -201,3 +201,78 @@ def parties(content: bytes) -> dict:
     """{seller, buyer} из XML УПД 1С (или архива ЭДО). Сверку с нашими реквизитами делает `requisites.diff`."""
     _, sf = _root(content)
     return {"seller": _party(_find(sf, "СвПрод")), "buyer": _party(_find(sf, "СвПокуп"))}
+
+
+def _addr_text(adr) -> Optional[str]:
+    """Адрес строкой: АдрИнф — как есть; структурный (АдрГАР/АдрРФ) — индекс, регион, район, улица, дом, помещения."""
+    inf = _find(adr, "АдрИнф")
+    if inf is not None:
+        return _attr(inf, "АдрТекст")
+    parts = []
+    for e in adr.iter():
+        tag, v = _local(e.tag), None
+        if tag in ("АдрГАР", "АдрРФ"):
+            v = e.get("Индекс")
+        elif tag == "НаимРегион":
+            v = (e.text or "").strip()
+        elif tag in ("МуниципРайон", "ГородСелПоселен", "НаселенПункт", "ЭлПланСтруктур"):
+            v = e.get("Наим")
+        elif tag in ("ЭлУлДорСети",):
+            v = " ".join(x for x in (e.get("Тип"), e.get("Наим")) if x)
+        elif tag in ("Здание", "ПомещЗдания", "ПомещКвартиры"):
+            v = " ".join(x for x in (e.get("Тип"), e.get("Номер")) if x)
+        if v:
+            parts.append(v)
+    return ", ".join(parts) or None
+
+
+def _addr_xml(adr) -> Optional[str]:
+    """Адрес из УПД как есть (без пространства имён) — счёт несёт ровно адрес 1С; годность проверит схема счёта."""
+    kids = list(adr)
+    if not kids:
+        return None
+    el = kids[0]
+    for e in el.iter():
+        e.tag = _local(e.tag)
+        if e.tag == "Регион":                # УПД 5.03 — «Регион», схема счёта КНД 1110379 — «КодРегион» (13.11.2026)
+            e.tag = "КодРегион"
+    return ET.tostring(el, encoding="unicode")
+
+
+_CONTRACT_HEAD = re.compile(r"^\s*(по\s+)?договор\w*\s*(№\s*)?", re.I)
+_NUMBER_HEAD = re.compile(r"^\s*(по\s+)?(договор\w*)?\s*№?\s*", re.I)      # «№ 12», «Договор РМ-1», «по Договору № 12»
+
+
+def _contract_basis(root) -> Optional[dict]:
+    """Договор-основание УПД: основание, чьё наименование НАЧИНАЕТСЯ с «Договор» (не «Приложение № 3 к договору»);
+    номер — без «Договор», «по Договору», «№» (ревью 13.11.2026)."""
+    for e in _all(root, "ОснПер"):
+        name, num = (_attr(e, "НаимОсн", "РеквНаимДок") or ""), (_attr(e, "НомОсн", "РеквНомерДок") or "")
+        if _CONTRACT_HEAD.match(name) or (not name and _CONTRACT_HEAD.match(num)):
+            return {"name": "Договор", "number": _NUMBER_HEAD.sub("", num).strip(), "date": _attr(e, "ДатаОсн", "РеквДатаДок")}
+    return None
+
+
+def upd_document(content: bytes) -> dict:
+    """Всё, что нужно счёту на оплату из XML УПД 1С (13.11.2026: счёт должен совпадать с документом 1С): стороны с адресом
+    (текстом и исходным элементом), банк продавца, строки с наименованием, суммами и ставкой, договор-основание."""
+    root, sf = _root(content)
+    out = {}
+    for key, tag in (("seller", "СвПрод"), ("buyer", "СвПокуп")):
+        el = _find(sf, tag)
+        p = _party(el) or {}
+        adr = _find(el, "Адрес") if el is not None else None
+        p["address"] = _addr_text(adr) if adr is not None else None
+        p["address_xml"] = _addr_xml(adr) if adr is not None else None
+        out[key] = p
+    lines = []
+    for e in _all(root, "СведТов"):
+        vat_el = _find(e, "СумНал")
+        vat_val = next((x.text for x in vat_el.iter() if _local(x.tag) == "СумНал" and x is not vat_el and x.text), None)             if vat_el is not None else None
+        lines.append({"name": e.get("НаимТов") or "", "net": float(e.get("СтТовБезНДС") or 0),
+                      "gross": float(e.get("СтТовУчНал") or 0), "vat": float(vat_val) if vat_val else 0.0,
+                      "rate_text": (e.get("НалСт") or "").strip() or "без НДС",
+                      "qty": e.get("КолТов"), "price": e.get("ЦенаТов")})
+    out["lines"] = lines
+    out["basis"] = _contract_basis(root)
+    return out

@@ -22,6 +22,9 @@ log = logging.getLogger("finance.prio")
 router = APIRouter()
 VIEW = require_permission("sales_registry", "view")
 EDIT = require_permission("sales_registry", "edit")
+# Площадки в сервисе — вкладка «Приоритезация» админ панели трафика, на её праве (владелец 13.11.2026)
+SITES_VIEW = require_permission("traffic_catalog", "view")
+SITES_EDIT = require_permission("traffic_catalog", "edit")
 
 
 def _err(e: S.PrioError):
@@ -39,6 +42,31 @@ def prio_publishers(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     rows = db.execute(text("""SELECT id, name, prio_site_id FROM sales_publishers
                                WHERE is_active AND coalesce(status, '') <> 'АРХИВ' ORDER BY name""")).all()
     return [{"id": r[0], "name": r[1], "site_id": r[2]} for r in rows]
+
+
+class SiteIn(BaseModel):
+    site_id: Optional[int] = None            # пусто — отключить площадку от приоритезации
+
+
+@router.get("/sites")
+def prio_sites(db: Session = Depends(get_db), user: User = Depends(SITES_VIEW)):
+    """Площадки и их номер в системе приоритезации: подключена = номер задан."""
+    from app.prio import sites as PS
+    return PS.list_sites(db)
+
+
+@router.put("/sites/{publisher_id}")
+def prio_site_set(publisher_id: int, payload: SiteIn, db: Session = Depends(get_db), user: User = Depends(SITES_EDIT)):
+    from app.prio import sites as PS
+    try:
+        out = PS.set_site(db, publisher_id, payload.site_id)
+    except S.PrioError as e:
+        db.rollback(); _err(e)
+    db.commit()
+    log_action(db, user, "prio_site_id", "publisher", publisher_id,
+               f"{out['name']}: ID в системе приоритезации {out['was'] if out['was'] is not None else '—'} → "
+               f"{out['now'] if out['now'] is not None else '— (отключена)'}")
+    return next((r for r in PS.list_sites(db) if r["id"] == publisher_id), None)
 
 
 class CommonIn(BaseModel):

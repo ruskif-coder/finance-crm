@@ -27,6 +27,7 @@ import SiteMonitor from '@/components/traffic/SiteMonitor'
 import ExchangeLogs from '@/components/traffic/ExchangeLogs'
 import SiteScript from '@/components/traffic/SiteScript'
 import PublisherRules from '@/components/traffic/PublisherRules'
+import PrioSites from '@/components/traffic/PrioSites'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
@@ -300,7 +301,7 @@ export default function TrafficCatalog() {
         <div style={{ display: 'flex', gap: 6, marginBottom: 18,
           borderBottom: '1px solid var(--border-card)' }}>
           {[['blocks', 'Настройка блоков'], ['balancer', 'Балансировщик'], ['script', 'Скрипт'],
-            ['sites', 'Доступность сайтов'], ['logs', 'Логи'],
+            ['sites', 'Доступность сайтов'], ['logs', 'Логи'], ['prio', 'Приоритезация'],
             // «Особенности площадок» — своё право («трафик админ», 29.09.2026).
             ...(rights.rulesView ? [['rules', 'Особенности площадок']] : [])].map(([k, l]) => (
             <div key={k} onClick={() => setAdminTab(k)} style={{
@@ -317,6 +318,8 @@ export default function TrafficCatalog() {
         {/* Логи обмена с DSP и Weborama: сделка + площадка + креатив (01.10.2026). */}
         {adminTab === 'logs' && <ExchangeLogs />}
         {adminTab === 'script' && <SiteScript mayEdit={mayEdit} />}
+        {/* Площадки в сервисе приоритезации и их номер (13.11.2026). */}
+        {adminTab === 'prio' && <PrioSites mayEdit={mayEdit} />}
         {adminTab === 'rules' && rights.rulesView && <PublisherRules mayEdit={!!rights.rulesEdit} />}
 
         {adminTab === 'blocks' && (<>

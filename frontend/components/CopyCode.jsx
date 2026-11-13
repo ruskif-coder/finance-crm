@@ -9,7 +9,8 @@
    всплывает ли клик. */
 import { useState } from 'react'
 
-export default function CopyCode({ text, style, children }) {
+/** `swap` — «скопировано» на месте текста, а не справа: для узких колонок с обрезкой (реестр мастер-сделок, 12.11.2026). */
+export default function CopyCode({ text, style, children, swap = false }) {
   const [done, setDone] = useState(false)
   if (!text) return children || null
   const copy = async (e) => {
@@ -26,8 +27,8 @@ export default function CopyCode({ text, style, children }) {
       onKeyDown={e => { if (e.key === 'Enter') copy(e) }}
       title={done ? 'Скопировано' : 'Скопировать'}
       style={{ cursor: 'copy', position: 'relative', ...style }}>
-      {children || text}
-      {done && (
+      {swap && done ? <span style={{ color: 'var(--income-fg)' }}>скопировано</span> : (children || text)}
+      {done && !swap && (
         <span style={{ position: 'absolute', left: '100%', top: '50%',
           transform: 'translate(6px, -50%)', whiteSpace: 'nowrap', fontSize: 10.5,
           fontWeight: 600, color: 'var(--income-fg)', pointerEvents: 'none' }}>
