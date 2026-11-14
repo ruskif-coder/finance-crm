@@ -98,6 +98,22 @@ def flight_label(months: list) -> str:
                      for a, b in groups)
 
 
+def brand_label(line, names) -> str:
+    """Подпись бренда строки плана в книге: «Бренд · комментарий к бренду» (`brief.brand_comment`). Один бренд бывает несколькими
+    строками плана (разная ЦА — «считаем отдельными строками»), и без комментария дубли в книге не различить (владелец 14.11.2026).
+    Многострочный комментарий — первая строка."""
+    name = names["brand"].get(line.brand_id) or "Без бренда"
+    brief = line.brief if isinstance(getattr(line, "brief", None), dict) else {}
+    note = next((x.strip() for x in str(brief.get("brand_comment") or "").splitlines() if x.strip()), "")
+    return f"{name} · {note}" if note else name
+
+
+def band_caps(label: str) -> str:
+    """Полоса бренда капсом — только сам бренд; комментарий после « · » остаётся как написан (14.11.2026)."""
+    name, sep, note = (label or "").partition(" · ")
+    return f"{name.upper()}{sep}{note}"
+
+
 def month_items(line, m: int) -> list:
     """Услуги месяца в нормализованном виде.
 
@@ -223,7 +239,7 @@ def collect(db, lines, svc, add, names, verified=None) -> dict:
     """
     brands, extras, months_on = [], [], set()
     for line in lines:
-        name = names["brand"].get(line.brand_id) or "Без бренда"
+        name = brand_label(line, names)
         services: dict = {}          # позиция → {cost[12], vol[12]}
         for m in range(12):
             items = month_items(line, m)
@@ -322,13 +338,26 @@ KPI_HEAD = [("brand", 2, "Бренд", "@"), ("flights", 3, "Флайты", "@")
 def _kpi_table(ws, r, brands, year_ref, vat_rate):
     """Таблица показателей по брендам. Возвращает нижнюю строку (ИТОГО)."""
     sheet, cols, groups = year_ref or (None, {}, [])
-    # Ключ регистронезависимый: полоса бренда на листе закупки пишется капсом
-    # (капсом), а в сводке бренд стоит как в справочнике (обычным регистром).
-    by_brand = {name.casefold(): (a, b) for name, a, b in groups}
+    # Ключ регистронезависимый: полоса бренда на листе закупки пишется капсом, а в сводке бренд стоит как в справочнике.
+    # Диапазоны — ОЧЕРЕДЬЮ на название: один бренд может стоять несколькими строками плана (разная ЦА), и n-я строка бренда
+    # в сводной — n-й его блок на листе закупки. Словарём «название → диапазон» все строки брали ПОСЛЕДНИЙ блок (прод 13.11.2026).
+    from collections import defaultdict, deque
+    queue: dict = defaultdict(deque)
+    for gname, a, b in groups:
+        queue[gname.casefold()].append((a, b))
+    taken: dict = {}
+
+    def take(idx, name):
+        if idx not in taken:
+            q = queue.get((name or "").casefold())
+            taken[idx] = q.popleft() if q else None
+        return taken[idx]
+
+    cur = {"i": None, "name": None}
 
     def s(field, name):
         """SUM по строкам бренда на листе закупки. Нет листа или колонки — None."""
-        col, rng = cols.get(field), by_brand.get((name or "").casefold())
+        col, rng = cols.get(field), take(cur["i"], name)
         if not (sheet and col and rng):
             return None
         return f"SUM('{sheet}'!{col}{rng[0]}:{col}{rng[1]})"
@@ -341,10 +370,11 @@ def _kpi_table(ws, r, brands, year_ref, vat_rate):
     ws.row_dimensions[r].height = 41.4
 
     first = r + 1
-    for b in brands:
+    for bi, b in enumerate(brands):
         r += 1
         ws.row_dimensions[r].height = 26
         name = b["name"]
+        cur["i"] = bi
         active = sorted({m for sv in b["services"] for m in range(12) if sv["cost"][m]})
         vol = sum(sum(sv["vol"]) for sv in b["services"] if sv.get("is_cpm"))
         cost = sum(sum(sv["cost"]) for sv in b["services"])
@@ -385,7 +415,10 @@ def _kpi_table(ws, r, brands, year_ref, vat_rate):
         return f"=SUM({get_column_letter(c)}{first}:{get_column_letter(c)}{last})"
 
     def all_rows(field):
-        parts = [s(field, b["name"]) for b in brands]
+        parts = []
+        for bi, b in enumerate(brands):
+            cur["i"] = bi
+            parts.append(s(field, b["name"]))
         parts = [p for p in parts if p]
         return "+".join(parts) if parts else None
 
@@ -505,7 +538,7 @@ def _matrix(ws, top, brands):
     for b in brands:
         # Полоса бренда: белая с тёмно-синим капсом. Акцент здесь минимальный —
         # выделены подытоги, а не заголовки, иначе рябит.
-        _span(ws, r, C_NAME, C_TOTAL, b["name"].upper(),
+        _span(ws, r, C_NAME, C_TOTAL, band_caps(b["name"]),
               font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
         r += 1
         cost_rows = []
@@ -667,7 +700,7 @@ def sheet_brief(ws, plan, data, names):
     for b in data["brands"]:
         br = b["line"].brief or {}
         tg = br.get("targeting") or {}
-        _span(ws, r, 1, 2, b["name"].upper(), font=_f(11, True, NAVY_700), fill=GREY_BG,
+        _span(ws, r, 1, 2, band_caps(b["name"]), font=_f(11, True, NAVY_700), fill=GREY_BG,
               align=LEFT, border=UNDERLINE)
         ws.row_dimensions[r].height = 15
         r += 1
@@ -793,7 +826,7 @@ def sheet_metrics(ws, groups, cols):
         R = METRICS_FIRST + i
         ws.row_dimensions[R].height = METRICS_ROW_H
         gross, rev = f"C{R}", f"D{R}"
-        vals = [name.upper(),
+        vals = [band_caps(name),
                 f"={rng('gross', a, b)}",
                 f"={rng('revenue', a, b)}",
                 # ROI и CPO/CPM повторяют формулы строк таблицы: ROI считается от
@@ -841,7 +874,7 @@ def year_rows(lines, svc, add, names, verified=None) -> tuple:
     """
     rows, extras = [], []
     for line in lines:
-        brand = names["brand"].get(line.brand_id) or "Без бренда"
+        brand = brand_label(line, names)
         chunk, ex_chunk = [], []
         for m in range(12):
             items = month_items(line, m)
@@ -854,11 +887,11 @@ def year_rows(lines, svc, add, names, verified=None) -> tuple:
             chunk.extend(r)
             ex_chunk.extend(e)
         if chunk:
-            rows.append({"_band": brand.upper()})
+            rows.append({"_band": band_caps(brand)})
             rows.extend(chunk)
             rows.append({"_subtotal": f"Итого · {brand} за год", "_kind": "brand"})
         if ex_chunk:
-            extras.append({"_band": brand.upper()})
+            extras.append({"_band": band_caps(brand)})
             extras.extend(ex_chunk)
     return rows, extras
 
@@ -1023,6 +1056,43 @@ def _render_plain(ws, full, rows, extras):
     return ws.title, cols, groups
 
 
+def _insert_rows_keep_merges(ws, idx: int, amount: int, above_upto: int | None = None) -> None:
+    """insert_rows, который двигает и объединения, и высоты строк ниже точки вставки. Голый `insert_rows` openpyxl не трогает
+    ни то ни другое: значения строк медиаплана ложились в «хвосты» объединений шаблона и молча не писались — январь BINNO 2027
+    (11 брендов, блок показателей раздвигался) выгружался нулями (прод 13.11.2026). Пара к `_drop_rows`."""
+    if amount <= 0:
+        return
+    moved = []
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row >= idx:
+            moved.append((mr.min_row, mr.max_row, mr.min_col, mr.max_col))
+            ws.unmerge_cells(str(mr))
+    heights = {r: d.height for r, d in ws.row_dimensions.items() if r >= idx and d.height is not None}
+    ws.insert_rows(idx, amount)
+    for r in heights:
+        ws.row_dimensions[r].height = None
+    for r, h in heights.items():
+        ws.row_dimensions[r + amount].height = h
+    # Новые строки — без значений, но с оформлением: голые строки давали белые пустоты на сером фоне листа (прод 14.11.2026).
+    # Колонки до `above_upto` (блок показателей) — как строка над вставкой; правее — как строка под ней, то есть фон листа:
+    # строка над вставкой там — низ блока «ИТОГО» в белой рамке, и копия тянула её вниз «засветом».
+    from copy import copy
+    below = idx + amount
+    for k in range(amount):
+        if idx - 1 >= 1:
+            ws.row_dimensions[idx + k].height = ws.row_dimensions[idx - 1].height
+        for c in range(1, ws.max_column + 1):
+            src = idx - 1 if above_upto is None or c <= above_upto else below
+            if src < 1:
+                continue
+            s_cell, d = ws.cell(src, c), ws.cell(idx + k, c)
+            if s_cell.has_style:
+                d.font, d.fill, d.border = copy(s_cell.font), copy(s_cell.fill), copy(s_cell.border)
+                d.alignment, d.number_format = copy(s_cell.alignment), s_cell.number_format
+    for r1, r2, c1, c2 in moved:
+        ws.merge_cells(start_row=r1 + amount, end_row=r2 + amount, start_column=c1, end_column=c2)
+
+
 def _render_with_metrics(ws, full, rows, extras):
     """Отрисовать лист закупки и заменить левую часть шапки блоком показателей.
 
@@ -1033,7 +1103,7 @@ def _render_with_metrics(ws, full, rows, extras):
     n = sum(1 for it in rows if isinstance(it, dict) and it.get("_band"))
     extra = metrics_extra_rows(n)
     if extra:
-        ws.insert_rows(METRICS_FIRST + METRICS_SLOTS, extra)
+        _insert_rows_keep_merges(ws, METRICS_FIRST + METRICS_SLOTS, extra, above_upto=METRICS_LAST_COL)
     sink = []
     render_mp_sheet(ws, full, rows, extras, row_hook=collecting_hook(sink))
     if sink:
@@ -1108,7 +1178,7 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
             r, e = _parts(line, m, svc, add, items, verified)
             if not (r or e):
                 continue
-            name = names["brand"].get(line.brand_id) or "Без бренда"
+            name = brand_label(line, names)
             if r:
                 rows.append({"_band": name})     # полоса-разделитель бренда
                 rows.extend(r)

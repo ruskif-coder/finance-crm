@@ -295,3 +295,104 @@ def test_parts_replaces_only_the_checked_deal_of_a_split_month():
     assert [r["position"] for r in rows] == ["еФарм", "Polza"]
     assert rows[0]["discount"] == 0.15      # из проверенного МП
     assert rows[1]["discount"] == 0         # из плана
+
+
+def test_kpi_table_keeps_each_line_of_a_repeated_brand_on_its_own_block():
+    """Прод 13.11.2026 (BINNO 2027): один бренд несколькими строками плана (разная ЦА — «считаем отдельными строками»).
+    Сводная брала словарь «название → диапазон», и все строки бренда ссылались на блок ПОСЛЕДНЕЙ — суммы и ИТОГО врали.
+    n-я строка бренда в сводной — n-й блок этого бренда на листе закупки."""
+    from app.year_mp_export import _kpi_table
+
+    wb = Workbook()
+    ws = wb.active
+    svc = [{"cost": [100] + [0] * 11, "vol": [1000] + [0] * 11, "is_cpm": True}]
+    brands = [{"name": "Максилак", "services": svc}, {"name": "Максилак", "services": svc}, {"name": "Необутин", "services": svc}]
+    cols = {"net_nodisc": "N", "disc_rub": "P", "net": "Q", "gross": "S", "clicks": "X", "checks": "AC", "revenue": "AF"}
+    year_ref = ("Годовой МП", cols, [("МАКСИЛАК", 13, 13), ("МАКСИЛАК", 16, 16), ("НЕОБУТИН", 19, 19)])
+
+    _kpi_table(ws, 10, brands, year_ref, 0.22)
+
+    assert ws["F11"].value == "=SUM('Годовой МП'!N13:N13)"
+    assert ws["F12"].value == "=SUM('Годовой МП'!N16:N16)"
+    assert ws["F13"].value == "=SUM('Годовой МП'!N19:N19)"
+    total_cpc = ws["L14"].value          # ИТОГО: клики — по блоку каждой строки, а не трижды по последнему
+    assert "X13:X13" in total_cpc and "X16:X16" in total_cpc and "X19:X19" in total_cpc
+
+
+def test_metrics_rows_insert_moves_the_merges_below():
+    """Прод 13.11.2026: в январе 11 брендов — под блок показателей вставлялись строки простым insert_rows, объединения
+    шаблона ниже не сдвигались, и значения C..S строк медиаплана ложились в «хвосты» объединений — январь выгружался нулями."""
+    from app.year_mp_export import _insert_rows_keep_merges
+
+    wb = Workbook()
+    ws = wb.active
+    ws.merge_cells("C20:H20")       # ниже точки вставки — должно сдвинуться
+    ws.merge_cells("B3:D5")         # выше — на месте
+    ws.row_dimensions[20].height = 33
+
+    _insert_rows_keep_merges(ws, 17, 6)
+
+    merged = {str(r) for r in ws.merged_cells.ranges}
+    assert merged == {"B3:D5", "C26:H26"}
+    ws["D20"] = "значение"          # бывший хвост объединения теперь обычная ячейка
+    assert ws["D20"].value == "значение"
+    assert ws.row_dimensions[26].height == 33
+
+
+def test_repeated_brand_is_labeled_with_its_comment():
+    """Один бренд несколькими строками плана (разная ЦА) — в книге различим по комментарию к бренду (`brief.brand_comment`,
+    владелец 14.11.2026). Без комментария — просто бренд; многострочный — первая строка."""
+    from types import SimpleNamespace
+    from app.year_mp_export import brand_label
+
+    names = {"brand": {7: "Максилак"}}
+    assert brand_label(SimpleNamespace(brand_id=7, brief={"brand_comment": "мамы с детьми"}), names) == "Максилак · мамы с детьми"
+    assert brand_label(SimpleNamespace(brand_id=7, brief={"brand_comment": "  "}), names) == "Максилак"
+    assert brand_label(SimpleNamespace(brand_id=7, brief=None), names) == "Максилак"
+    assert brand_label(SimpleNamespace(brand_id=7, brief={"brand_comment": "Ж 25-45\nвторая строка"}), names) == "Максилак · Ж 25-45"
+    assert brand_label(SimpleNamespace(brand_id=None, brief={}), names) == "Без бренда"
+    from app.year_mp_export import band_caps
+    assert band_caps("Максилак · мамы с детьми") == "МАКСИЛАК · мамы с детьми" and band_caps("Кагоцел") == "КАГОЦЕЛ"
+
+
+def test_inserted_metrics_rows_take_the_style_of_the_row_above():
+    """Прод 14.11.2026: при больше чем пяти брендах вставленные под блок показателей строки оставались без заливки — белые
+    пустоты на сером фоне листа. Колонки блока показателей берут оформление строки над точкой вставки."""
+    from openpyxl.styles import PatternFill
+    from app.year_mp_export import _insert_rows_keep_merges
+
+    wb = Workbook()
+    ws = wb.active
+    blue = PatternFill("solid", fgColor="DDE6F5")
+    for c in range(1, 9):
+        ws.cell(16, c).fill = blue
+
+    _insert_rows_keep_merges(ws, 17, 3, above_upto=8)
+
+    for r in (17, 18, 19):
+        assert ws.cell(r, 5).fill.fgColor.rgb == blue.fgColor.rgb
+        assert ws.cell(r, 5).value is None
+
+
+def test_inserted_rows_right_of_metrics_take_the_background_row_below():
+    """Прод 14.11.2026, второй заход: справа от показателей стоит блок «ИТОГО» (белые ячейки в рамке). Копия строки над
+    вставкой тянула его белую рамку вниз — «после стоимости с НДС белый засвет». Правее блока показателей новые строки
+    берут оформление строки ПОД вставкой — это фон листа."""
+    from openpyxl.styles import PatternFill, Border, Side
+    from app.year_mp_export import _insert_rows_keep_merges
+
+    wb = Workbook()
+    ws = wb.active
+    white, grey = PatternFill("solid", fgColor="FFFFFF"), PatternFill("solid", fgColor="EEF1F5")
+    thin = Side(style="thin")
+    for c in range(16, 20):
+        ws.cell(16, c).fill = white
+        ws.cell(16, c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        ws.cell(17, c).fill = grey
+
+    _insert_rows_keep_merges(ws, 17, 3, above_upto=8)
+
+    for r in (17, 18, 19):
+        assert ws.cell(r, 17).fill.fgColor.rgb == grey.fgColor.rgb
+        assert ws.cell(r, 17).border.left.style is None
+    assert ws.cell(20, 17).fill.fgColor.rgb == grey.fgColor.rgb
