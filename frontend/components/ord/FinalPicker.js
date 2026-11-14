@@ -15,6 +15,7 @@ import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import { CreatePanel, Field, PickRow, SelectField, Tag, useCreateForm } from './pickers'
 import { PAYMENT_TERM_CONDITIONS } from '../../lib/contractTerms'
+import { detailText } from '@/lib/loadError'
 
 export default function FinalPicker({ dealId, onDone, onClose }) {
   const [data, setData] = useState(null)
@@ -29,7 +30,7 @@ export default function FinalPicker({ dealId, onDone, onClose }) {
     setErr('')
     api.get(`/ord/deal/${dealId}/final-options`, auth())
       .then(r => setData(r.data))
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить договоры'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить договоры')))
   }
   useEffect(() => { load() }, [dealId])
 
@@ -38,7 +39,7 @@ export default function FinalPicker({ dealId, onDone, onClose }) {
     try {
       await api.put(`/ord/deal/${dealId}/final`, { contract_id: id }, auth())
       onDone()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось выбрать договор') }
+    } catch (e) { setErr(detailText(e, 'Не удалось выбрать договор')) }
   }
 
   const create = (d) => api.post(`/ord/deal/${dealId}/final`, {

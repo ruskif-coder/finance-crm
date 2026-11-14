@@ -15,6 +15,7 @@ import { downloadFile } from '@/lib/download'
 import { copyPrev, currentMonth, fmtK, fmtRub, fmtSigned, parseRub, pct, spreadBySeason, spreadEven, sumCells, toDate, typeRub } from '@/lib/salesPlan.mjs'
 import { todayMsk } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const cap = { fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const box = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16 }
@@ -87,13 +88,13 @@ export default function SalesPlanPage() {
   const load = useCallback(() => {
     const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил год — старый ответ приходил последним
     api.get('/sales-plan', { ...auth(), params: { year } }).then(r => { if (fresh()) { setData(r.data); setErr('') } })
-      .catch(e => { if (fresh()) setErr(e.response?.data?.detail || 'Не удалось загрузить план продаж') })
+      .catch(e => { if (fresh()) setErr(detailText(e, 'Не удалось загрузить план продаж')) })
   }, [year, latest])
   useEffect(() => { setData(null); setEdits({}); load() }, [load])
   useEffect(() => {
     setWeeks(null)
     api.get('/sales-plan/weeks', { ...auth(), params: { year } }).then(r => setWeeks(r.data.weeks))
-      .catch(e => { setWeeks([]); setMsg(e.response?.data?.detail || 'Не удалось загрузить прогноз по неделям') })
+      .catch(e => { setWeeks([]); setMsg(detailText(e, 'Не удалось загрузить прогноз по неделям')) })
   }, [year])
   useRefreshOnReturn(load, { enabled: !Object.keys(edits).length })
   // Прошлый год — для «по сезонности» и «как в прошлом году»: только в режиме «Цели»
@@ -102,7 +103,7 @@ export default function SalesPlanPage() {
     if (mode !== 'goals') return
     const fresh = latestPrev()
     api.get('/sales-plan', { ...auth(), params: { year: year - 1 } }).then(r => { if (fresh()) setPrev(r.data) })
-      .catch(e => { if (fresh()) { setPrev(null); setMsg(e.response?.data?.detail || `Не удалось загрузить ${year - 1} год — разложение по прошлому году недоступно`) } })
+      .catch(e => { if (fresh()) { setPrev(null); setMsg(detailText(e, `Не удалось загрузить ${year - 1} год — разложение по прошлому году недоступно`)) } })
   }, [mode, year, latestPrev])
 
   const canEdit = mayEdit && !!data?.can_edit
@@ -158,7 +159,7 @@ export default function SalesPlanPage() {
       if (items.some(i => i.amount != null && (Number.isNaN(i.amount) || i.amount < 0))) throw new Error('Цель — число в рублях, не меньше нуля')
       const r = await api.put('/sales-plan/targets', { year, items }, auth())
       setData(r.data); setEdits({}); setMsg(`сохранено: ${r.data.changed}`)
-    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Не удалось сохранить') }
+    } catch (e) { setMsg(detailText(e, e.message || 'Не удалось сохранить')) }
     setBusy(false)
   }
 
@@ -174,7 +175,7 @@ export default function SalesPlanPage() {
     try {
       const r = await api.post('/sales-plan/import', form, { ...auth(), params: { year }, headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       setImp(r.data)
-    } catch (e2) { setMsg(e2.response?.data?.detail || 'Не удалось прочитать файл') }
+    } catch (e2) { setMsg(detailText(e2, 'Не удалось прочитать файл')) }
   }
   const applyImport = async () => {
     setBusy(true)
@@ -182,7 +183,7 @@ export default function SalesPlanPage() {
       const items = imp.changes.map(c => ({ month: c.month, scope: c.scope, key_id: c.key_id || null, amount: c.now }))
       const r = await api.put('/sales-plan/targets', { year, items }, auth())
       setData(r.data); setEdits({}); setImp(null); setMsg(`загружено из Excel: ${r.data.changed}`)
-    } catch (e) { setMsg(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setMsg(detailText(e, 'Не удалось сохранить')) }
     setBusy(false)
   }
 

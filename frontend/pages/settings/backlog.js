@@ -19,6 +19,7 @@ import { getPermissions, can } from '../../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import safeHref from '@/lib/safeHref'
 import { fmtDateTime, fmtDate as fmtDateOnly } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 const SEVERITIES = ['низкая', 'средняя', 'высокая']
 const STATUSES = ['наблюдаем', 'подтвердилось', 'закрыто', 'не воспроизвелось']
@@ -28,7 +29,7 @@ const SEV_TONE = { 'высокая': 'var(--dot-overdue)', 'средняя': 'va
 const ST_TONE = { 'наблюдаем': 'var(--accent)', 'подтвердилось': 'var(--dot-overdue)',
                   'закрыто': 'var(--text-muted)', 'не воспроизвелось': 'var(--text-muted)' }
 
-const msg = e => e?.response?.data?.detail || e?.message || 'Ошибка'
+const msg = e => detailText(e, e?.message || 'Ошибка')
 const fmtDate = v => fmtDateOnly(v)
 const fmtDT = v => fmtDateTime(v, '')
 

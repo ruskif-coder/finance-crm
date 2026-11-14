@@ -37,7 +37,7 @@ function attach401(instance) {
       // 403 «нужно согласие»: без согласия на обработку ПДн сервер закрывает данные
       // (аудит 23.09.2026, 9.7). Ведём на вход — после входа экран покажет согласие.
       const needConsent = err.response?.status === 403
-        && err.response?.data?.detail === 'consent_required'
+        && err.response?.data?.detail === 'consent_required'  // detail-ok: сравнение, не показ
       if (typeof window !== 'undefined' && (err.response?.status === 401 || needConsent)) {
         const path = window.location.pathname
         if (path !== '/login' && !path.startsWith('/login')) {

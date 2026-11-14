@@ -14,6 +14,7 @@ import { fmtDate as fmtD } from '../../lib/dates'
 import safeHref from '../../lib/safeHref'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 import AnnexQuickEdit from './AnnexQuickEdit'
+import { detailText } from '@/lib/loadError'
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const num = (v) => parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.')) || 0
@@ -95,7 +96,7 @@ export function ExternalSignButton({ annex, defaultNo, defaultDate, onDone, auto
       else if (file) body.append('file', file)
       await api.post(`/annexes/${annex.id}/external`, body, auth())
       setOpen(false); if (onDone) onDone()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не получилось') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не получилось')) } finally { setBusy(false) }
   }
 
   const sum = f ? f.rows.reduce((a, r) => a + num(r.amount), 0) : 0

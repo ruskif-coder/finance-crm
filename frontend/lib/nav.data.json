@@ -131,10 +131,17 @@
       "href": "/accounts",
       "items": [
         {
-          "key": "dashboard",
+          "key": "deals",
           "label": "Дашборд",
-          "href": "/accounts/dashboard",
+          "href": "/accounts/deals",
           "perm": "accounts_dashboard"
+        },
+        {
+          "key": "dashboard",
+          "label": "Старый дашборд",
+          "href": "/accounts/dashboard",
+          "perm": "accounts_dashboard",
+          "menu": false
         },
         {
           "key": "mp",

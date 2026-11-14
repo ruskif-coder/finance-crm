@@ -8,6 +8,7 @@ import api, { auth } from '@/lib/api'
 import { fmtDateTime } from '@/lib/dates'
 import { grp } from '@/lib/salesFormat'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
 
 const ru = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('.') : '')
 
@@ -26,7 +27,7 @@ export default function WrLinkRow({ campaignId, link, mayEdit, onChange }) {
         : (res ? { text: res.note || `снято дней: ${res.days}, показов ${grp(res.shows)}` } : null))
       onChange?.(r.data.wr_link)
       setEdit(false)
-    } catch (e) { setMsg({ text: e?.response?.data?.detail || 'Не удалось', bad: true }) } finally { setBusy(false) }
+    } catch (e) { setMsg({ text: detailText(e, 'Не удалось'), bad: true }) } finally { setBusy(false) }
   }
   const save = () => call(() => api.put(`/traffic-dashboard/campaign/${campaignId}/wr-link`, { url: val.trim() || null }, auth()))
   const sync = () => call(() => api.post(`/traffic-dashboard/campaign/${campaignId}/wr-link/sync`, {}, auth()))

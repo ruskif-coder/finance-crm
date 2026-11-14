@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api, { auth } from '@/lib/http'
 import { downloadFile } from '@/lib/download'
+import { detailText } from '@/lib/loadError'
 
 /* Файлы брифа сделки: один компонент на все экраны, где бриф виден.
  *
@@ -46,7 +47,7 @@ export default function BriefFiles({ base, readOnly = false, disabled = false,
       await api.post(base, fd, auth())
       await load()
     } catch (e2) {
-      setErr(e2.response?.data?.detail || 'Не удалось прикрепить файл')
+      setErr(detailText(e2, 'Не удалось прикрепить файл'))
     } finally { setBusy(false) }
   }
 
@@ -54,7 +55,7 @@ export default function BriefFiles({ base, readOnly = false, disabled = false,
     if (!window.confirm(`Снять файл «${f.name}»?`)) return
     setErr('')
     try { await api.delete(`${base}/${f.id}`, auth()); await load() }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось снять файл') }
+    catch (e) { setErr(detailText(e, 'Не удалось снять файл')) }
   }
 
   // Имя задаёт сервер (Content-Disposition), своё не подставляем — общее правило

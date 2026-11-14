@@ -13,6 +13,7 @@ import BrandMarkingDialog, { saveBrandMarking } from '@/components/ord/BrandMark
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ValuePopover from '@/components/ValuePopover'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', legal_name: '', website: '', inn: '' }
@@ -49,7 +50,7 @@ export default function Advertisers() {
     try {
       const r = await api.get('/sales/directories/producers/duplicates', auth())
       setDupes(r.data.pairs); setShowDupes(true)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить дубли') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить дубли')) }
   }
 
   // keepId остаётся, dropId вливается и исчезает
@@ -61,7 +62,7 @@ export default function Advertisers() {
       flash(r.data.message)
       setDupes(dupes.filter(p => !(p.keep.id === keepId && p.drop.id === dropId) && !(p.keep.id === dropId && p.drop.id === keepId)))
       load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось слить') }
+    } catch (e) { setError(detailText(e, 'Не удалось слить')) }
   }
 
   const deleteBrand = async (brandId, name) => {
@@ -70,7 +71,7 @@ export default function Advertisers() {
     try {
       const r = await api.delete(`/sales/directories/brands/${brandId}/hard`, auth())
       flash(r.data.message); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить бренд') }
+    } catch (e) { setError(detailText(e, 'Не удалось удалить бренд')) }
   }
 
   // Переименование и перенос — один эндпойнт PUT /brands/{id} (name + advertiser_id)
@@ -79,7 +80,7 @@ export default function Advertisers() {
     try {
       await api.put(`/sales/directories/brands/${brandId}`, { name, advertiser_id: advertiserId }, auth())
       setEditBrand(null); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить бренд') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить бренд')) }
   }
 
   const [editBrand, setEditBrand] = useState(null)   // { id, name } — правка имени
@@ -127,14 +128,13 @@ export default function Advertisers() {
       flash(`Схлопнуто ${dropIds.length} в «${keepName}»`)
       setSelAdv({}); setKeepAdvId(null); load()
     } catch (e) {
-      const d = e.response?.data?.detail
-      setError((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+      setError(detailText(e, (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`)))
     }
   }
 
   const restoreProducer = async (id) => {
     try { await api.post(`/sales/directories/producers/${id}/restore`, {}, auth()); flash('Возвращён в справочник'); load() }
-    catch (e) { setError(e.response?.data?.detail || 'Не удалось вернуть') }
+    catch (e) { setError(detailText(e, 'Не удалось вернуть')) }
   }
 
   const deleteSelectedProducers = async () => {
@@ -146,8 +146,7 @@ export default function Advertisers() {
       flash(`Скрыто: ${selAdvIds.length}`)
       setSelAdv({}); setKeepAdvId(null); load()
     } catch (e) {
-      const d = e.response?.data?.detail
-      setError((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+      setError(detailText(e, (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`)))
     }
   }
 
@@ -168,7 +167,7 @@ export default function Advertisers() {
       const r = await api.post('/sales/directories/brands/move',
         { brand_ids: selIds, advertiser_id: advertiserId }, auth())
       flash(r.data.message); clearSel(); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось перенести') }
+    } catch (e) { setError(detailText(e, 'Не удалось перенести')) }
   }
 
   const mergeSelected = async () => {
@@ -182,7 +181,7 @@ export default function Advertisers() {
       const r = await api.post('/sales/directories/brands/merge',
         { keep_id: keepId, drop_ids: selIds.filter(id => id !== keepId) }, auth())
       flash(r.data.message); clearSel(); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось схлопнуть') }
+    } catch (e) { setError(detailText(e, 'Не удалось схлопнуть')) }
   }
 
   const load = async () => {
@@ -190,7 +189,7 @@ export default function Advertisers() {
     try {
       const res = await api.get('/sales/directories/producers', { params: { only_active: false }, ...auth() })
       setItems(res.data.items)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить справочник')) }
     finally { setLoading(false) }
   }
 
@@ -215,7 +214,7 @@ export default function Advertisers() {
       await api.post(`/sales/directories/producers/${advId}/counterparties`,
         { counterparty_id: cpId }, auth())
       setAttachToAdv(null); setCpQueryAdv(''); flash('Юрлицо прикреплено'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось прикрепить') }
+    } catch (e) { setError(detailText(e, 'Не удалось прикрепить')) }
   }
 
   const detachCp = async (advId, cpId) => {
@@ -223,7 +222,7 @@ export default function Advertisers() {
     try {
       await api.delete(`/sales/directories/producers/${advId}/counterparties/${cpId}`, auth())
       flash('Юрлицо откреплено'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось открепить') }
+    } catch (e) { setError(detailText(e, 'Не удалось открепить')) }
   }
 
   useEffect(() => {
@@ -242,7 +241,7 @@ export default function Advertisers() {
     try {
       await api.put(`/sales/directories/producers/${advId}/sales-rep`, { user_id: userId }, auth())
       flash(userId ? 'Ответственный назначен' : 'Ответственный снят'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось назначить ответственного') }
+    } catch (e) { setError(detailText(e, 'Не удалось назначить ответственного')) }
   }
 
   const cancelForm = () => { setEditId(null); setForm(EMPTY); setShowForm(false); setError('') }
@@ -268,9 +267,7 @@ export default function Advertisers() {
     } catch (e) {
       // диагностический текст: показываем статус и настоящую причину,
       // а не общую заглушку — чтобы было видно, HTTP-ошибка это или сетевая
-      const d = e.response?.data?.detail
-      const detail = Array.isArray(d) ? JSON.stringify(d) : d
-      setError(detail || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+      setError(detailText(e, (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`)))
     }
   }
 
@@ -293,8 +290,7 @@ export default function Advertisers() {
       await load()
       return true
     } catch (e) {
-      const d = e.response?.data?.detail
-      alert((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+      alert(detailText(e, (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`)))
       return false
     } finally { setSaving(false) }
   }
@@ -305,7 +301,7 @@ export default function Advertisers() {
     try {
       await api.post('/sales/directories/brands', { name: brandName, advertiser_id: advertiserId }, auth())
       setBrandName(''); flash('Бренд добавлен'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось добавить бренд') }
+    } catch (e) { setError(detailText(e, 'Не удалось добавить бренд')) }
   }
 
   const startEdit = (a) => {

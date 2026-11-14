@@ -38,6 +38,7 @@ import { TONE, toneOf } from '@/lib/tone'
 import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
 import { fmtDayTime, fmtDayOfMoment } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -668,7 +669,7 @@ function NotifyHours({ mayEdit }) {
     setBusy(true); setErr('')
     api.put('/cabinets/notify-hours', next, auth())
       .then(r => { setV(r.data); setBusy(false) })
-      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось сохранить')) })
   }
 
   if (!v) return null
@@ -731,7 +732,7 @@ function NotifyCatalog({ mayEdit }) {
     setBusy(k.key); setErr('')
     api.put('/cabinets/notify-catalog', { key: k.key, enabled: value }, auth())
       .then(r => { setData(r.data); setBusy('') })
-      .catch(e => { setBusy(''); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+      .catch(e => { setBusy(''); setErr(detailText(e, 'Не удалось сохранить')) })
   }
 
   if (!data) return <div style={{ ...card, padding: 20, color: 'var(--text-faint)' }}>Загрузка…</div>
@@ -859,14 +860,14 @@ export default function CabinetsPage() {
   const load = useCallback(async () => {
     setErr('')
     try { setData((await api.get('/cabinets/', auth())).data) }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить кабинеты') }
+    catch (e) { setErr(detailText(e, 'Не удалось загрузить кабинеты')) }
   }, [])
   useEffect(() => { load() }, [load])
 
   const run = async (fn) => {
     setBusy(true); setErr('')
     try { await fn(); await load() }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось выполнить') }
+    catch (e) { setErr(detailText(e, 'Не удалось выполнить')) }
     setBusy(false)
   }
 
@@ -878,7 +879,7 @@ export default function CabinetsPage() {
       setShown({ email: c.email, password: r.data.password,
         chat: pub ? { url: pub.chat_url || pub.chat_url_max, name: pub.name } : null })
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось выдать пароль') }
+    } catch (e) { setErr(detailText(e, 'Не удалось выдать пароль')) }
     setBusy(false)
   }
 
@@ -948,7 +949,7 @@ export default function CabinetsPage() {
     try {
       const r = await api.get(`/cabinets/${cabinet.id}/log`, auth())
       setFullLog({ cabinet, rows: r.data.rows || [] })
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось открыть журнал') }
+    } catch (e) { setErr(detailText(e, 'Не удалось открыть журнал')) }
   }
 
   const cabinets = data?.cabinets || []

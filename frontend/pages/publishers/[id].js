@@ -34,7 +34,7 @@ export default function PublisherCardPage() {
   // он ронял экран в белый («Objects are not valid as a React child»). Список —
   // сообщениями через точку с запятой.
   const fail = (e, fallback) => {
-    const d = e.response?.data?.detail
+    const d = e.response?.data?.detail  // detail-ok: список 422 разбирается ниже
     setError(Array.isArray(d) ? d.map(x => x?.msg || String(x)).join('; ')
       : (typeof d === 'string' ? d : fallback))
   }

@@ -7,6 +7,7 @@ import api, { auth } from '@/lib/api'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { fmtK, fmtSigned, pct } from '@/lib/salesPlan.mjs'
+import { detailText } from '@/lib/loadError'
 
 const cap = { fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const BUCKET = { fact: ['факт', 'var(--income-tint)', 'var(--income-fg)'], work: ['в работе', 'var(--accent-tint)', 'var(--accent-fg)'],
@@ -49,7 +50,7 @@ export default function CellPanel({ year, row, b, onClose }) {
   useEffect(() => {
     let alive = true
     api.get('/sales-plan/cell', { ...auth(), params: { year, m_from: b.m0 + 1, m_to: b.m1 + 1, scope: row.scope, key_id: row.key_id || 0 } })
-      .then(r => { if (alive) setD(r.data) }).catch(e => { if (alive) setErr(e.response?.data?.detail || 'Не удалось загрузить ячейку') })
+      .then(r => { if (alive) setD(r.data) }).catch(e => { if (alive) setErr(detailText(e, 'Не удалось загрузить ячейку')) })
     return () => { alive = false }
   }, [year, row.scope, row.key_id, b.m0, b.m1])
   useEffect(() => {

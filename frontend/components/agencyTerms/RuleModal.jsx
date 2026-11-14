@@ -8,6 +8,7 @@ import { defaultValidFrom, MODES, parsePct, specificity } from '@/lib/agencyTerm
 import { plural } from '@/lib/publisherRecon.mjs'
 import { todayMsk } from '@/lib/dates'
 import { Field, Pick } from './kit'
+import { detailText } from '@/lib/loadError'
 
 export default function RuleModal({ rule, opts, canEdit, onClose, onSaved }) {
   const [r, setR] = useState({ valid_from: defaultValidFrom(todayMsk()), valid_to: null, note: '', ...rule,
@@ -30,12 +31,12 @@ export default function RuleModal({ rule, opts, canEdit, onClose, onSaved }) {
     try {
       const res = r.id ? await api.put(`${base}/${r.id}`, body, auth()) : await api.post(base, body, auth())
       onSaved(res.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
   const remove = async () => {
     if (!window.confirm('Удалить правило? Если оно уже в закрытом месяце, сервер откажет — тогда закройте его датой «по».')) return
     setBusy(true); setErr('')
-    try { await api.delete(`${base}/${r.id}`, auth()); onSaved(null) } catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') } finally { setBusy(false) }
+    try { await api.delete(`${base}/${r.id}`, auth()); onSaved(null) } catch (e) { setErr(detailText(e, 'Не удалось удалить')) } finally { setBusy(false) }
   }
 
   const title = `${r.id ? 'Правило' : 'Новое правило'} · ${main ? 'основная СК' : 'партнёрская СК'}`

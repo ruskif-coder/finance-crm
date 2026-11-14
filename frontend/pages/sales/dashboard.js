@@ -27,6 +27,7 @@ import { downloadFile } from '@/lib/download'
 import { todayMsk } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
 import useLatest from '@/lib/useLatest'
+import { detailText } from '@/lib/loadError'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -137,7 +138,7 @@ export default function SalesDashboard2() {
       await api.post(entityModal === 'agency' ? '/sales/directories/agencies' : '/sales/directories/producers', f, auth())
       setEntityModal(null)
       api.get('/sales/filters', auth()).then(r => setFopts(r.data || {})).catch(() => {})  // обновляем опции пикеров
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') }
+    } catch (e) { alert(detailText(e, 'Не удалось создать')) }
     finally { setEntSaving(false) }
   }
   const [editTitleId, setEditTitleId] = useState(null)
@@ -228,7 +229,7 @@ export default function SalesDashboard2() {
     } catch (e) {
       if (!fresh()) return
       if (e.response?.status === 401) return router.push('/login')
-      setErr(e.response?.data?.detail || 'Ошибка загрузки')
+      setErr(detailText(e, 'Ошибка загрузки'))
     }
     finally { if (fresh()) setLoading(false) }
   }
@@ -271,7 +272,7 @@ export default function SalesDashboard2() {
       // общую — только смена квартала или сотрудника (ревью 24.09.2026). Список
       // очищается — как в журнале действий: прежние сделки под новым фильтром — ложь.
       setDeals([]); setDealsTotal(0)
-      if (e.response?.status !== 401) setDealsErr('Сделки не загрузились: ' + (e.response?.data?.detail || 'сервер не ответил'))
+      if (e.response?.status !== 401) setDealsErr('Сделки не загрузились: ' + (detailText(e, 'сервер не ответил')))
     }
     api.get('/sales/dashboard?' + base.toString(), auth()).then(r => { if (seq === dealsSeq.current) setSummary(r.data) }).catch(() => { if (seq === dealsSeq.current) setSummary(null) })
   }
@@ -297,7 +298,7 @@ export default function SalesDashboard2() {
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
   }
   const openPicker = (field, d, e) => {
     if (!canEdit) return
@@ -319,7 +320,7 @@ export default function SalesDashboard2() {
             const id = r.data.id
             setBrandsByAdv(m => ({ ...m, [d.advertiser_id]: [...(m[d.advertiser_id] || []), { value: id, label: name }].sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru')) }))
             patchCell(d.id, { brand_id: id }, { brand_id: id, brand: name }); setVpop(null)
-          } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать бренд') }
+          } catch (e) { alert(detailText(e, 'Не удалось создать бренд')) }
         } : undefined },
       service: { title: 'Услуга', options: (fopts.product || []).map(o => ({ value: o.value, label: o.label || o.value })), value: d.product, apply: (v) => patchCell(d.id, { product: v }, { product: v }) },
     }[field]

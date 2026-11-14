@@ -16,6 +16,7 @@ import WorkTab from '@/components/agencyTerms/WorkTab'
 import { flattenSide, namesOf, sideKpi } from '@/lib/agencyTerms.mjs'
 import { todayMsk } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 export default function AgencyTermsPage() {
   const [tab, setTab] = useState('agency')
@@ -35,10 +36,10 @@ export default function AgencyTermsPage() {
   const load = useCallback(() => {
     setErr('')
     api.get('/agency-terms/options', auth()).then((r) => setOpts(r.data))
-      .catch((e) => setErr(e.response?.data?.detail || 'Справочники не загрузились'))
+      .catch((e) => setErr(detailText(e, 'Справочники не загрузились')))
     for (const side of ['agency', 'advertiser']) {
       api.get(`/agency-terms/tree?side=${side}`, auth()).then((r) => setTree((t) => ({ ...t, [side]: r.data.items })))
-        .catch((e) => setErr(e.response?.data?.detail || 'Условия не загрузились'))
+        .catch((e) => setErr(detailText(e, 'Условия не загрузились')))
     }
     setTick((t) => t + 1)
   }, [])

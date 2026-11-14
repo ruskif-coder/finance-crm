@@ -27,6 +27,7 @@ import DeeplinkChip from './DeeplinkChip'
 import { CreativePreview } from './CreativePreview'
 import { fmtDateTime, fmtDayOfMoment } from '@/lib/dates'
 import { aimTone, issueAim, RESTART_NOTE } from '@/lib/aimTab'
+import { detailText } from '@/lib/loadError'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -190,7 +191,7 @@ function UrlRequestDialog({ target, onDone, onClose }) {
       await api.post(`/launch-prep/set/${target.set_id}/target/${target.target_id}/url-request`,
         { text }, auth())
       onDone()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить'); setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')); setBusy(false) }
   }
 
   return (
@@ -251,7 +252,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
 
   useEffect(() => {
     api.get(`/launch-prep/deal/${dealId}/target-options?set_id=${setId}`, auth())
-      .then(r => setOpts(r.data)).catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить'))
+      .then(r => setOpts(r.data)).catch(e => setErr(detailText(e, 'Не удалось загрузить')))
   }, [dealId, setId])
 
   const toggle = (id, surface) => setPicked(p => {
@@ -268,7 +269,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
       await api.post(`/launch-prep/deal/${dealId}/targets`, { items, set_id: setId }, auth())
       onDone()
     }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить'); setBusy(false) }
+    catch (e) { setErr(detailText(e, 'Не удалось сохранить')); setBusy(false) }
   }
 
   const defaultSurface = (opts?.surfaces || [])[0] || 'web'
@@ -402,7 +403,7 @@ function PrimaryReviewDialog({ set, onDone, onClose }) {
     try {
       await api.post(`/launch-prep/set/${set.id}/primary-review`, { verdict, reason }, auth())
       onDone()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить'); setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')); setBusy(false) }
   }
 
   return (
@@ -473,7 +474,7 @@ function ProcessReworkDialog({ rec, onRework, onDone, onClose }) {
       }
       const r = await api.post(`/launch-prep/pair/${rec.pair_id}/decline-rework`, { reason: text }, auth())
       setRes(r.data); onDone(r.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отказать') }
+    } catch (e) { setErr(detailText(e, 'Не удалось отказать')) }
     setBusy(false)
   }
 
@@ -559,7 +560,7 @@ function WithdrawDialog({ rec, onDone, onClose }) {
     try {
       const r = await api.post(`/launch-prep/pair/${rec.pair_id}/withdraw`, { reason: reason.trim() }, auth())
       setRes(r.data); onDone(r.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отозвать') }
+    } catch (e) { setErr(detailText(e, 'Не удалось отозвать')) }
     setBusy(false)
   }
 
@@ -643,7 +644,7 @@ function PairVerdictDialog({ rec, onDone, onClose }) {
       const r = await api.post(`/launch-prep/pair/${rec.pair_id}/verdict`,
         { verdict, reason }, auth())
       onDone(r.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить'); setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')); setBusy(false) }
   }
 
   return (
@@ -764,7 +765,7 @@ function ConfirmDelete({ set, onYes, onClose }) {
             onClick={async () => {
               setBusy(true); setErr('')
               try { await onYes() } catch (e) {
-                setErr(e.response?.data?.detail || 'Не удалось удалить'); setBusy(false)
+                setErr(detailText(e, 'Не удалось удалить')); setBusy(false)
               }
             }}>Удалить</button>
         </div>
@@ -884,7 +885,7 @@ function EridRow({ set, sent, onChanged }) {
   const call = async (fn) => {
     setBusy(true); setErr('')
     try { await fn(); onChanged() } catch (e) {
-      setErr(e.response?.data?.detail || 'Не получилось')
+      setErr(detailText(e, 'Не получилось'))
     }
     setBusy(false)
   }
@@ -1437,7 +1438,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     try {
       await api.put(`/launch-prep/set/${set.id}/title`, { title: name.trim() }, auth())
       handlers.reload()
-    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось переименовать') }
+    } catch (e2) { setErr(detailText(e2, 'Не удалось переименовать')) }
   }
 
   const sent = !!set.sent_at
@@ -1461,7 +1462,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
       await api.post(`/launch-prep/set/${set.id}/rights-letter`, form,
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       handlers.reload()
-    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить письмо') }
+    } catch (e2) { setErr(detailText(e2, 'Не удалось загрузить письмо')) }
     setBusy(false)
   }
   const dropLetter = async () => {
@@ -1470,7 +1471,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     try {
       await api.delete(`/launch-prep/set/${set.id}/rights-letter`, auth())
       handlers.reload()
-    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось снять письмо') }
+    } catch (e2) { setErr(detailText(e2, 'Не удалось снять письмо')) }
     setBusy(false)
   }
 
@@ -1489,7 +1490,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
         `/launch-prep/set/${set.id}/files?origin=${encodeURIComponent(originRef.current || '')}`, form,
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       setPrepNote(preparedNote(r.data?.prepared))
-    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить') }
+    } catch (e2) { setErr(detailText(e2, 'Не удалось загрузить')) }
     handlers.reload()
     setBusy(false)
   }
@@ -1505,7 +1506,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
       await api.post(`/launch-prep/set/${set.id}/send`,
         { target_ids: set.recipients.map(r => r.target_id) }, auth())
       handlers.reload()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отправить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось отправить')) }
     setBusy(false)
   }
   const send = () => {
@@ -1518,7 +1519,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     setBusy(true); setErr('')
     try {
       await api.put(`/launch-prep/set/${set.id}/title`, { title: v }, auth())
-    } catch (e) { setErr(e.response?.data?.detail || 'Название не сохранилось') }
+    } catch (e) { setErr(detailText(e, 'Название не сохранилось')) }
     setBusy(false)
     doSend()
   }
@@ -1527,7 +1528,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
   const dropTarget = async (id) => {
     setErr('')
     try { await api.delete(`/launch-prep/set/${set.id}/target/${id}`, auth()); handlers.reload() }
-    catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось убрать площадку') }
+    catch (e2) { setErr(detailText(e2, 'Не удалось убрать площадку')) }
   }
 
   const ready = set.primary_review?.verdict === 'ок'
@@ -1933,7 +1934,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         if (changedRef.current) changedRef.current()
         return r.data
       })
-      .catch(e => { setErr(e.response?.data?.detail || 'Не удалось загрузить'); return null })
+      .catch(e => { setErr(detailText(e, 'Не удалось загрузить')); return null })
   ), [dealId])
 
   /* Площадки по услуге подставляются сами при первом открытии. Ограничитель на клиенте —
@@ -1967,7 +1968,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         { origin: (data?.sets?.length ? 'параллельный' : 'первичный') }, auth())
       setAutoUploadFor(r.data.id)
       load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось создать креатив') }
+    } catch (e) { setErr(detailText(e, 'Не удалось создать креатив')) }
   }
 
   /* Доработка адресуется ТОЛЬКО возразившему: площадка уходит на свою версию и дальше
@@ -1979,7 +1980,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         { publisher_id: rec.publisher_id, origin: 'доработка', replaces_set_id: set.id }, auth())
       setAutoUploadFor(r.data.id)
       load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось собрать новую версию') }
+    } catch (e) { setErr(detailText(e, 'Не удалось собрать новую версию')) }
   }
 
   // Кандидаты в трафики тянем один раз и лениво — только когда открыли выбор: список
@@ -2003,7 +2004,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       await api.put(`/launch-prep/deal/${dealId}/traffic-manager`,
         { user_id: id ? Number(id) : null }, auth())
       load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить трафика') }
+    } catch (e) { setErr(detailText(e, 'Не удалось назначить трафика')) }
   }
 
   const handlers = {
@@ -2016,7 +2017,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       try {
         await api.post(`/launch-prep/target/${rec.target_id}/reopen`, {}, auth())
         load()
-      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось вернуть площадку') }
+      } catch (e) { setErr(detailText(e, 'Не удалось вернуть площадку')) }
     },
     resend: async (rec) => {
       if (!window.confirm(`Повторно отправить креатив площадке «${rec.name}»? Отказ снимется, прежний ответ уйдёт в журнал действий.`)) return
@@ -2024,7 +2025,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       try {
         await api.post(`/launch-prep/pair/${rec.pair_id}/resend`, {}, auth())
         load()
-      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отправить повторно') }
+      } catch (e) { setErr(detailText(e, 'Не удалось отправить повторно')) }
     },
     process: (set, rec) => setProcessFor({ set, rec }),
     tt: setTtFor,
@@ -2035,7 +2036,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     reportGroup: async (set, group) => {
       setErr('')
       try { await api.put(`/launch-prep/set/${set.id}/report-group`, { group: group || '' }, auth()); load() }
-      catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить группу') }
+      catch (e) { setErr(detailText(e, 'Не удалось сохранить группу')) }
     },
     /* «Скопировать креатив»: копия сразу просит файл — как «Прикрепить креатив». */
     copy: async (set) => {
@@ -2046,7 +2047,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         const r = await api.post(`/launch-prep/set/${set.id}/copy`, {}, auth())
         setAutoUploadFor(r.data.id)
         load()
-      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось скопировать креатив') } finally { copying.current = false }
+      } catch (e) { setErr(detailText(e, 'Не удалось скопировать креатив')) } finally { copying.current = false }
     },
     addTargets: (setId) => setPicking(setId),
     confirmDelete: setDeleteFor,
@@ -2060,7 +2061,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         load()
         return true
       } catch (e) {
-        setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку')
+        setErr(detailText(e, 'Не удалось сохранить ссылку'))
         return false
       }
     },
@@ -2071,7 +2072,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         load()
         return null
       } catch (e) {
-        return e.response?.data?.detail || 'Не удалось сохранить диплинк'
+        return detailText(e, 'Не удалось сохранить диплинк')
       }
     },
     /* Скриншоты размещения снимает трафик, а нужны они аккаунту — как доказательство
@@ -2080,7 +2081,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     targetingUrl: async (set, url) => {
       setErr('')
       try { await api.put(`/launch-prep/set/${set.id}/targeting-url`, { url }, auth()); load() }
-      catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку'); load() }
+      catch (e) { setErr(detailText(e, 'Не удалось сохранить ссылку')); load() }
     },
     /* Плановый объём показов площадки по креативу (п. 6). Возвращает ТЕКСТ ОТКАЗА или
        пусто: строка показывает отказ у самого поля (объём больше плана РК) и возвращает
@@ -2091,7 +2092,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
           { plan_show: value }, auth())
         load()
         return ''
-      } catch (e) { return e.response?.data?.detail || 'Объём не сохранился' }
+      } catch (e) { return detailText(e, 'Объём не сохранился') }
     },
     shots: async (rec) => {
       setErr('')
@@ -2104,7 +2105,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         a.download = `${rec.pair_code || rec.code || 'screens'}.zip`
         document.body.appendChild(a); a.click(); a.remove()
         URL.revokeObjectURL(href)
-      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось скачать скриншоты') }
+      } catch (e) { setErr(detailText(e, 'Не удалось скачать скриншоты')) }
     },
   }
 

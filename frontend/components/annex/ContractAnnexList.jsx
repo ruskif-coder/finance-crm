@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import api, { auth } from '@/lib/http'
 import { MONO, th, td } from '@/components/salesTableKit'
 import { grpDec, fmtDateFull } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 export default function ContractAnnexList({ contractId }) {
   const [rows, setRows] = useState(null)
@@ -15,7 +16,7 @@ export default function ContractAnnexList({ contractId }) {
     let alive = true
     api.get('/annexes', { ...auth(), params: { contract_id: contractId } })
       .then(r => { if (alive) setRows((r.data.items || []).filter(a => a.no != null)) })
-      .catch(e => { if (alive) setErr((e.response && e.response.data && e.response.data.detail) || 'Не удалось загрузить ДС договора') })
+      .catch(e => { if (alive) setErr(detailText(e, 'Не удалось загрузить ДС договора')) })
     return () => { alive = false }
   }, [contractId])
 

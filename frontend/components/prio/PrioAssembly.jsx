@@ -12,6 +12,8 @@ import { MONO, UI, btn, btnSm, inp } from '@/components/salesTableKit'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { fmtDateFull, grp } from '@/lib/salesFormat'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
+import PrioFactTotals from '@/components/prio/PrioFactTotals'
 
 const CAP = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const ELL = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }
@@ -273,22 +275,27 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
   const [pubs, setPubs] = useState([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [note, setNote] = useState('')        // «Сделка переведена «В размещении»» после запуска первой площадки (13.11.2026)
   // Выпуск ЕРИД — запись в ЕРИР, право `ord_submit` (как у кнопки комплекта креативов); localStorage — только в эффекте.
   const [mayIssue, setMayIssue] = useState(false)
   useEffect(() => { setMayIssue(!!canEdit && can(getPermissions(), 'ord_submit', 'create')) }, [canEdit])
   const base = `/prio/deal/${dealId}`
   const load = useCallback(() => {
-    api.get(base, auth()).then(r => { setS(r.data); setErr('') }).catch(e => setErr(e?.response?.data?.detail || 'Запрос не загрузился'))
+    api.get(base, auth()).then(r => { setS(r.data); setErr('') }).catch(e => setErr(detailText(e, 'Запрос не загрузился')))
   }, [base])
   useEffect(() => { load() }, [load])
   useEffect(() => {
     if (canEdit) api.get('/prio/publishers', auth()).then(r => setPubs(r.data))
-      .catch(e => { setPubs([]); setErr(e?.response?.data?.detail || 'Список площадок не загрузился') })   // check-screens: сбой — вслух
+      .catch(e => { setPubs([]); setErr(detailText(e, 'Список площадок не загрузился')) })   // check-screens: сбой — вслух
   }, [canEdit])
   const call = async (fn) => {
     setBusy(true); setErr('')
-    try { const r = await fn(); if (r?.data) setS(r.data); if (r?.data?.failed?.length) setErr(r.data.failed.map(f => f.error).join('; ')); return true }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось'); return false }
+    try {
+      const r = await fn(); if (r?.data) setS(r.data); if (r?.data?.failed?.length) setErr(r.data.failed.map(f => f.error).join('; '))
+      setNote(r?.data?.stage_note || '')
+      return true
+    }
+    catch (e) { setErr(detailText(e, 'Не удалось')); return false }
     finally { setBusy(false) }
   }
   if (!s) return err ? <div style={{ ...cardStyle, color: 'var(--danger-fg)', fontSize: 12.5 }}>{err}</div> : null
@@ -296,7 +303,7 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
   const edit = (pid, x) => call(() => api.put(`${base}/placements/${pid}`, x, auth()))
   const remove = (pid) => call(() => api.delete(`${base}/placements/${pid}`, auth()))
   return (
-    <div style={{ ...cardStyle, fontFamily: UI }}>
+    <div id="prio" style={{ ...cardStyle, fontFamily: UI }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 17, fontWeight: 800 }}>Приоритезация · сборка запроса</div>
@@ -330,6 +337,7 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
         {canEdit && <AddRow pubs={pubs} taken={s.placements.map(p => p.publisher_id)} busy={busy}
           onAdd={(publisher_id) => call(() => api.post(`${base}/placements`, { publisher_id }, auth()))} />}
         {!!err && <div style={{ fontSize: 12, color: 'var(--danger-fg)', marginTop: 8 }}>{err}</div>}
+        {!!note && <div style={{ fontSize: 12, color: 'var(--income-fg)', marginTop: 8 }}>{note}</div>}
         {canEdit && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
             <span style={{ fontSize: 11.5, color: 'var(--text-faint)', flex: '1 1 260px' }}>
@@ -341,6 +349,7 @@ export default function PrioAssembly({ dealId, canEdit, cardStyle }) {
           </div>
         )}
       </div>
+      <PrioFactTotals s={s} base={base} canEdit={canEdit} busy={busy} call={call} />
     </div>
   )
 }

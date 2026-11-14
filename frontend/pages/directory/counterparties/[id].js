@@ -19,7 +19,7 @@ import { isAdmin as isAdminRole, can, getPermissions } from '@/lib/auth'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDate as fmtCalendarDate, daysUntil } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { errText } from '@/lib/loadError'
+import { errText, detailText } from '@/lib/loadError'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -233,7 +233,7 @@ export default function CounterpartyCard() {
       setDefEdit(false)
       loadCard()
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка сохранения')
+      alert(detailText(e, 'Ошибка сохранения'))
     } finally { setDefSaving(false) }
   }
 
@@ -262,7 +262,7 @@ export default function CounterpartyCard() {
       await api(token).put(`/counterparties/${id}/requisites`, editData)
       await loadCard(); setEditMode(false)
     } catch (e) {
-      const d = e.response?.data?.detail
+      const d = e.response?.data?.detail  // detail-ok: ниже typeof === 'string'
       setSaveErr(typeof d === 'string' ? d : 'Ошибка сохранения')
     } finally { setSaving(false) }
   }
@@ -307,7 +307,7 @@ export default function CounterpartyCard() {
         return { ...prev, bank_accounts: ba }
       })
     } catch (e) {
-      setBicError(prev => ({ ...prev, [idx]: e.response?.data?.detail || 'Не найден' }))
+      setBicError(prev => ({ ...prev, [idx]: detailText(e, 'Не найден') }))
     } finally {
       setBicLoading(prev => ({ ...prev, [idx]: false }))
     }

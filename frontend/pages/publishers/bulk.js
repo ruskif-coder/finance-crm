@@ -9,6 +9,7 @@ import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, nextStatus, Pin }
   from '@/components/publishers/kit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { isAdmin, canDelete } from '@/lib/auth'
+import { detailText } from '@/lib/loadError'
 
 // Экран быстрого заполнения: строка на площадку, всё правится одним кликом.
 // Заведён под первичное наполнение реестра — переносить из Excel было нечего, и на
@@ -79,7 +80,7 @@ export default function PublishersBulk() {
         api.get('/publishers/meta', auth()),
       ])
       setItems(r.data.items); setMeta(m.data)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить площадки') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить площадки')) }
     finally { setLoading(false) }
   }
 
@@ -106,7 +107,7 @@ export default function PublishersBulk() {
       setError('')
     } catch (e) {
       setItems(prev => prev.map(x => (x.id === id ? before : x)))
-      setError(e.response?.data?.detail || 'Не удалось сохранить')
+      setError(detailText(e, 'Не удалось сохранить'))
     } finally { setSaving(n => n - 1) }
   }
 

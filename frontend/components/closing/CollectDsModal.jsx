@@ -11,6 +11,7 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { btn, MONO, primaryBtn, UI, Z } from '@/components/salesTableKit'
 import { rub2 } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 
 const Warn = ({ children }) => (
@@ -49,7 +50,7 @@ export default function CollectDsModal({ dealId, gross, onClose, onDone }) {
   useEffect(() => {
     api.get(`/master-deals/deal/${dealId}/fork`, auth())
       .then(r => { setFork(r.data); if (r.data.candidates?.length) setMode('master') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось открыть'))
+      .catch(e => setErr(detailText(e, 'Не удалось открыть')))
   }, [dealId])
 
   const send = async () => {
@@ -62,7 +63,7 @@ export default function CollectDsModal({ dealId, gross, onClose, onDone }) {
       const r = await api.put(`/master-deals/deal/${dealId}/send`, body, auth())
       onDone?.(); onClose()
       router.push(`/accounts/master/${r.data.master.code}`)
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось отправить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось отправить')) } finally { setBusy(false) }
   }
 
   const sibs = fork?.siblings || []

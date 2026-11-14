@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MONO, card, CAP, btn, inp, chip, cell, SortHead } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const SRC_LABEL = { ad_requests: 'A · код', req_sw_clamp: 'A · зажат', similarweb: 'B · SW',
   estimate: 'C · объём', manual: 'рука' }
@@ -157,7 +158,7 @@ export default function Balancer({ mayEdit }) {
       }, auth())
       fromServer(res.data.rows)
       if (dspNote(res.data)) setMsg(dspNote(res.data).trim())
-    } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сохранить строку') }
+    } catch (e) { setMsg(detailText(e, 'Не удалось сохранить строку')) }
   }
 
   const recalc = async () => {
@@ -167,7 +168,7 @@ export default function Balancer({ mayEdit }) {
       fromServer(r.data.rows)
       if (r.data.coefficients) setCoef(r.data.coefficients)
       setMsg(`Пересчитано ${r.data.updated}; заперто ${r.data.locked_skipped}; без данных ${r.data.no_data}` + dspNote(r.data))
-    } catch (e) { setMsg(e?.response?.data?.detail || 'Пересчёт не удался') } finally { setBusy(false) }
+    } catch (e) { setMsg(detailText(e, 'Пересчёт не удался')) } finally { setBusy(false) }
   }
 
   const saveCoef = async () => {
@@ -177,7 +178,7 @@ export default function Balancer({ mayEdit }) {
         { share_cap_pct: num(coef.share_cap_pct) }, auth())
       setCoef(r.data.coefficients); fromServer(r.data.rows)
       setMsg(`Потолок доли сохранён${r.data.campaigns_updated ? ' — доли в РК пересчитаны' : ''}` + dspNote(r.data))
-    } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    } catch (e) { setMsg(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
 
   const download = async () => {
@@ -199,7 +200,7 @@ export default function Balancer({ mayEdit }) {
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       fromServer(r.data.rows)
       setMsg(`Загружено: применено ${r.data.applied}, пропущено ${r.data.skipped} — нажмите «Пересчитать индексы»` + dspNote(r.data))
-    } catch (e2) { setMsg(e2?.response?.data?.detail || 'Импорт не удался') } finally { setBusy(false) }
+    } catch (e2) { setMsg(detailText(e2, 'Импорт не удался')) } finally { setBusy(false) }
   }
 
   const inScope = (r) => (scope === 'all' ? true

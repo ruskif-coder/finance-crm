@@ -6,6 +6,7 @@ import Navbar, { can } from '../components/Navbar'
 import { inp, btn, th, td } from '../components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { canDelete } from '../lib/auth'
+import { detailText } from '@/lib/loadError'
 
 
 const TYPE_META = {
@@ -51,7 +52,7 @@ export default function Articles({ embedded = false } = {}) {
       setGroups((g.data.items || []).map(x => x.name))
     } catch (e) {
       if (e.response?.status === 401) { router.push('/login'); return }
-      setError(e.response?.data?.detail || 'Не удалось загрузить статьи')
+      setError(detailText(e, 'Не удалось загрузить статьи'))
     } finally { setLoading(false) }
   }
 
@@ -70,7 +71,7 @@ export default function Articles({ embedded = false } = {}) {
     try {
       await api.post('/articles/', { name: form.name.trim(), group: form.group || null, type: form.type, pl_line: form.pl_line || null }, auth())
       setForm(EMPTY); setShowForm(false); flash('Статья создана'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось создать') }
+    } catch (e) { setError(detailText(e, 'Не удалось создать')) }
   }
 
   const createGroup = async () => {
@@ -80,7 +81,7 @@ export default function Articles({ embedded = false } = {}) {
     try {
       await api.post('/articles/groups', { name }, auth())
       setNewGroup(''); flash('Группа создана'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось создать группу') }
+    } catch (e) { setError(detailText(e, 'Не удалось создать группу')) }
   }
 
   const startEdit = (a) => { setEditId(a.id); setDraft({ name: a.name, group: a.group || '', type: a.type || 'expense', pl_line: a.pl_line || '' }); setError('') }
@@ -90,7 +91,7 @@ export default function Articles({ embedded = false } = {}) {
     try {
       await api.put(`/articles/${id}`, { name: draft.name, group: draft.group || null, type: draft.type, pl_line: draft.pl_line || null }, auth())
       setEditId(null); flash('Сохранено'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить')) }
   }
 
   const remove = async (a) => {
@@ -99,7 +100,7 @@ export default function Articles({ embedded = false } = {}) {
     try {
       await api.delete(`/articles/${a.id}`, auth())
       flash('Статья удалена'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить') }
+    } catch (e) { setError(detailText(e, 'Не удалось удалить')) }
   }
 
   // Перетаскивание строк меняет порядок. Оптимистично переставляем локально,
@@ -113,7 +114,7 @@ export default function Articles({ embedded = false } = {}) {
     try {
       await api.put('/articles/reorder', { ids: reordered.map(a => a.id) }, auth())
     } catch (e) {
-      setError(e.response?.data?.detail || 'Не удалось изменить порядок'); load()
+      setError(detailText(e, 'Не удалось изменить порядок')); load()
     }
   }
 

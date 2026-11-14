@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Modal, btn, primaryBtn, inp, MONO } from '@/components/salesTableKit'
 import { fmtDate } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 export default function AnnexDateField({ value, periodFrom, canEdit, onSave }) {
   const [next, setNext] = useState(null)
@@ -15,7 +16,7 @@ export default function AnnexDateField({ value, periodFrom, canEdit, onSave }) {
 
   const apply = async () => {
     setBusy(true); setErr('')
-    try { await onSave(next); setNext(null) } catch (e) { setErr((e && e.response && e.response.data && e.response.data.detail) || 'Не удалось сменить дату') }
+    try { await onSave(next); setNext(null) } catch (e) { setErr(detailText(e, 'Не удалось сменить дату')) }
     finally { setBusy(false) }
   }
 

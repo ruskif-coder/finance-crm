@@ -21,6 +21,7 @@ import api, { auth } from '../../lib/http'
 import { can, getPermissions } from '../../lib/auth'
 import { fmtDateTime } from '../../lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const TONE = {
   'новая': ['var(--warning-tint)', 'var(--warning-text)'],
@@ -81,7 +82,7 @@ export default function BugsPage() {
       if (contour) params.contour = contour
       const r = await api.get('/bugs', { ...auth(), params })
       setData(r.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить заявки') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить заявки')) }
   }, [status, contour])
 
   useEffect(() => { load() }, [load])
@@ -93,7 +94,7 @@ export default function BugsPage() {
       setOpen(r.data); setResolution(r.data.resolution || '')
       // Открытие ставит отметку «прочитано» на сервере — список после этого устарел.
       load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Заявка не открылась') }
+    } catch (e) { setErr(detailText(e, 'Заявка не открылась')) }
   }
 
   const patch = async (payload) => {
@@ -101,7 +102,7 @@ export default function BugsPage() {
     try {
       const r = await api.patch(`/bugs/${open.id}`, payload, auth())
       setOpen(r.data); await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) }
     finally { setBusy(false) }
   }
 
@@ -110,7 +111,7 @@ export default function BugsPage() {
     try {
       const r = await api.post(`/bugs/${open.id}/backlog`, {}, auth())
       setOpen(r.data); await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось завести наблюдение') }
+    } catch (e) { setErr(detailText(e, 'Не удалось завести наблюдение')) }
     finally { setBusy(false) }
   }
 

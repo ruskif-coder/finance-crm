@@ -12,6 +12,7 @@ import AudienceData from '@/components/publishers/AudienceData'
 import { ACTIVE, dataOf, gapText, gapTone, surfacesOf } from '@/components/publishers/audienceKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { shortNum, pct } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 // Паблишеры → «Аудитория» (владелец 09.10.2026, визуал — макет Claude Design): заявленное
 // площадкой (MAU/DAU/соцдем из медиакитов, с источником и датой) рядом с тем, что намерили мы
@@ -71,16 +72,16 @@ export default function PublisherAudience() {
   const load = useCallback(() => {
     api.get(`/publisher-audience?days=${days}`, auth())
       .then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить аудиторию'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить аудиторию')))
   }, [days])
   const loadDetail = useCallback((id) => {
     if (!id) { setDetail(null); return }
     api.get(`/publisher-audience/${id}?days=${days}`, auth()).then(r => setDetail(r.data))
-      .catch(e => { setDetail(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить карточку площадки') })
+      .catch(e => { setDetail(null); setErr(detailText(e, 'Не удалось загрузить карточку площадки')) })
   }, [days])
   const loadGrid = useCallback(() => {
     api.get('/publisher-audience/grid', auth()).then(r => setGrid(r.data))
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить сетку заполнения'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить сетку заполнения')))
   }, [])
   useEffect(() => { if (ready) load() }, [ready, load])
   useEffect(() => { if (ready && tab === 'data') loadGrid() }, [ready, tab, loadGrid])

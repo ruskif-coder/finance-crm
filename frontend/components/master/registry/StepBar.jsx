@@ -8,6 +8,7 @@ import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
 import { stepBar } from '@/lib/masterStepBar'
 import { MONO } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const TONE = {
   act: ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)'],
@@ -38,7 +39,7 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
       const r = btn.status ? await api.post(`/master-deals/${m.code}/status`, { to: btn.status }, auth())
         : await api.post(`/master-deals/${m.code}/sent`, body, auth())
       onDone(r.data)
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return (
     <div data-noexp style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', maxWidth: 1120, boxSizing: 'border-box', borderRadius: 10,

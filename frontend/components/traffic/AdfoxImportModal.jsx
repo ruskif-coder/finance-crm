@@ -9,6 +9,7 @@ import { Modal, btnSm, primaryBtn, inp, MONO, th, td } from '@/components/salesT
 import { Cube } from '@/components/LogoLoader'
 import { grp } from '@/lib/salesFormat'
 import api from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const BASE = '/traffic-dashboard/adfox-import'
 const CHUNK = 60   // строк файла за вызов записи; размещение×день не разрезается
@@ -25,7 +26,7 @@ const CHANGE = {
   same: { label: 'без изменений', color: 'var(--text-faint)' },
 }
 
-const errText = (e, dflt) => e?.response?.data?.detail || dflt
+const errText = (e, dflt) => detailText(e, dflt)
 const dayRu = (iso) => (iso ? iso.split('-').reverse().join('.') : '')
 
 // Размещение × день записывается СУММОЙ и перезаписывает прежнюю (ревью 03.10.2026):

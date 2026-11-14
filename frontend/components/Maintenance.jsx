@@ -28,7 +28,7 @@ export function useMaintenance() {
       // сеть могла не дойти. Молчим — заглушку покажет следующий удачный ответ.
       if (e.response?.status === 503 && e.response?.data?.maintenance) {
         // 503 от прослойки ядра бывает, только когда закрыт ПОРТАЛ.
-        setSt({ mode: 'active', portal: true, stub_title: e.response.data.detail,
+        setSt({ mode: 'active', portal: true, stub_title: e.response.data.detail,  // detail-ok: заглушка 503 портала — строка прослойки ядра
           stub_note: e.response.data.note })
       }
     }

@@ -13,6 +13,7 @@ import { can } from '../Navbar'
 import { MONO, card, inp, sel, primaryBtn, btn, PickValue } from '../salesTableKit'
 import ValuePopover from '../ValuePopover'
 import { grp0 } from '../../lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 const EMPTY = { bank: '', counterparty_id: null, limit_amount: '', used_amount: '0', as_of: '', note: '', is_active: true }
 const LABEL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)' }
@@ -77,7 +78,7 @@ export default function CreditLines() {
       setLines(r.data)
       setForms(Object.fromEntries(r.data.map(c => [c.id, toForm(c)])))
       setErr('')
-    } catch (e) { setErr(e.response?.data?.detail || 'Кредитные линии не загрузились') }
+    } catch (e) { setErr(detailText(e, 'Кредитные линии не загрузились')) }
   }
   useEffect(() => {
     setCanEdit(can(getPermissions(), 'settings_balances', 'edit')); load()
@@ -96,7 +97,7 @@ export default function CreditLines() {
       else { await api.post('/settings/credit-lines', toBody(draft), auth()); setDraft(null) }
       await load()
     } catch (e) {
-      const d = e.response?.data?.detail
+      const d = e.response?.data?.detail  // detail-ok: ниже typeof === 'string'
       alert(typeof d === 'string' ? d : 'Не сохранилось')
     } finally { setBusy(null) }
   }

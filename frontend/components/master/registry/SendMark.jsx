@@ -7,6 +7,7 @@ import { useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { SignBadge } from '@/components/master/docParts'
+import { detailText } from '@/lib/loadError'
 
 const ISSUE = 'выставление'
 const WAIT = new Set(['ждём оплату', 'ждём сканы'])
@@ -55,7 +56,7 @@ export function SendButton({ code, target, sign, label, onDone, setErr }) {
     e.stopPropagation()
     setBusy(true); setErr('')
     try { onDone((await api.post(`/master-deals/${code}/sent`, { items: [target], on, state: 'выставлен' }, auth())).data) }
-    catch (er) { setErr(er?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+    catch (er) { setErr(detailText(er, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return on ? (
     <button type="button" data-noexp disabled={busy} onClick={run} title={`Загрузили ${label} в Диадок и отправили клиенту — отметить`}

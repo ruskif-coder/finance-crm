@@ -17,6 +17,7 @@ import { PortalPopover, Z } from '../salesTableKit';
 import BrandBrief from './BrandBrief';
 import { DownloadOverlay } from '../LogoLoader';
 import { overlayClose } from '@/lib/overlay'
+import { detailText } from '@/lib/loadError'
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
@@ -240,7 +241,7 @@ export default function YearPlan({
       const preview = await onConveyorPreview(target);
       setConv({ target, label, preview });
     } catch (e) {
-      setConv({ target, label, error: e?.response?.data?.detail || 'Не удалось получить предпросмотр' });
+      setConv({ target, label, error: detailText(e, 'Не удалось получить предпросмотр') });
     }
   };
   const applyConveyor = async () => {
@@ -250,7 +251,7 @@ export default function YearPlan({
       const done = await onConveyorApply(conv.target);
       setConv(c => ({ ...c, busy: false, done }));
     } catch (e) {
-      setConv(c => ({ ...c, busy: false, error: e?.response?.data?.detail || 'Ошибка создания' }));
+      setConv(c => ({ ...c, busy: false, error: detailText(e, 'Ошибка создания') }));
     }
   };
   const [yearOpen, setYearOpen] = useState(false);

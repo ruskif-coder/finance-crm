@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { Modal, UI, MONO } from '../salesTableKit'
 import api, { auth } from '../../lib/http'
 import { CreatePanel, Field, PickRow, Tag, useCreateForm, INPUT } from './pickers'
+import { detailText } from '@/lib/loadError'
 
 export default function PayerPicker({ dealId, chosenId, onDone, onClose }) {
   const [items, setItems] = useState(null)
@@ -23,7 +24,7 @@ export default function PayerPicker({ dealId, chosenId, onDone, onClose }) {
     setErr('')
     api.get(`/ord/deal/${dealId}/payer-options${text ? `?q=${encodeURIComponent(text)}` : ''}`, auth())
       .then(r => setItems(r.data.items || []))
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить список'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить список')))
   }
   useEffect(() => { load('') }, [dealId])
   // Поиск с задержкой: справочник контрагентов большой, запрос на каждую букву
@@ -38,7 +39,7 @@ export default function PayerPicker({ dealId, chosenId, onDone, onClose }) {
     try {
       await api.put(`/ord/deal/${dealId}/payer`, { counterparty_id: cp.id }, auth())
       onDone()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить плательщика') }
+    } catch (e) { setErr(detailText(e, 'Не удалось назначить плательщика')) }
   }
 
   const create = (data) =>

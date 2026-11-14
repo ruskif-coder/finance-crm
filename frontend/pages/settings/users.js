@@ -7,6 +7,7 @@ import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, th, td, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 // ── Пользователи — отдельная страница раздела «Настройки» ──
 // Создание/редактирование/удаление пользователей. Привязки к сотруднику Битрикс24 нет
@@ -100,7 +101,7 @@ export default function SettingsUsers() {
       setShowNewPw(false)
       await loadUsers()
     } catch (e) {
-      setUserError(e.response?.data?.detail || 'Ошибка при создании')
+      setUserError(detailText(e, 'Ошибка при создании'))
     } finally {
       setCreatingUser(false)
     }
@@ -115,7 +116,7 @@ export default function SettingsUsers() {
       await api.put(`/users/${id}`, payload, auth())
       await loadUsers()
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при сохранении')
+      alert(detailText(e, 'Ошибка при сохранении'))
     } finally {
       setSavingUsers(prev => ({ ...prev, [id]: false }))
     }
@@ -132,7 +133,7 @@ export default function SettingsUsers() {
         if (ed.password) payload.password = ed.password
         await api.put(`/users/${u.id}`, payload, auth())
         ok++
-      } catch (e) { errs.push(`${u.name}: ${e.response?.data?.detail || 'ошибка'}`) }
+      } catch (e) { errs.push(`${u.name}: ${detailText(e, 'ошибка')}`) }
     }
     await loadUsers()
     setSavingAllUsers(false)
@@ -160,7 +161,7 @@ export default function SettingsUsers() {
       await api.delete(`/users/${id}`, auth())
       await loadUsers()
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при удалении')
+      alert(detailText(e, 'Ошибка при удалении'))
     }
   }
 

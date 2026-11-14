@@ -16,6 +16,7 @@ import { tgHref } from '@/components/publishers/kit'
 import safeHref from '@/lib/safeHref'
 import { CreativePreview } from '@/components/creatives/CreativePreview'
 import { EyeIcon, ICON_BTN } from '@/components/creatives/CreativesSection'
+import { detailText } from '@/lib/loadError'
 
 const ST = {
   rework:  { label: 'на доработке', bg: 'var(--accent-tint)', bd: 'var(--accent-border)', fg: 'var(--accent-fg)', dot: 'var(--accent)', event: 'вернули' },
@@ -129,13 +130,13 @@ export default function StuckView() {
     setErr('')
     api.get(`/publisher-approvals/set/${r.set_id}/files`, auth())
       .then(x => (x.data.files.length ? setPreview(x.data) : setErr('У креатива нет файлов')))
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось открыть креатив'))
+      .catch(e => setErr(detailText(e, 'Не удалось открыть креатив')))
   }
 
   const load = useCallback(() => {
     api.get('/publisher-approvals/stuck', auth())
       .then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить подвисшие'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить подвисшие')))
   }, [])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)

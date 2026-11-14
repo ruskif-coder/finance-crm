@@ -30,6 +30,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { shortAnnexNumber } from '@/lib/annexNumber'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 const dm = (d) => fmtCalendarDate(d)
 
@@ -139,7 +140,7 @@ export default function AnnexRegistry() {
       setItems(r.data.items || [])
       setTotal(r.data.total ?? (r.data.items || []).length)
       setTruncated(!!r.data.truncated)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить реестр') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить реестр')) }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -204,7 +205,7 @@ export default function AnnexRegistry() {
       const r = await api.post('/annexes/export.xlsx', { ids: filtered.map(a => a.id) },
                                { ...auth(), responseType: 'blob' })
       saveBlob(r.data, filenameFromResponse(r) || 'Приложения.xlsx')
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось выгрузить реестр') }
+    } catch (e) { setError(detailText(e, 'Не удалось выгрузить реестр')) }
     finally { setBusy('') }
   }
 

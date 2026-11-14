@@ -13,6 +13,7 @@ import SettingsTabs from '@/components/SettingsTabs'
 import api, { auth } from '@/lib/api'
 import { card, inp, btn, CAP, MONO, UI } from '@/components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const FIELDS = [
   { group: 'Частота', hint: 'показов на одного человека; уники = показы ÷ частота дня',
@@ -65,7 +66,7 @@ export default function SimbIdSettings() {
     } catch (e) {
       setErr(e?.response?.status === 422
         ? 'Проверьте значения: частота больше нуля, CTR и поправки — от 0 до 100.'
-        : (e?.response?.data?.detail || 'Не удалось сохранить.'))
+        : (detailText(e, 'Не удалось сохранить.')))
     }
     setBusy(false)
   }

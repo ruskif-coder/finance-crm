@@ -26,6 +26,7 @@ import { grp } from '@/lib/salesFormat'
 import WrLinkRow from '@/components/traffic/WrLinkRow'
 import { can, getPermissions } from '@/lib/auth'
 import api, { auth } from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const DASH = '—'
 const num = (v) => (v == null ? DASH : grp(v))
@@ -145,7 +146,7 @@ const ManualVerifier = ({ d, dealId }) => {
     if (!clear && !Number.isFinite(shows)) { setBusy(false); setErr('Ожидается число'); return }
     api.put(`/sales/deals/${dealId}/verifier-shows`, { shows }, auth())
       .then(() => { setBusy(false); setOk(true); if (clear) setVal('') })
-      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось сохранить')) })
   }
 
   return (

@@ -4,6 +4,7 @@ import { fmtFull, fmtDateShort } from '@/lib/salesFormat'
 import { todayMsk } from '@/lib/dates'
 import { sanMoney, moneyNum } from '@/lib/money'
 import { MONO, UI, inp, btn, btnSm, Modal } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 // ─── Цепочка частичных оплат (решение владельца 23.09.2026) ─────────────────────────
 //
@@ -19,7 +20,7 @@ const tok = () => localStorage.getItem('token')
 const PLAN = ['ПЛАН ПОСТУПЛЕНИЙ', 'ПЛАН ОПЛАТ']
 
 
-const errOf = (e, fallback) => e?.response?.data?.detail || fallback
+const errOf = (e, fallback) => detailText(e, fallback)
 
 /** Метка в реестре: операция — часть цепочки или материнская с частями. */
 export function ChainMark({ op }) {

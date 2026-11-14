@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { Modal, btnSm, primaryBtn, MONO, th, td } from '@/components/salesTableKit'
 import { Cube } from '@/components/LogoLoader'
 import api from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const ACT = {
   start:   ['поднимется', 'var(--income-fg)', 'var(--income-tint)'],
@@ -25,7 +26,7 @@ export default function StartRkModal({ row, auth, onClose, onDone, note }) {
     let alive = true
     api.get(`/traffic-dashboard/campaign/${row.id}/start-plan`, auth())
       .then(r => { if (alive) setPlan(r.data) })
-      .catch(e => { if (alive) setErr(e?.response?.data?.detail || 'Не удалось получить план запуска') })
+      .catch(e => { if (alive) setErr(detailText(e, 'Не удалось получить план запуска')) })
     return () => { alive = false }
   }, [row.id, auth])
 
@@ -41,7 +42,7 @@ export default function StartRkModal({ row, auth, onClose, onDone, note }) {
       setPlan(p.data)
       onDone && onDone()
     } catch (e) {
-      setErr(e?.response?.data?.detail || 'Не удалось запустить РК')
+      setErr(detailText(e, 'Не удалось запустить РК'))
     } finally { setBusy(false) }
   }
 

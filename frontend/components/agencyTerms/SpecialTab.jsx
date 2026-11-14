@@ -12,6 +12,7 @@ import { moneyNum } from '@/lib/money'
 import useLatest from '@/lib/useLatest'
 import { FEATURES, calcPeriods, defaultValidFrom, parsePct, periodLabel } from '@/lib/agencyTerms.mjs'
 import { CAPS, Card, Field, fmtPct, KpiStrip, MiniSeg, ModePill, NUM, Scroll, Title } from './kit'
+import { detailText } from '@/lib/loadError'
 
 const PCOLS = 'minmax(130px,1fr) minmax(170px,1.3fr) minmax(150px,1.2fr) 140px 70px 190px 90px'
 const SCOLS = '120px minmax(140px,1fr) minmax(240px,2fr) 70px 120px 170px 40px'
@@ -38,7 +39,7 @@ function Editor({ item, names, canEdit, onClose, onSaved }) {
       if (s.id) await api.put(`/agency-terms/special/${s.id}`, body, auth())
       else await api.post('/agency-terms/special', body, auth())
       onSaved()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
   const footer = (
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%' }}>
@@ -158,7 +159,7 @@ function SpecialCalc({ names, tick }) {
   useEffect(() => {
     const fresh = latest()
     api.get(`/agency-terms/special/calc?period=${period}`, auth()).then((r) => { if (fresh()) { setData(r.data); setErr('') } })
-      .catch((e) => { if (fresh()) setErr(e.response?.data?.detail || 'Расчёт спец. условий не загрузился') })
+      .catch((e) => { if (fresh()) setErr(detailText(e, 'Расчёт спец. условий не загрузился')) })
   }, [period, tick])          // eslint-disable-line react-hooks/exhaustive-deps
   const tone = (st) => (st === 'копится' ? ['var(--warning-tint)', 'var(--warning-fg)', 'var(--warning)']
     : st === 'не действует' ? ['var(--bg-subtle)', 'var(--text-muted)', 'var(--text-disabled)'] : ['var(--income-tint)', 'var(--income-fg)', 'var(--income)'])
@@ -236,14 +237,14 @@ export default function SpecialTab({ names, canEdit, tick, onOpenRule, reloadKey
   const [edit, setEdit] = useState(null)
   const load = () => {
     api.get('/agency-terms/special', auth()).then((r) => { setItems(r.data); setErr('') })
-      .catch((e) => setErr(e.response?.data?.detail || 'Спец. условия не загрузились'))
+      .catch((e) => setErr(detailText(e, 'Спец. условия не загрузились')))
     api.get('/agency-terms/special/partner', auth()).then((r) => setPartners(r.data))
-      .catch((e) => setErr(e.response?.data?.detail || 'Партнёрская СК не загрузилась'))
+      .catch((e) => setErr(detailText(e, 'Партнёрская СК не загрузилась')))
   }
   useEffect(() => { load() }, [tick, reloadKey])          // eslint-disable-line react-hooks/exhaustive-deps
   const removeItem = async (it) => {
     if (!window.confirm(`Удалить спец. условие «${it.title}»?`)) return
-    try { await api.delete(`/agency-terms/special/${it.id}`, auth()); load() } catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') }
+    try { await api.delete(`/agency-terms/special/${it.id}`, auth()); load() } catch (e) { setErr(detailText(e, 'Не удалось удалить')) }
   }
   return (
     <>

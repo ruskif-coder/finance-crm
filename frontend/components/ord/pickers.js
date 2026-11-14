@@ -16,6 +16,7 @@
  */
 import { useState } from 'react'
 import { UI, MONO, btnSm } from '../salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 export const INPUT = {
   width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)',
@@ -136,7 +137,7 @@ export function useCreateForm(initial) {
       await fn(data)
       setOpen(false); setData(initial)
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось сохранить')
+      setErr(detailText(e, 'Не удалось сохранить'))
     } finally { setBusy(false) }
   }
   return { open, toggle: () => { setOpen(o => !o); setErr('') }, data, set, err, busy, submit }

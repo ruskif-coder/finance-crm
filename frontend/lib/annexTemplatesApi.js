@@ -37,7 +37,7 @@ export const annexTemplatesApi = {
 
 /** Текст ошибки и список замечаний проверки из ответа сервера. */
 export function errorOf(e, fallback = 'Не удалось выполнить действие') {
-  const d = e && e.response && e.response.data && e.response.data.detail
+  const d = e && e.response && e.response.data && e.response.data.detail  // detail-ok: объект {message, issues} разбирается ниже
   if (d && typeof d === 'object' && !Array.isArray(d)) return { message: d.message || fallback, issues: d.issues || [] }
   if (typeof d === 'string') return { message: d, issues: [] }
   return { message: fallback, issues: [] }

@@ -21,6 +21,7 @@ import api, { auth } from '../../lib/http'
 import InitialPicker from './InitialPicker'
 import PayerPicker from './PayerPicker'
 import FinalPicker from './FinalPicker'
+import { detailText } from '@/lib/loadError'
 
 // skip — ступень не требуется матрицей «Проверки стадий» для услуги сделки (владелец
 // 14.10.2026): серая, не красная, и в счётчики «N из M» не входит.
@@ -158,7 +159,11 @@ export function ordStates(a) {
 
 /** Полоски и счётчик «N из 4» для шапки секции — видны и когда она свёрнута. */
 export function OrdPips({ assembly }) {
-  const all = ordStates(assembly)
+  return <StatePips all={ordStates(assembly)} />
+}
+
+/** Полоски «N из M» по состояниям done/todo/lock/skip — общие для ОРД и «Сборки». */
+export function StatePips({ all }) {
   // Счётчик — только по нужным услуге ступеням; полоска ненужной остаётся, но серой.
   const states = all.filter(s => s !== 'skip')
   const done = states.filter(s => s === 'done').length
@@ -209,7 +214,7 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
       await api.put(`/ord/deal/${dealId}/initial`,
         { initial_contract_id: initialContractId, force }, auth())
       done()
-    } catch (e) { setBindErr(e.response?.data?.detail || 'Не удалось привязать договор') }
+    } catch (e) { setBindErr(detailText(e, 'Не удалось привязать договор')) }
   }
 
   // «Прямой рекламодатель» (владелец 02.10.2026): изначальный договор = доходный, отдельного
@@ -221,7 +226,7 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
     try {
       await api.put(`/ord/deal/${dealId}/direct-advertiser`, { value }, auth())
       done()
-    } catch (e) { setBindErr(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setBindErr(detailText(e, 'Не удалось сохранить')) }
     finally { setDirectBusy(false) }
   }
 

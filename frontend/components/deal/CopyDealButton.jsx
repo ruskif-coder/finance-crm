@@ -9,6 +9,7 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { todayMsk } from '@/lib/dates'
 import { Modal, btn, primaryBtn, inp, UI } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 // Финансовый период — месяц; по умолчанию следующий за периодом исходной сделки (владелец 15.10.2026).
 // Календарный день — строкой, без new Date(): разбор метки сдвигал бы месяц на сутки по часовому поясу.
@@ -51,7 +52,7 @@ export default function CopyDealButton({ deal }) {
     try {
       const r = await api.post(`/launch-prep/deal/${deal.id}/prolong`, { month, period_from: from, period_to: to, force: existing.length > 0 }, auth())
       setDone(r.data)   // итог показываем всегда: у копии медиаплан без визы (владелец 15.10.2026)
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось скопировать сделку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось скопировать сделку')) }
     finally { setBusy(false) }
   }
 

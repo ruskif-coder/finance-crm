@@ -4,6 +4,7 @@ import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
 import StageRequirements from './StageRequirements'
 import { isAdmin as isAdminFn } from '@/lib/auth'
+import { detailText } from '@/lib/loadError'
 
 // Диалог движения сделки по нашему каталогу (E2). Одна кнопка → адаптивный диалог:
 // дефолт «следующая стадия», перепрыгнуть или уйти в терминал — из того же списка.
@@ -139,7 +140,7 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
       if (locked && override.trim()) body.override_reason = override.trim()
       const r = await api.post(`/sales/deals/${deal.id}/move`, body, auth())
       onMoved({ our_stage: r.data.our_stage, our_next_stage: r.data.our_next_stage, realization_pipeline_id: r.data.realization_pipeline_id })
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось двинуть сделку'); setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось двинуть сделку')); setBusy(false) }
   }
 
   const chip = (st) => st ? (

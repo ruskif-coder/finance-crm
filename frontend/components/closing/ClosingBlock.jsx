@@ -5,9 +5,8 @@
  * «Подтвердить сверку» → «Собрать ДС» (модалка `CollectDsModal`). «Вручную» — только мастер и админ, причина обязательна.
  */
 import { CLOSE_MODE } from '@/lib/masterStatus'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
-import api, { auth } from '@/lib/api'
 import { btn, MONO, UI } from '@/components/salesTableKit'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { fmtDateFull, grp, grpDash, rub2 } from '@/lib/salesFormat'
@@ -16,6 +15,7 @@ import { CAP, Dot, GRID, Kpi, Pill, Pin, unitOf } from '@/components/closing/clo
 import SkRow from '@/components/closing/SkRow'
 import ManualPanel from '@/components/closing/ManualPanel'
 import FactEntryPanel from '@/components/closing/FactEntryPanel'
+import useClosing from '@/components/closing/useClosing'
 
 // Колонки строк МП резиновые — без горизонтальной прокрутки (владелец 19.10.2026; в макете она была — не копируем).
 // Единицы по модели строки МП (макет 19.10.2026): CPC — клики, фикс — пакеты, иначе показы.
@@ -23,42 +23,10 @@ import FactEntryPanel from '@/components/closing/FactEntryPanel'
 
 
 export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) {
-  const [s, setS] = useState(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { s, err, busy, load, setMode, saveSk, saveCost, saveFact, confirm, closeNoDocs } = useClosing(dealId, reloadKey)
   const [open, setOpen] = useState(true)
   const [manualOpen, setManualOpen] = useState(false)
   const [modal, setModal] = useState(false)
-
-  const load = useCallback(() => {
-    api.get(`/final-recon/deal/${dealId}/closing`, auth())
-      .then(r => { setS(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Сверка не посчиталась'))
-  }, [dealId])
-  useEffect(() => { load() }, [load, reloadKey])
-
-  const call = async (fn) => {
-    setBusy(true); setErr('')
-    try { await fn(); return true } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить'); return false } finally { setBusy(false) }
-  }
-  const setMode = (mode, manualNet, vol, reason) => call(async () => {
-    setS((await api.put(`/final-recon/deal/${dealId}/closing`, { mode, manual_net: manualNet ?? null, manual_volume: vol ?? null, reason: reason || null }, auth())).data)
-  })
-  const saveSk = (mode, percent) => call(async () => {
-    await api.put(`/final-recon/deal/${dealId}/sk`, { mode, percent }, auth())
-    setS((await api.get(`/final-recon/deal/${dealId}/closing`, auth())).data)
-  })
-  const saveCost = (cost) => call(async () => {
-    setS((await api.put(`/final-recon/deal/${dealId}/cost`, { cost_net: cost }, auth())).data)
-  })
-  const saveFact = (rows, note) => call(async () => {
-    setS((await api.put(`/final-recon/deal/${dealId}/fact`, { rows, note: note || null }, auth())).data)
-  })
-  const closeNoDocs = () => call(async () => {
-    if (!window.confirm('Закрыть без документов? Бонусное размещение: сверка замораживается, сделка уходит в «Архив успешных сделок». ДС и закрывающих не будет.')) return
-    setS((await api.post(`/final-recon/deal/${dealId}/close-no-docs`, {}, auth())).data)
-  })
-  const confirm = (on) => call(async () => { setS((await api.put(`/final-recon/deal/${dealId}/closing/confirm`, { on }, auth())).data) })
   // После «Отправить в ДО» сумму ДС меняют мастер и админ, пока пакет не ушёл в 1С (владелец 22.10.2026); решает сервер — `sum_open`.
   const pinsOpen = !!s && (!s.frozen || (!!s.may_manual && !!s.sum_open))
   const pick = (k) => {
@@ -141,7 +109,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
 
           <div style={{ display: 'flex', gap: 20, alignItems: 'stretch', flexWrap: 'wrap', opacity: s.frozen ? 0.6 : 1 }}>
             <div style={{ flex: '1 1 520px', minWidth: 0 }}>
-              {!!s.fact_entry?.can_enter && (
+              {!!(s.fact_entry?.can_enter || s.fact_entry?.open) && (
                 <FactEntryPanel key={`${s.fact_entry.at || ''}${s.cost_net ?? ''}${s.fact_entry.report?.filename || ''}`} fe={s.fact_entry} dealId={dealId} cost={s.cost_net}
                   busy={busy} canEdit={canEdit} onSave={saveFact} onCost={saveCost} onUploaded={load} />
               )}
@@ -233,10 +201,15 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
                       background: blocked ? 'var(--accent-soft)' : 'var(--accent)', cursor: blocked ? 'not-allowed' : 'pointer', animation: 'popIn .2s ease both' }}>
                     Собрать ДС</button>
                 ) : (
-                  <button key="confirm" type="button" disabled={blocked} onClick={() => confirm(true)}
+                  <>
+                  {/* Основная воронка: без доходного договора сервер не подтвердит, кроме прямого рекламодателя (14.11.2026) — как в «Моих сделках» */}
+                  {!!s.contract_missing && <span style={{ fontSize: 12, color: 'var(--warning-text)', textAlign: 'center' }}>
+                    Чтобы подтвердить, нужно: доходный договор — блок ОРД (или отметка «Прямой рекламодатель»).</span>}
+                  <button key="confirm" type="button" disabled={blocked || !!s.contract_missing} onClick={() => confirm(true)}
                     style={{ height: 44, borderRadius: 12, border: 0, fontFamily: UI, fontSize: 14, fontWeight: 700, color: 'var(--on-accent)',
-                      background: blocked ? 'var(--accent-soft)' : 'var(--accent)', cursor: blocked ? 'not-allowed' : 'pointer' }}>
+                      background: blocked || s.contract_missing ? 'var(--accent-soft)' : 'var(--accent)', cursor: blocked || s.contract_missing ? 'not-allowed' : 'pointer' }}>
                     Подтвердить сверку</button>
+                  </>
                 )
               )}
               {s.frozen && <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>

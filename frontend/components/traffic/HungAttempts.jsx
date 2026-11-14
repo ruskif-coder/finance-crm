@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { CAP, btnSm, inp } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import { fmtDateTime } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 const HINT = {
   dsp: 'Хеш — 16 знаков из кабинета DSP',
@@ -31,7 +32,7 @@ function Attempt({ campaignId, a, onDone }) {
       // id — как его записал сервер (хеш DSP заглавными, у Weborama только цифры).
       onDone(found ? `Записан как наш: ${r.data.id}. Следующее нажатие продолжит с него`
         : 'Отмечено «в кабинете нет» — повтор разрешён')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Отметка не принята') }
+    } catch (e) { setErr(detailText(e, 'Отметка не принята')) }
     finally { setBusy(false) }
   }
   return (

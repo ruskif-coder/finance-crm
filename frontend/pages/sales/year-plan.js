@@ -10,6 +10,7 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { hasUnsaved } from '@/lib/unsaved'
 import { nowTime, todayMsk } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Годовой план продаж: план по рекламодателям/брендам × 12 месяцев, персональный по сейлзам.
@@ -120,7 +121,7 @@ export default function YearPlanPage() {
         .then(r => { setAllData(r.data.reps || []); setLoadErr('') })
         // Сбой сводки — не «планов нет» (аудит 23.09.2026, 6.M5): прежние данные остаются,
         // причина называется той же полосой, что у плана сейлза.
-        .catch(e => { if (!silent) setLoadErr(e.response?.data?.detail || 'Сводка планов не загрузилась — обновите страницу') })
+        .catch(e => { if (!silent) setLoadErr(detailText(e, 'Сводка планов не загрузилась — обновите страницу')) })
         .finally(() => setLoading(false))
       return
     }
@@ -153,7 +154,7 @@ export default function YearPlanPage() {
       // Пустой список больше не выдаётся за «плана нет»: это сбой, и он виден.
       setGroups([])
       setLoadedFor(null)
-      setLoadErr(e?.response?.data?.detail || 'План не загрузился — сохранение заблокировано, чтобы не стереть строки. Обновите страницу.')
+      setLoadErr(detailText(e, 'План не загрузился — сохранение заблокировано, чтобы не стереть строки. Обновите страницу.'))
     }).finally(() => { if (my === reqNo.current) setLoading(false) })
   }, [])
 
@@ -212,8 +213,8 @@ export default function YearPlanPage() {
       api.get('/sales/year-plan/years', auth()).then(r2 => setYears(r2.data.years || [])).catch(() => {})
     } catch (e) {
       console.error('year-plan save failed', e)
-      const d = e.response?.data?.detail
-      alert(d ? `Ошибка сохранения: ${typeof d === 'string' ? d : JSON.stringify(d)}` : `Не удалось сохранить (${e.response?.status || e.message || 'нет ответа от сервера'})`)
+      const why = detailText(e, '')
+      alert(why ? `Ошибка сохранения: ${why}` : `Не удалось сохранить (${e.response?.status || e.message || 'нет ответа от сервера'})`)
     }
     finally { setSaving(false) }
   }, [year, view, advertisers, scopeRepId, canWriteOwn, loadedFor])
@@ -280,7 +281,7 @@ export default function YearPlanPage() {
       const r = await api.post('/sales/year-plan/match-deals', { year, rep_id: scopeRepId, pairs }, auth())
       if (!(r.data.deals_count || 0)) alert('Сделок под заведённые планы не найдено')
       return r.data.matched || []
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка сверки'); return null }
+    } catch (e) { alert(detailText(e, 'Ошибка сверки')); return null }
     finally { setMatching(false) }
   }, [year, scopeRepId])
 

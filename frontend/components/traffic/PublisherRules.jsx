@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MONO, card, inp, sel, SortHead } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const GRID = '220px 70px 170px 170px 250px minmax(260px,1fr)'
 const CH_TONE = { dsp: 'var(--accent)', adfox: 'var(--dot-current-dz)', outside: 'var(--text-faint)' }
@@ -73,7 +74,7 @@ export default function PublisherRules({ mayEdit }) {
   const load = useCallback(() => {
     api.get('/traffic-catalog/publisher-rules', auth())
       .then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить особенности площадок'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить особенности площадок')))
   }, [])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)
@@ -83,7 +84,7 @@ export default function PublisherRules({ mayEdit }) {
       adfox_extra_code: r.adfox_extra_code, creative_format: r.creative_format, ...patch }
     api.put(`/traffic-catalog/publisher-rules/${r.surface_id}`, body, auth())
       .then(res => { setErr(''); setData(d => ({ ...d, items: d.items.map(x => (x.surface_id === r.surface_id ? { ...x, ...res.data } : x)) })) })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось сохранить'))
+      .catch(e => setErr(detailText(e, 'Не удалось сохранить')))
   }
 
   const rows = useMemo(() => {

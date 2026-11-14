@@ -12,6 +12,7 @@ import { KpiRow } from '@/components/traffic/dashboardKit'
 import { grp } from '@/lib/salesFormat'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const VIEWS = [['rk', 'По РК'], ['pub', 'По площадкам'], ['matrix', 'Матрица']]
 const COLS = [
@@ -100,7 +101,7 @@ export default function TrafficStats() {
     try {
       setData((await api.get('/traffic-stats', { ...auth(), params: period ? { period } : {} })).data)
       setErr('')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить статистику') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить статистику')) }
   }, [period])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { fmtDateTime } from '@/lib/dates'
 import { Modal, btn, primaryBtn, sel, inp, MONO } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const OPEN = ['открыта', 'в работе']
 
@@ -27,7 +28,7 @@ export default function AnnexLegalButton({ annexId, lawBlocks, canEdit, onChange
     try {
       await api.post('/legal-requests', { annex_id: annexId, block_id: blockId || null, text }, auth())
       setText(''); setBlockId(''); setShow(false); await load(); if (onChange) onChange()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось отправить заявку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось отправить заявку')) }
     finally { setBusy(false) }
   }
 

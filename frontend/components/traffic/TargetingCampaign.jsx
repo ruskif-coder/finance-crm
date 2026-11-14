@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/http'
 import { MONO, PortalPopover, Z } from '@/components/salesTableKit'
 import { fmtDateOfMoment } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 /* Их словарь статусов. Переводим, но ОРИГИНАЛ оставляем рядом: в кабинете человек увидит
    именно английское слово, и подсказка, называющая его иначе, отправит искать не то. */
@@ -49,7 +50,7 @@ export function useTargetingCampaign() {
       setState(r.data)
     } catch (e) {
       // Молчащая связь НЕ должна выглядеть как «всё хорошо»: рисуем отказ, а не пустоту.
-      setState({ error: e.response?.data?.detail || 'состояние кампании не прочитать',
+      setState({ error: detailText(e, 'состояние кампании не прочитать'),
         running: false })
     } finally { setLoading(false) }
   }, [])

@@ -8,6 +8,7 @@ import { MONO, UI, Modal, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { flagsForLevel } from '../../lib/roleLevels.mjs'
+import { detailText } from '@/lib/loadError'
 
 // ── Роли и права доступа — раздел «Настройки» ──
 // Матрица «раздел × роль»: уровень доступа — плашка, клик по тексту переключает на следующий,
@@ -191,7 +192,7 @@ export default function SettingsRoles() {
     for (const r of roles) {
       if (!changes[r.id].length) continue
       try { await api.put(`/roles/${r.id}`, payload(drafts[r.id]), auth()) }
-      catch (e) { failed.push(`${drafts[r.id].label || r.label}: ${e.response?.data?.detail || 'ошибка при сохранении'}`) }
+      catch (e) { failed.push(`${drafts[r.id].label || r.label}: ${detailText(e, 'ошибка при сохранении')}`) }
     }
     await loadRoles()
     setSaving(false); setErrors(failed); if (!failed.length) setOkAt(Date.now())
@@ -213,7 +214,7 @@ export default function SettingsRoles() {
         setOrigs(prev => ({ ...prev, [r.id]: draftOf(r) }))
       }
     } catch (e) {
-      setErrors([e.response?.data?.detail || 'Ошибка при создании роли'])
+      setErrors([detailText(e, 'Ошибка при создании роли')])
     } finally { setCreating(false) }
   }
 
@@ -225,7 +226,7 @@ export default function SettingsRoles() {
       setRoles(prev => prev.filter(r => r.id !== id))
       setToDelete(null)
     } catch (e) {
-      setErrors([e.response?.data?.detail || 'Ошибка при удалении роли']); setToDelete(null)
+      setErrors([detailText(e, 'Ошибка при удалении роли')]); setToDelete(null)
     } finally { setDeleting(false) }
   }
 

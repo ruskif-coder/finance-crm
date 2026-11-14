@@ -7,6 +7,7 @@
 // Запрос в адрес НЕ кладём (ИНН и названия юрлиц осели бы в журналах Caddy): строка
 // уходит в теле POST, а на страницу результатов переезжает через sessionStorage.
 import api, { auth } from './http'
+import { detailText } from './loadError'
 
 export const SEARCH_DELAY_MS = 300
 export const SEARCH_MIN = 2
@@ -61,7 +62,7 @@ export async function searchApi(q, { types, perType = 5, offset = 0, signal } = 
 }
 
 /** Текст ошибки для человека: 429 и 400 приходят с объяснением от сервера. */
-export const searchError = (e) => e?.response?.data?.detail || 'Поиск не ответил — попробуйте ещё раз'
+export const searchError = (e) => detailText(e, 'Поиск не ответил — попробуйте ещё раз')
 
 export const isAbort = (e) => e?.name === 'CanceledError' || e?.name === 'AbortError'
 

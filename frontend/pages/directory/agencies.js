@@ -9,6 +9,7 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const AgenciesMobile = dynamic(() => import('@/components/mobile/AgenciesMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import SectionTabs from '@/components/SectionTabs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', holding: '' }
@@ -37,7 +38,7 @@ export default function Agencies() {
     try {
       await api.put(`/sales/directories/agencies/${id}/sk`, { sk_percent: v }, auth())
       setItems(prev => prev.map(x => (x.id === id ? { ...x, sk_percent: v } : x)))
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить СК') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить СК')) }
   }
   const [showForm, setShowForm] = useState(false)
   const [attachTo, setAttachTo] = useState(null)   // agency id, для которого открыт выбор контрагента
@@ -70,12 +71,12 @@ export default function Agencies() {
       }
       flash(`Схлопнуто ${dropIds.length} в «${keepName}»`)
       setSelAg({}); setKeepAgId(null); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось слить агентства') }
+    } catch (e) { setError(detailText(e, 'Не удалось слить агентства')) }
   }
 
   const restoreAgency = async (id) => {
     try { await api.post(`/sales/directories/agencies/${id}/restore`, {}, auth()); flash('Возвращено в справочник'); load() }
-    catch (e) { setError(e.response?.data?.detail || 'Не удалось вернуть') }
+    catch (e) { setError(detailText(e, 'Не удалось вернуть')) }
   }
 
   const deleteSelectedAgencies = async () => {
@@ -86,7 +87,7 @@ export default function Agencies() {
       for (const id of selAgIds) await api.delete(`/sales/directories/agencies/${id}`, auth())
       flash(`Скрыто: ${selAgIds.length}`)
       setSelAg({}); setKeepAgId(null); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось скрыть агентства') }
+    } catch (e) { setError(detailText(e, 'Не удалось скрыть агентства')) }
   }
 
   const load = async () => {
@@ -94,7 +95,7 @@ export default function Agencies() {
     try {
       const a = await api.get('/sales/directories/agencies', { params: { only_active: false }, ...auth() })
       setItems(a.data.items)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить справочник')) }
     finally { setLoading(false) }
   }
 
@@ -139,7 +140,7 @@ export default function Agencies() {
       if (editId) { await api.put(`/sales/directories/agencies/${editId}`, form, auth()); flash('Обновлено') }
       else { await api.post('/sales/directories/agencies', form, auth()); flash('Создано') }
       cancelForm(); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить')) }
   }
 
   const attach = async (agencyId, cpId) => {
@@ -148,7 +149,7 @@ export default function Agencies() {
       await api.post(`/sales/directories/agencies/${agencyId}/counterparties`,
         { counterparty_id: cpId }, auth())
       setAttachTo(null); setCpQuery(''); flash('Юрлицо прикреплено'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось прикрепить') }
+    } catch (e) { setError(detailText(e, 'Не удалось прикрепить')) }
   }
 
   const detach = async (agencyId, cpId) => {
@@ -156,7 +157,7 @@ export default function Agencies() {
     try {
       await api.delete(`/sales/directories/agencies/${agencyId}/counterparties/${cpId}`, auth())
       flash('Юрлицо откреплено'); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось открепить') }
+    } catch (e) { setError(detailText(e, 'Не удалось открепить')) }
   }
 
   const startEdit = (a) => {
@@ -195,7 +196,7 @@ export default function Agencies() {
         await api.post('/sales/directories/agencies', body, auth())
       }
       await load(); return true
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    } catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
     finally { setSaving(false) }
   }
 

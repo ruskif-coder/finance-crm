@@ -56,6 +56,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { isAdmin as isAdminNow } from '@/lib/auth'
 import HungAttempts from '@/components/traffic/HungAttempts'
 import CopyCode from '@/components/CopyCode'
+import { detailText } from '@/lib/loadError'
 
 const DashIcon = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -256,7 +257,7 @@ function WrAttach({ campaignId, pl, onDone }) {
       await api.post(`/traffic-dashboard/campaign/${campaignId}/weborama/attach`,
         { project_id: pl.project_id ? null : proj.trim(), campaign_id: camp.trim() }, auth())
       onDone('РК привязана к проекту и кампании Weborama')
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось привязать') }
+    } catch (e) { setErr(detailText(e, 'Не удалось привязать')) }
     setBusy(false)
   }
   if (!open) return (
@@ -382,7 +383,7 @@ export default function TrafficDashboard() {
       const r = await api.get(`/traffic-dashboard/dashboard?${p}`, auth())
       setData(r.data)
       return r.data
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось загрузить дашборд') }
+    } catch (e) { fail(detailText(e, 'Не удалось загрузить дашборд')) }
     return null
   }, [scope, archive, fail])
   useEffect(() => { load() }, [load])
@@ -395,7 +396,7 @@ export default function TrafficDashboard() {
     if (scope) p.set('scope', scope)
     api.get(`/traffic-dashboard/platforms?${p}`, auth())
       .then(r => { setPlatRaw(r.data); setPlatErr('') })
-      .catch(e => setPlatErr(e?.response?.data?.detail || 'Не удалось загрузить площадки-виновники'))
+      .catch(e => setPlatErr(detailText(e, 'Не удалось загрузить площадки-виновники')))
   }, [scope, widgets])
   useEffect(() => { loadPlat() }, [loadPlat])
   useRefreshOnReturn(loadPlat)
@@ -445,7 +446,7 @@ export default function TrafficDashboard() {
         + `площадок ${r.data?.placements_added ?? 0}, креативов `
         + `${(r.data?.creatives_added ?? 0) + (r.data?.creatives_updated ?? 0)}`)
       await load()
-    } catch (e) { setSyncSaid(e.response?.data?.detail || 'Не удалось обновить') }
+    } catch (e) { setSyncSaid(detailText(e, 'Не удалось обновить')) }
     finally { setSyncing(false) }
   }
 
@@ -460,7 +461,7 @@ export default function TrafficDashboard() {
         + `, на дашборд легло ${d.written}, без соответствия ${d.skipped}`)
       await Promise.all([loadVerifier(), load()])
     } catch (e) {
-      fail(e?.response?.data?.detail || 'Не удалось забрать статистику Weborama')
+      fail(detailText(e, 'Не удалось забрать статистику Weborama'))
     } finally { setWbBusy(false) }
   }
 
@@ -569,7 +570,7 @@ export default function TrafficDashboard() {
         const d = await api.get(`/traffic-dashboard/campaign/${row.id}`, auth())
         setDetail(x => ({ ...x, [row.id]: d.data }))
       }
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить статус') }
+    } catch (e) { fail(detailText(e, 'Не удалось сменить статус')) }
   }
 
   /* Смена ответственного трафика. Пишет ручка дашборда, а та зовёт ручку сборки —
@@ -591,7 +592,7 @@ export default function TrafficDashboard() {
       setRkNotes(n => ({ ...n, [row.id]: [saved, ...(n[row.id] || [])] }))
       return saved
     } catch (e) {
-      throw new Error(e?.response?.data?.detail || 'Не сохранилось — текст остался в поле, попробуйте ещё раз')
+      throw new Error(detailText(e, 'Не сохранилось — текст остался в поле, попробуйте ещё раз'))
     }
   }
 
@@ -611,7 +612,7 @@ export default function TrafficDashboard() {
       say(userId
         ? `РК ${row.deal_code} передана: ${r.data.name}${gone ? ' — и ушла из вашего среза' : ''}`
         : `РК ${row.deal_code} — ответственный снят`)
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить трафика') }
+    } catch (e) { fail(detailText(e, 'Не удалось сменить трафика')) }
   }
 
   /* «Завершить РК»: конец открутки — момент, когда хозяином сделки снова становится
@@ -630,7 +631,7 @@ export default function TrafficDashboard() {
         + (r.data.approvals_withdrawn ? `; отозвано согласований: ${r.data.approvals_withdrawn}` : '')
         + (r.data.withdraw_errors?.length ? `; не отозвано: ${r.data.withdraw_errors.length}` : ''))
       await load()
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось завершить РК') }
+    } catch (e) { fail(detailText(e, 'Не удалось завершить РК')) }
   }
 
   /* ── внешние системы: пиксель Weborama и выгрузка в DSP ────────────────────
@@ -651,7 +652,7 @@ export default function TrafficDashboard() {
     try {
       const r = await api.get(`/traffic-dashboard/campaign/${row.id}/external-plan`, auth())
       setExtAsk({ row, kind, plan: r.data })
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось узнать, что будет сделано') }
+    } catch (e) { fail(detailText(e, 'Не удалось узнать, что будет сделано')) }
   }
 
   const runExternal = async () => {
@@ -669,7 +670,7 @@ export default function TrafficDashboard() {
       setDetail(x => ({ ...x, [row.id]: d.data }))
       await load()
     } catch (e) {
-      setExtAsk(x => x && ({ ...x, result: { error: e?.response?.data?.detail || 'Не удалось выполнить' } }))
+      setExtAsk(x => x && ({ ...x, result: { error: detailText(e, 'Не удалось выполнить') } }))
     } finally { setExtBusy(false) }
   }
 
@@ -678,7 +679,7 @@ export default function TrafficDashboard() {
       await api.put(`/traffic-dashboard/creative/${cr.id}/status`, { status: s }, auth())
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить статус креатива') }
+    } catch (e) { fail(detailText(e, 'Не удалось сменить статус креатива')) }
   }
 
   // Массовое действие на креатив целиком — по всем его парам в РК (владелец 15.10.2026): чтобы не выключать поштучно.
@@ -694,7 +695,7 @@ export default function TrafficDashboard() {
     const errs = []
     for (const c of fit) {
       try { await api.put(`/traffic-dashboard/creative/${c.id}/status`, { status: s }, auth()); done += 1 }
-      catch (e) { errs.push(`${c.domain}: ${e?.response?.data?.detail || 'ошибка'}`) }
+      catch (e) { errs.push(`${c.domain}: ${detailText(e, 'ошибка')}`) }
     }
     try {
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
@@ -712,7 +713,7 @@ export default function TrafficDashboard() {
       await api.put(`/traffic-dashboard/creative/${cr.id}/screens`, { done }, auth())
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось отметить скрины') }
+    } catch (e) { fail(detailText(e, 'Не удалось отметить скрины')) }
   }
 
   const setPlacementStatus = async (campId, p, s) => {
@@ -726,7 +727,7 @@ export default function TrafficDashboard() {
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
       await load()
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить статус площадки') }
+    } catch (e) { fail(detailText(e, 'Не удалось сменить статус площадки')) }
   }
 
   const all = data?.rows || []

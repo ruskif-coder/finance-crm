@@ -8,6 +8,7 @@ import { MONO, UI, card, inp, sel, primaryBtn } from '../../components/salesTabl
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 // ── Остатки по банкам — отдельная страница раздела «Настройки» ──
 // Стартовый остаток по счёту + обороты (из /settings/bank-balances), привязка юрлица
@@ -110,7 +111,7 @@ export default function SettingsBalances() {
       }, auth())
       await loadBalances()
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при сохранении юрлица')
+      alert(detailText(e, 'Ошибка при сохранении юрлица'))
     } finally {
       setSavingOwnCompany(prev => ({ ...prev, [bank]: false }))
     }
@@ -126,7 +127,7 @@ export default function SettingsBalances() {
       await loadBalances()
     } catch (e) {
       // Причину называет сервер (неизвестный банк и т. п.) — показываем её, а не общее «ошибка».
-      const detail = e?.response?.data?.detail
+      const detail = e?.response?.data?.detail  // detail-ok: ниже typeof === 'string'
       alert(typeof detail === 'string' ? detail : 'Ошибка при сохранении')
     } finally {
       setSaving(prev => ({ ...prev, [bank]: false }))
@@ -139,7 +140,7 @@ export default function SettingsBalances() {
       await api.put('/settings/company-requisites', { bank, ...editingReq[bank] }, auth())
       await loadBalances()
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при сохранении реквизитов')
+      alert(detailText(e, 'Ошибка при сохранении реквизитов'))
     } finally {
       setSavingReq(prev => ({ ...prev, [bank]: false }))
     }

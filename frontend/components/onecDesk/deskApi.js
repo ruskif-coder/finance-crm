@@ -1,6 +1,7 @@
 // «Документы для бухгалтерии» (05.11.2026): все вызовы экрана в одном месте — вся страница, черновик, файлы, разбор XML, внесение.
 import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
+import { detailText } from '@/lib/loadError'
 
 const base = '/onec-desk'
 
@@ -34,7 +35,7 @@ export const deskApi = {
   saveClose: (body) => api.put(`${base}/settings/close`, body, auth()).then(r => r.data),
 }
 
-export const errText = (e, fallback) => e?.response?.data?.detail || fallback
+export const errText = (e, fallback) => detailText(e, fallback)
 
 /** Ошибка сервера → Error с текстом для человека: экран показывает `e.message` тостом. */
 export const asError = (fallback) => (e) => { throw new Error(typeof errText(e, fallback) === 'string' ? errText(e, fallback) : fallback) }

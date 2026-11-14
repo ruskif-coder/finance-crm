@@ -1,5 +1,6 @@
 import api, { auth } from './api'
 import { downloadFile } from './download'
+import { detailText } from './loadError'
 
 // ── Документы сделки: ОДИН список на все экраны ──────────────────────────
 // Используется в карточке сделки (/sales/deals/[id]), в раскрывашке строки (DealDetail)
@@ -12,13 +13,11 @@ import { downloadFile } from './download'
 // «Креативы» — первыми, сразу под медиапланом (владелец 27.09.2026), и файлом их больше
 // НЕ загружают: креативы прикрепляются в блоке «Креативы» на сборке, а здесь только
 // «Скачать» — один архив с чистыми исходниками всех прикреплённых (`creatives: true`).
+// ДС, счёт, УПД и акт здесь больше не грузят (владелец 13.11.2026): документы закрытия показываются из мастер-сделки
+// общим компонентом `components/deal/MasterDocs.jsx` — вторая, ручная копия расходилась бы с 1С.
 export const DEAL_DOCS = [
   { kind: 'creatives', label: 'Креативы', creatives: true },
-  { kind: 'ds', label: 'Доп. соглашение', short: 'ДС' },
-  { kind: 'invoice', label: 'Счёт' },
-  { kind: 'upd', label: 'УПД' },
   { kind: 'report', label: 'Отчёт' },
-  { kind: 'act', label: 'Акт' },
 ]
 
 // Скачивание файла сделки — через общую точку (lib/download). Реэкспорт под прежним
@@ -63,7 +62,7 @@ export function pickAndUploadDoc(dealId, kind, onDone, onBusy) {
       await api.post(`/sales/deals/${dealId}/files/${kind}`, fd,
         { ...auth(), headers: { ...(auth().headers || {}), 'Content-Type': 'multipart/form-data' } })
       onDone && onDone()
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось загрузить файл') }
+    } catch (e) { alert(detailText(e, 'Не удалось загрузить файл')) }
     finally { onBusy && onBusy('') }
   }
   inp.click()
@@ -73,7 +72,7 @@ export async function deleteDoc(dealId, kind, onDone, onBusy) {
   if (!window.confirm('Удалить документ?')) return
   onBusy && onBusy(kind)
   try { await api.delete(`/sales/deals/${dealId}/files/${kind}`, auth()); onDone && onDone() }
-  catch (e) { alert(e.response?.data?.detail || 'Не удалось удалить') }
+  catch (e) { alert(detailText(e, 'Не удалось удалить')) }
   finally { onBusy && onBusy('') }
 }
 
@@ -92,10 +91,11 @@ export function docState(deal, kind) {
   }
   // ДС читается по ВЫПУЩЕННОМУ приложению, а не по файлу: файла у него больше нет —
   // документ собирается у нас. Черновик — «в работе»: номер ещё не занят.
+  // Все ДС сделки, а не первый: у сделки с допами их два (13.11.2026). Готово — когда выпущены все.
   if (kind === 'ds') {
-    const a = (deal.annexes || [])[0]
-    if (!a) return 2
-    return a.is_draft ? 1 : 0
+    const all = deal.annexes || []
+    if (!all.length) return 2
+    return all.every(a => !a.is_draft) ? 0 : 1
   }
   // Креативы — по прикреплённым на сборке, а не по файлу сделки (27.09.2026).
   if (kind === 'creatives') return (deal.creatives_ready || 0) > 0 ? 0 : 2

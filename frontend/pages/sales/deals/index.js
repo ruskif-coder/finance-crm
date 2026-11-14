@@ -24,6 +24,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
 import { todayMsk } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
+import { detailText } from '@/lib/loadError'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -111,7 +112,7 @@ export default function SalesRegistry2() {
       await api.post(entityModal === 'agency' ? '/sales/directories/agencies' : '/sales/directories/producers', f, auth())
       setEntityModal(null)
       api.get('/sales/filters', auth()).then(r => setFopts(r.data || {})).catch(() => {})  // обновляем опции пикеров
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') }
+    } catch (e) { alert(detailText(e, 'Не удалось создать')) }
     finally { setEntSaving(false) }
   }
   const [editTitleId, setEditTitleId] = useState(null)
@@ -234,7 +235,7 @@ export default function SalesRegistry2() {
       const [reg, sum] = await Promise.all([api.get('/sales/deals?' + dq.toString(), auth()), api.get('/sales/dashboard?' + sumq.toString(), auth())])
       if (seq !== loadSeq.current) return     // пришёл устаревший ответ — игнорируем
       setDeals(reg.data.items || []); setDealsTotal(reg.data.total || 0); setOffset(newOffset); setSummary(sum.data)
-    } catch (e) { if (seq !== loadSeq.current) return; if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Не удалось загрузить') }
+    } catch (e) { if (seq !== loadSeq.current) return; if (e.response?.status === 401) return router.push('/login'); setErr(detailText(e, 'Не удалось загрузить')) }
     finally { if (seq === loadSeq.current) setLoading(false) }
   }
 
@@ -290,13 +291,13 @@ export default function SalesRegistry2() {
       // где чинится, а не одну строку в системном окне без подробностей.
       setEditResult(r.data)
       setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '', override_reason: '' }); load(offset)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось применить')) } finally { setSaving(false) }
   }
   const deleteBulk = async () => {
     if (!window.confirm(`Удалить ${selDealIds.length} сделок вместе со всем, что к ним привязано у нас (медиапланы, РК, сборка, сверка, файлы)? Действие необратимо. Если что-то уже ушло наружу — DSP, ОРД, кабинет площадки, мастер-сделка — не удалится ничего.`)) return
     setSaving(true); setErr('')
     try { const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds }, auth()); alert(r.data.message); setSelDeals({}); load(offset) }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') } finally { setSaving(false) }
+    catch (e) { setErr(detailText(e, 'Не удалось удалить')) } finally { setSaving(false) }
   }
   const btnAcc = { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }
   // кнопки в строке меню разделов — высота как у вкладок (padding 6×14)
@@ -311,7 +312,7 @@ export default function SalesRegistry2() {
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
   }
   const openPicker = (field, d, e) => {
     if (!canEdit) return
@@ -333,7 +334,7 @@ export default function SalesRegistry2() {
             const id = r.data.id
             setBrandsByAdv(m => ({ ...m, [d.advertiser_id]: [...(m[d.advertiser_id] || []), { value: id, label: name }].sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru')) }))
             patchCell(d.id, { brand_id: id }, { brand_id: id, brand: name }); setVpop(null)
-          } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать бренд') }
+          } catch (e) { alert(detailText(e, 'Не удалось создать бренд')) }
         } : undefined },
       service: { title: 'Услуга', options: productOpts.map(o => ({ value: o.value, label: o.label || o.value })), value: d.product, apply: (v) => patchCell(d.id, { product: v }, { product: v }) },
     }[field]

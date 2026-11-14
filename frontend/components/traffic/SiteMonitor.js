@@ -12,6 +12,7 @@ import { MONO, card, CAP, btn, inp, chip, cell, SortHead } from '@/components/sa
 import api, { auth } from '@/lib/api'
 import { fmtDateTime } from '@/lib/dates'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
 
 const ST = {
   ok: ['доступен', 'var(--income-tint)', 'var(--income-fg)'],
@@ -47,14 +48,14 @@ export default function SiteMonitor({ mayEdit }) {
   }
   const load = useCallback(async () => {
     try { fromServer((await api.get('/traffic-catalog/site-monitor', auth())).data) }
-    catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось загрузить список') }
+    catch (e) { setMsg(detailText(e, 'Не удалось загрузить список')) }
   }, [])
   useEffect(() => { load() }, [load])
 
   const runOne = async (url) => {
     setBusy(url); setMsg('')
     try { fromServer((await api.post('/traffic-catalog/site-monitor/run', { url }, auth())).data) }
-    catch (e) { setMsg(e?.response?.data?.detail || 'Проверка не удалась') }
+    catch (e) { setMsg(detailText(e, 'Проверка не удалась')) }
     setBusy('')
   }
   const runAll = async () => {
@@ -62,7 +63,7 @@ export default function SiteMonitor({ mayEdit }) {
     try {
       await api.post('/traffic-catalog/site-monitor/run', {}, auth())
       setMsg('Проверка всех сайтов запущена — займёт несколько минут; обновите список позже')
-    } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось запустить') }
+    } catch (e) { setMsg(detailText(e, 'Не удалось запустить')) }
     setBusy('')
   }
   const setMode = async (r, mode) => {
@@ -73,14 +74,14 @@ export default function SiteMonitor({ mayEdit }) {
         : await api.put('/traffic-catalog/site-monitor/extra-mode', { url: r.url, site_check: mode }, auth())
       fromServer(res.data)
     }
-    catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сменить режим') }
+    catch (e) { setMsg(detailText(e, 'Не удалось сменить режим')) }
   }
   const saveLists = async () => {
     setBusy('lists'); setMsg('')
     try {
       fromServer((await api.put('/traffic-catalog/site-monitor/settings', { extra, dsp_exclude: exclude }, auth())).data)
       setMsg('Списки сохранены')
-    } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setMsg(detailText(e, 'Не удалось сохранить')) }
     setBusy('')
   }
 

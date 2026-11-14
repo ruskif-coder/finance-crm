@@ -9,6 +9,7 @@ import { fmtDate, todayMsk } from '@/lib/dates'
 import { moneyNum } from '@/lib/money'
 import { defaultValidFrom, workBonuses } from '@/lib/agencyTerms.mjs'
 import { CAPS, Card, Field, Pick, Scroll, Title } from './kit'
+import { detailText } from '@/lib/loadError'
 
 const COLS = 'minmax(120px,.9fr) minmax(150px,1.1fr) minmax(90px,.7fr) minmax(280px,2.6fr) minmax(170px,1.2fr) 120px 150px 40px'
 // Креативы / отчёты бонусом (владелец 27.10.2026): флажок и «при каком условии»; снял флажок — комментарий не сохранится
@@ -50,7 +51,7 @@ function Editor({ item, opts, canEdit, onClose, onSaved }) {
       if (w.id) await api.put(`/agency-terms/work/${w.id}`, body, auth())
       else await api.post('/agency-terms/work', body, auth())
       onSaved()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
   const field = (label, el, hint) => <Field label={label} hint={hint}>{el}</Field>
   const footer = (
@@ -96,7 +97,7 @@ export default function WorkTab({ opts, canEdit, tick }) {
   const [agency, setAgency] = useState('')
   const [edit, setEdit] = useState(null)
   const load = () => api.get('/agency-terms/work', auth()).then((r) => { setItems(r.data); setErr('') })
-    .catch((e) => setErr(e.response?.data?.detail || 'Условия работы не загрузились'))
+    .catch((e) => setErr(detailText(e, 'Условия работы не загрузились')))
   useEffect(() => { load() }, [tick])          // eslint-disable-line react-hooks/exhaustive-deps
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -108,7 +109,7 @@ export default function WorkTab({ opts, canEdit, tick }) {
     .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'))
   const removeItem = async (w) => {
     if (!window.confirm('Удалить условие работы?')) return
-    try { await api.delete(`/agency-terms/work/${w.id}`, auth()); load() } catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') }
+    try { await api.delete(`/agency-terms/work/${w.id}`, auth()); load() } catch (e) { setErr(detailText(e, 'Не удалось удалить')) }
   }
   return (
     <>

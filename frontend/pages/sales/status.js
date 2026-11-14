@@ -15,6 +15,7 @@ import { grp } from '@/lib/salesFormat'
 import { todayMsk } from '@/lib/dates'
 import { COL_LABEL, COL_LIGHT, colOf, monthName, noteKey, quarterList, quarterOf, quarterStart, shiftMonth, window3 } from '@/lib/salesStatus'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const MONO = "'JetBrains Mono', monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -82,7 +83,7 @@ export default function SalesStatusPage() {
     const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил месяц — старый ответ приходил последним
     api.get('/sales-status', { ...auth(), params: { frm: months[0], to: months[2] } })
       .then(r => { if (fresh()) { setData(r.data); setErr('') } })
-      .catch(e => { if (fresh()) setErr(e.response?.data?.detail || 'Не удалось загрузить статусы продаж') })
+      .catch(e => { if (fresh()) setErr(detailText(e, 'Не удалось загрузить статусы продаж')) })
   }, [months[0]]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
   // Вернулись на вкладку — свежие сделки; пока в панели несохранённые переносы, не перечитываем
@@ -175,23 +176,23 @@ export default function SalesStatusPage() {
       api.put('/sales-status/note', { ...tgt, field, value }, auth())
         .then(r => setData(dd => ({ ...dd, notes: [...dd.notes.filter(n => noteKey(n) !== noteKey(r.data)), r.data] })))
         .then(() => flash(field.startsWith('meet') ? 'Встреча сохранена' : 'Комментарий сохранён'))
-        .catch(e => flash(e.response?.data?.detail || 'Не сохранилось'))
+        .catch(e => flash(detailText(e, 'Не сохранилось')))
     },
     remind: (body) => {
       api.put('/sales-status/reminder', body, auth())
         .then(() => { flash(`Будильник на ${body.remind_on.slice(8, 10)}.${body.remind_on.slice(5, 7)} — придёт в 09:00 в Telegram и на почту`); load() })
-        .catch(e => flash(e.response?.data?.detail || 'Будильник не поставился'))
+        .catch(e => flash(detailText(e, 'Будильник не поставился')))
     },
     unremind: (id) => {
       api.delete(`/sales-status/reminder/${id}`, auth())
         .then(() => { flash('Будильник снят'); load() })
-        .catch(e => flash(e.response?.data?.detail || 'Будильник не снялся'))
+        .catch(e => flash(detailText(e, 'Будильник не снялся')))
     },
     date: (d, iso) => {
       api.put(`/sales-status/deal/${d.id}/date`, { date: iso }, auth())
         .then(() => setData(dd => ({ ...dd, deals: dd.deals.map(x => (x.id === d.id ? { ...x, status_date: iso, status_date_kind: 'manual' } : x)) })))
         .then(() => flash(`${d.code}: дата статуса ${iso.slice(8, 10)}.${iso.slice(5, 7)}`))
-        .catch(e => flash(e.response?.data?.detail || 'Дата не сохранилась'))
+        .catch(e => flash(detailText(e, 'Дата не сохранилась')))
     },
   }
 
@@ -203,7 +204,7 @@ export default function SalesStatusPage() {
       setMoves({})
     } catch (e) {
       setSaving(false)
-      flash(e.response?.data?.detail || 'Переносы не сохранились')
+      flash(detailText(e, 'Переносы не сохранились'))
       return
     }
     setSaving(false)

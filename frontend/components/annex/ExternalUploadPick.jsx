@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import { MONO, Modal, inp, btn, primaryBtn } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 // Внешний ДС грузят в пакет, где ДС ещё не подтверждены: «черновик» (ДС создаст кнопка) и «согласование» (черновик уже есть).
 const OPEN = ['черновик', 'согласование']
@@ -40,7 +41,7 @@ export default function ExternalUploadPick() {
       if (!draft) { setErr(`${code}: черновика ДС нет — ДС пакета уже подтверждены`); return }
       router.push(`/directory/annexes/${draft.id}?external=1`)
     } catch (e) {
-      setErr(`${code}: ${e?.response?.data?.detail || 'не получилось'}`)
+      setErr(`${code}: ${detailText(e, 'не получилось')}`)
     } finally { setBusy('') }
   }
 

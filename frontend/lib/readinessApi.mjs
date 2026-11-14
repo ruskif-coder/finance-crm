@@ -85,7 +85,7 @@ const FIELD_OF = {
   ct: [['номер', 'number'], ['Вид ДС', 'annex_word'], ['ссылк', 'document_url'], ['дата', 'date']],
 }
 function toErrors(e, block) {
-  const d = e?.response?.data?.detail ?? e?.detail ?? e?.message ?? 'Не сохранилось'
+  const d = e?.response?.data?.detail ?? e?.detail ?? e?.message ?? 'Не сохранилось'  // detail-ok: список 422 разбирается ниже
   const text = Array.isArray(d) ? d.map(x => x.msg || String(x)).join('; ') : String(d)
   const hit = (FIELD_OF[block] || []).find(([word]) => text.includes(word))
   const key = hit ? (e?.ref != null ? `${e.ref}.${hit[1]}` : hit[1]) : '_'

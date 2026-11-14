@@ -37,10 +37,11 @@ const FACT_TONE = {
   off:  { bg: 'var(--bg-subtle)',    bd: 'var(--border-card)',    fg: 'var(--text-muted)',   mark: '·' },
 }
 
-function FactChip({ label, value, tone }) {
+/** Плашка состояния — общая с «Сборкой» в расхлопе «Моих сделок» (13.11.2026). */
+export function FactChip({ label, value, tone, title }) {
   const t = FACT_TONE[tone] || FACT_TONE.off
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '8px 12px',
+    <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '8px 12px',
       background: t.bg, border: `1px solid ${t.bd}`, borderRadius: 11, minWidth: 0 }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         width: 20, height: 20, flex: '0 0 20px', borderRadius: 6, background: 'var(--bg-card)',

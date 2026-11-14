@@ -15,8 +15,10 @@ export const NAV = data.sections
 const itemAllowed = (it, perms, isAdmin) =>
   it.adminOnly ? !!isAdmin : can(perms, it.perm, 'view')
 
+// `menu: false` — экран в карте (охрана правом, подсветка раздела, обход e2e), но не в меню и не точка входа: старый дашборд
+// аккаунта открывается ссылкой с нового (владелец 14.11.2026).
 export const allowedItems = (section, perms, isAdmin) =>
-  section.items.filter(it => itemAllowed(it, perms, isAdmin))
+  section.items.filter(it => it.menu !== false && itemAllowed(it, perms, isAdmin))
 
 // Раздел без единого доступного экрана не показывается вовсе.
 export const allowedSections = (perms, isAdmin) =>

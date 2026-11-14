@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { Modal, btnSm, primaryBtn, MONO, th, td } from '@/components/salesTableKit'
 import { Cube } from '@/components/LogoLoader'
 import api from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const KIND = { creative: 'креатив', targeting: 'таргетинг', erid: 'ЕРИД копии' }
 const FIELD = { link: 'ссылка', adomain: 'конечный URL', pixel: 'пиксель WR', erid: 'ЕРИД' }
@@ -21,7 +22,7 @@ export default function DspRefreshModal({ row, auth, onClose, onDone }) {
     let alive = true
     api.get(`/traffic-dashboard/campaign/${row.id}/dsp-refresh`, auth())
       .then(r => { if (alive) setPlan(r.data) })
-      .catch(e => { if (alive) setErr(e?.response?.data?.detail || 'Не удалось прочитать состояние в DSP') })
+      .catch(e => { if (alive) setErr(detailText(e, 'Не удалось прочитать состояние в DSP')) })
     return () => { alive = false }
   }, [row.id, auth])
 
@@ -38,7 +39,7 @@ export default function DspRefreshModal({ row, auth, onClose, onDone }) {
           { kind: it.kind, ref: String(it.ref) }, auth())
         ok.push(it.what)
       } catch (e) {
-        failed.push(`${it.what}: ${e?.response?.data?.detail || 'ошибка'}`)
+        failed.push(`${it.what}: ${detailText(e, 'ошибка')}`)
       }
     }
     setRun({ done: todo.length, total: todo.length, current: null })

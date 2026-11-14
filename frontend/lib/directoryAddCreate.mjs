@@ -64,7 +64,7 @@ export function validateNew(kind, values, rights) {
 }
 
 const errText = (e) => {
-  const d = e?.response?.data?.detail ?? e?.detail
+  const d = e?.response?.data?.detail ?? e?.detail  // detail-ok: список 422 разбирается ниже
   if (Array.isArray(d)) return d.map(x => `${(x.loc || []).slice(-1)[0] || ''}: ${x.msg || ''}`.trim()).join('; ')
   return typeof d === 'string' ? d : 'Шаг не прошёл'
 }

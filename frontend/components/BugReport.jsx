@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
 import { UI, MONO, card, inp, primaryBtn, btn, Z } from './salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const MAX_FILES = 5
 const MAX_MB = 10
@@ -88,7 +89,7 @@ export default function BugReport({ size = 32 }) {
       await api.post(`/bugs/${id}/sent`, {}, auth())
       setDone({ id, failed })
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось отправить заявку')
+      setErr(detailText(e, 'Не удалось отправить заявку'))
     } finally { setBusy(false) }
   }
 

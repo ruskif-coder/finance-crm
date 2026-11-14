@@ -9,6 +9,7 @@ import { MONO, UI, card, inp, th, td, btn, primaryBtn } from '@/components/sales
 import api, { auth } from '@/lib/api'
 import { getPermissions, can } from '@/lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const ru = (d) => (d ? String(d).split('-').reverse().join('.') : '—')
 
@@ -103,7 +104,7 @@ export default function RkCheckPage() {
       const r = await api.get('/rk-check', auth())
       setData(r.data)
       setErr('')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить проверки РК') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить проверки РК')) }
   }, [])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)
@@ -113,7 +114,7 @@ export default function RkCheckPage() {
     try {
       await api.post('/rk-check/run', {}, auth())
       await load()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Перепроверка не удалась') }
+    } catch (e) { setErr(detailText(e, 'Перепроверка не удалась')) }
     setBusy(false)
   }
 

@@ -5,6 +5,7 @@ import Navbar, { can } from '../components/Navbar'
 import api, { auth } from '../lib/api'
 import { canDelete } from '../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 export default function Pipelines({ embedded = false } = {}) {
   const router = useRouter()
@@ -25,7 +26,7 @@ export default function Pipelines({ embedded = false } = {}) {
     try {
       const r = await api.get('/sales/directories/pipelines', auth())
       setItems(r.data.items)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить воронки') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить воронки')) }
     finally { setLoading(false) }
   }
 
@@ -61,7 +62,7 @@ export default function Pipelines({ embedded = false } = {}) {
       try {
         const r = await api.get(`/sales/directories/pipelines/${p.id}/stages`, auth())
         setStages(s => ({ ...s, [p.id]: r.data }))
-      } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить стадии') }
+      } catch (e) { setError(detailText(e, 'Не удалось загрузить стадии')) }
     }
   }
 
@@ -82,7 +83,7 @@ export default function Pipelines({ embedded = false } = {}) {
         },
       }))
       flash(r.data.message)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось привязать стадию') }
+    } catch (e) { setError(detailText(e, 'Не удалось привязать стадию')) }
   }
 
   // Цвет слоя денег — тот же язык, что в реестре сделок.
@@ -97,7 +98,7 @@ export default function Pipelines({ embedded = false } = {}) {
         { is_tracked: !p.is_tracked }, auth())
       flash(`«${p.name}»: ${!p.is_tracked ? 'парсится' : 'не парсится'}`)
       load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось изменить') }
+    } catch (e) { setError(detailText(e, 'Не удалось изменить')) }
   }
 
   const rename = async (p) => {
@@ -110,7 +111,7 @@ export default function Pipelines({ embedded = false } = {}) {
       const r = await api.put(`/sales/directories/pipelines/${p.id}/name`, { name }, auth())
       flash(`Переименовано: «${p.name}» → «${r.data.name}»`)
       load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось переименовать') }
+    } catch (e) { setError(detailText(e, 'Не удалось переименовать')) }
   }
 
   const remove = async (p) => {
@@ -124,7 +125,7 @@ export default function Pipelines({ embedded = false } = {}) {
       const r = await api.delete(`/sales/directories/pipelines/${p.id}`, auth())
       flash(r.data.message)
       load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить') }
+    } catch (e) { setError(detailText(e, 'Не удалось удалить')) }
   }
 
   const btn = (variant) => ({
@@ -142,7 +143,7 @@ export default function Pipelines({ embedded = false } = {}) {
     try {
       await api.put(`/sales/directories/pipelines/${p.id}/flow`, { closing_flow: value }, auth())
       setItems(xs => xs.map(x => x.id === p.id ? { ...x, closing_flow: value } : x))
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сменить цикл') }
+    } catch (e) { setError(detailText(e, 'Не удалось сменить цикл')) }
   }
 
   return (
@@ -213,6 +214,7 @@ export default function Pipelines({ embedded = false } = {}) {
                                 style={{ fontSize: 12, padding: '3px 6px', borderRadius: 7, border: '1px solid var(--border-card)' }}>
                                 <option value="полный цикл">полный цикл</option>
                                 <option value="контур аккаунта">контур аккаунта</option>
+                                <option value="приоритезация">приоритезация</option>
                               </select>
                             ) : <span style={{ fontSize: 12 }}>{p.closing_flow}</span>}
                             <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{(p.services || []).join(', ') || 'услуг нет'}</span>

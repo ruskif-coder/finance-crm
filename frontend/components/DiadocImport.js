@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { makeApi } from '@/lib/http'
 import { card, btn, inp, sel, th, td, MONO, UI } from '@/components/salesTableKit'
 import { fmtDateFull } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 // Импорт реестра документов Диадока (ручная выгрузка CSV из веб-интерфейса).
 // Бэкенд: app/routers/diadoc.py — матч по ИНН + номеру счёта, слабое правило по сумме
@@ -61,7 +62,7 @@ export default function DiadocImport() {
       setPicked(init)
       setPreview(res.data)
     } catch (e) {
-      setError(e.response?.data?.detail || 'Не удалось разобрать файл')
+      setError(detailText(e, 'Не удалось разобрать файл'))
     } finally { setLoading(false) }
   }
 
@@ -93,7 +94,7 @@ export default function DiadocImport() {
       setResult(res.data)
       setPreview(null); setFile(null); setPicked({})
     } catch (e) {
-      setError(e.response?.data?.detail || 'Ошибка применения')
+      setError(detailText(e, 'Ошибка применения'))
     } finally { setApplying(false) }
   }
 

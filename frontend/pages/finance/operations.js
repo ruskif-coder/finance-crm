@@ -12,7 +12,7 @@ import { PeriodSelect } from '@/components/PeriodSelect'
 import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { T } from '@/lib/tokens'
-import { errText, isAuth } from '@/lib/loadError'
+import { errText, isAuth, detailText } from '@/lib/loadError'
 import { nowTime, fileStamp, todayMsk, monthEnd } from '@/lib/dates'
 import { sanMoney, moneyNum } from '@/lib/money'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -509,7 +509,7 @@ export default function Operations2() {
       if (newId && newFiles.length) await attachToExisting(newId, newFiles)
       setCreateForm(emptyForm()); setNewFiles([]); setCreateOpen(false); loadOps()
     }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') } finally { setSaving(false) }
+    catch (e) { alert(detailText(e, 'Не удалось создать')) } finally { setSaving(false) }
   }
   const downloadTemplate = async () => {
     try {
@@ -543,7 +543,7 @@ export default function Operations2() {
   const saveEdit = async () => {
     setSaving(true)
     try { await api(tok()).put(`/operations/${editing.id}`, cleanOp(editing)); setEditing(null); setEditFiles([]); loadOps() }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') } finally { setSaving(false) }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить')) } finally { setSaving(false) }
   }
 
   // Приложенные сканы. В правке операция уже существует — файл уходит на сервер сразу.
@@ -570,14 +570,14 @@ export default function Operations2() {
       }
       await loadOpFiles(id)
     } catch (e) {
-      alert(e.response?.data?.detail || 'Не удалось приложить файл')
+      alert(detailText(e, 'Не удалось приложить файл'))
       await loadOpFiles(id)
     } finally { setFilesBusy(false) }
   }
   const removeFromExisting = async (id, fl) => {
     if (!confirm(`Убрать файл «${fl.original_name}»?`)) return
     try { await api(tok()).delete(`/operations/${id}/files/${fl.id}`); await loadOpFiles(id) }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось удалить файл') }
+    catch (e) { alert(detailText(e, 'Не удалось удалить файл')) }
   }
   // Список для формы создания: File-объекты браузера приводим к той же форме,
   // что приходит с сервера, чтобы компонент формы не различал два случая.
@@ -594,15 +594,15 @@ export default function Operations2() {
   const mobileSave = async (body, id) => {
     const b = cleanOp(body)
     try { if (id) await api(tok()).put(`/operations/${id}`, b); else await api(tok()).post('/operations/', b); loadOps(); return true }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
   }
   // 409 — у операции есть частичные оплаты: удалить можно только принудительно, с
   // паролем. Остальные отказы показываем текстом сервера, а не общим «не удалось».
   const deleteOne = async (id) => {
     try { await api(tok()).delete(`/operations/${id}`); loadOps() }
     catch (e) {
-      if (e?.response?.status === 409) setForceDel({ id, message: e.response.data?.detail || '' })
-      else alert(e?.response?.data?.detail || 'Не удалось удалить')
+      if (e?.response?.status === 409) setForceDel({ id, message: detailText(e, '') })
+      else alert(detailText(e, 'Не удалось удалить'))
     }
   }
   const mobileDelete = (id) => deleteOne(id)
@@ -630,7 +630,7 @@ export default function Operations2() {
     if (Object.keys(body).length <= 1) { alert('Заполните хотя бы одно поле'); return }
     setSaving(true)
     try { await api(tok()).patch('/operations/bulk', body); setSel({}); setBulk({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' }); loadOps() }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
+    catch (e) { alert(detailText(e, 'Не удалось применить')) } finally { setSaving(false) }
   }
   // Цепочка в выделении — сервер отвечает 428 и просит пароль; окно пароля повторяет
   // тот же запрос с ним (решение владельца 23.09.2026).
@@ -640,7 +640,7 @@ export default function Operations2() {
     setSaving(true)
     try { await bulkDelete(selIds); setSel({}); loadOps() }
     catch (e) {
-      const d = e?.response?.data?.detail
+      const d = e?.response?.data?.detail  // detail-ok: объект need_password + typeof === 'string'
       if (e?.response?.status === 428 && d?.need_password) setBulkPwd({ ids: selIds, message: d.message })
       else alert((typeof d === 'string' && d) || 'Не удалось удалить')
     } finally { setSaving(false) }
@@ -653,12 +653,12 @@ export default function Operations2() {
       const { data } = await api(tok()).post('/operations/pay-plan', { ids: selIds })
       if (data.skipped) alert(`В план: ${data.added}. Пропущено: ${data.skipped} — в план встают только неоплаченные списания (статус «ПЛАН ОПЛАТ»).`)
       setSel({}); loadOps()
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось поставить в план') } finally { setSaving(false) }
+    } catch (e) { alert(detailText(e, 'Не удалось поставить в план')) } finally { setSaving(false) }
   }
   const outOfPlan = async () => {
     setSaving(true)
     try { await api(tok()).delete('/operations/pay-plan', { data: { ids: selIds } }); setSel({}); loadOps() }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось убрать из плана') } finally { setSaving(false) }
+    catch (e) { alert(detailText(e, 'Не удалось убрать из плана')) } finally { setSaving(false) }
   }
   const title = `${payPlan ? 'План оплат' : 'Операции'} · Финансы | SIMB-AD ERP`
 

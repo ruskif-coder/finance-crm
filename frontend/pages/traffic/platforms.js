@@ -12,6 +12,7 @@ import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
 import { toReport, trafficOptions } from '@/lib/platformsReport'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 export default function PlatformsPage() {
   const router = useRouter()
@@ -25,7 +26,7 @@ export default function PlatformsPage() {
     try {
       setRaw((await api.get(`/traffic-dashboard/platforms${sc ? `?scope=${encodeURIComponent(sc)}` : ''}`, auth())).data)
       setErr('')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить отчёт') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить отчёт')) }
   }, [sc, router.isReady])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)

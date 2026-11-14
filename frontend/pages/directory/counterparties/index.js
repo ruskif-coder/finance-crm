@@ -14,6 +14,7 @@ import SectionTabs from '@/components/SectionTabs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
+import { detailText } from '@/lib/loadError'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -79,7 +80,7 @@ export default function Counterparties() {
       setItems(res.data.items)
     } catch (e) {
       if (e.response?.status === 401) { router.push('/login'); return }
-      setError(e.response?.data?.detail || 'Не удалось загрузить')
+      setError(detailText(e, 'Не удалось загрузить'))
     } finally { setLoading(false) }
   }
 
@@ -111,7 +112,7 @@ export default function Counterparties() {
       }, auth())
       await load()
       return true
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при сохранении'); return false }
+    } catch (e) { alert(detailText(e, 'Ошибка при сохранении')); return false }
     finally { setSaving(false) }
   }
 
@@ -135,7 +136,7 @@ export default function Counterparties() {
         is_own_company: editDraft.is_own_company,
       }, auth())
       setEditId(null); load()
-    } catch (e) { setEditError(e.response?.data?.detail || 'Ошибка при сохранении') }
+    } catch (e) { setEditError(detailText(e, 'Ошибка при сохранении')) }
     finally { setSaving(false) }
   }
 

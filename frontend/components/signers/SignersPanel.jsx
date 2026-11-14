@@ -7,6 +7,7 @@ import api, { auth } from '@/lib/http'
 import { MONO, inpSm, btnSm } from '@/components/salesTableKit'
 import { fmtDateFull } from '@/lib/salesFormat'
 import { daysUntil } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 const EMPTY = { director_name: '', signer_position: '', signer_basis: '', valid_until: '' }
 const expired = (s) => !!s.valid_until && daysUntil(String(s.valid_until).slice(0, 10)) < 0
@@ -66,7 +67,7 @@ export default function SignersPanel({ counterpartyId, signers, canEdit, onChang
   const run = async (fn) => {
     setBusy(true); setErr('')
     try { await fn(); setEdit(null); await onChange() }
-    catch (e) { setErr((e.response && e.response.data && e.response.data.detail) || 'Не удалось сохранить подписанта') }
+    catch (e) { setErr(detailText(e, 'Не удалось сохранить подписанта')) }
     finally { setBusy(false) }
   }
   const list = signers || []

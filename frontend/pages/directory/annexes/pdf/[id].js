@@ -18,6 +18,7 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import api, { auth } from '@/lib/api'
 import AnnexDocument from '@/components/annex/AnnexDocument'
+import { detailText } from '@/lib/loadError'
 
 export default function AnnexPrint() {
   const router = useRouter()
@@ -31,7 +32,7 @@ export default function AnnexPrint() {
     if (!id) return
     api.get(`/annexes/${id}`, auth())
       .then(r => setD(r.data.doc ? { ...r.data.doc, rows: r.data.rows || [] } : r.data))
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить приложение'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить приложение')))
   }, [id])
 
   // Флаг для сайдкара: он ждёт его, прежде чем печатать, — иначе в PDF уедет пустая

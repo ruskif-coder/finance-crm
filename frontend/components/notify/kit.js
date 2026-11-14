@@ -13,8 +13,9 @@
  * `components/salesTableKit.js` и здесь не переопределяются.
  */
 import { UI } from '../salesTableKit'
+import { detailText } from '@/lib/loadError'
 
-export const msg = e => e?.response?.data?.detail || e?.message || 'Ошибка'
+export const msg = e => detailText(e, e?.message || 'Ошибка')
 
 /** Тон события: четыре слова, одни и те же в реестре, в панели, в письме и здесь. */
 export const TONE_UI = {

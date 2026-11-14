@@ -9,6 +9,7 @@ import { can, getPermissions } from '@/lib/auth'
 import { REVERT_NOTE } from '@/lib/masterNext'
 import { Modal, UI } from '@/components/salesTableKit'
 import { lineBtn } from '@/components/master/kit'
+import { detailText } from '@/lib/loadError'
 
 export default function RevertStage({ m, onDone }) {
   const [may, setMay] = useState(false)
@@ -25,7 +26,7 @@ export default function RevertStage({ m, onDone }) {
   const send = async () => {
     setBusy(true); setErr('')
     try { onDone((await api.post(`/master-deals/${m.code}/back`, { to, reason: reason.trim() }, auth())).data); setOpen(false) }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось вернуть') } finally { setBusy(false) }
+    catch (e) { setErr(detailText(e, 'Не удалось вернуть')) } finally { setBusy(false) }
   }
   const btn = lineBtn({ tone: 'secondary', size: 'sm', busy })
   return (

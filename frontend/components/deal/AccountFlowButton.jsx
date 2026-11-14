@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { UI } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const LABEL = { launch: 'Запустить', finish: 'Завершить' }
 const ASK = {
@@ -24,7 +25,7 @@ export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, 
   const [err, setErr] = useState('')
 
   const load = useCallback(() => {
-    api.get(`/final-recon/deal/${dealId}/flow`, auth()).then(r => setAction(r.data.action || null)).catch(e => { setAction(null); setErr(e?.response?.data?.detail || 'Не удалось узнать, доступна ли кнопка') })
+    api.get(`/final-recon/deal/${dealId}/flow`, auth()).then(r => setAction(r.data.action || null)).catch(e => { setAction(null); setErr(detailText(e, 'Не удалось узнать, доступна ли кнопка')) })
   }, [dealId])
   useEffect(() => { load() }, [load, stageId])
 
@@ -32,7 +33,7 @@ export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, 
     if (!window.confirm(ASK[action])) return
     setBusy(true); setErr('')
     try { await api.post(`/final-recon/deal/${dealId}/${action}`, {}, auth()); if (onDone) onDone() }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось перевести сделку') }
+    catch (e) { setErr(detailText(e, 'Не удалось перевести сделку')) }
     finally { setBusy(false) }
   }
   // Контур аккаунта — «Запустить/Завершить» переводят сразу; иначе — действие следующей стадии через диалог; нет следующей — кнопки нет.

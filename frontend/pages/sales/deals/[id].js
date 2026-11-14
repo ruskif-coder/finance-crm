@@ -8,6 +8,7 @@ import api, { auth } from '@/lib/api'
 import { detailText } from '@/lib/loadError'
 import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import BriefFiles from '@/components/deal/BriefFiles'
+import MasterDocs, { masterDocsCount } from '@/components/deal/MasterDocs'
 import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
@@ -30,6 +31,7 @@ import CampaignSummary from '@/components/campaign/CampaignSummary'
 import ClosingBlock from '@/components/closing/ClosingBlock'
 import PrioAssembly from '@/components/prio/PrioAssembly'
 import BonusTraffic from '@/components/closing/BonusTraffic'
+import CampaignExtra from '@/components/deal/CampaignExtra'
 import ValuePopover from '@/components/ValuePopover'
 import { productWithSurface } from '@/lib/dealTitle'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -144,14 +146,14 @@ function BriefDialog({ dealId, canEdit, onClose }) {
     setState(s => ({ ...s, loading: true, err: '' }))
     api.get(`/sales/deals/${dealId}/brief`, auth())
       .then(r => setState({ loading: false, text: r.data.brief || '', err: '', saving: false }))
-      .catch(e => setState(s => ({ ...s, loading: false, err: e.response?.data?.detail || 'Не удалось загрузить бриф' })))
+      .catch(e => setState(s => ({ ...s, loading: false, err: detailText(e, 'Не удалось загрузить бриф') })))
   }, [dealId])
 
   const save = () => {
     setState(s => ({ ...s, saving: true, err: '' }))
     api.put(`/sales/deals/${dealId}/brief`, { brief: state.text }, auth())
       .then(() => { setState(s => ({ ...s, saving: false })); onClose() })
-      .catch(e => setState(s => ({ ...s, saving: false, err: e.response?.data?.detail || 'Не удалось сохранить' })))
+      .catch(e => setState(s => ({ ...s, saving: false, err: detailText(e, 'Не удалось сохранить') })))
   }
 
   return (
@@ -204,220 +206,6 @@ function BriefDialog({ dealId, canEdit, onClose }) {
  * Значение приезжает вместе с карточкой (`deal.traffic_brief`), локальное состояние
  * нужно только на время правки — иначе каждый символ уезжал бы на сервер.
  */
-// ── Доп. параметры РК ──
-// Блок-контейнер: сегодня в нём один параметр, но у него уже своё место в лестнице
-// (между «Цели и особенности» и «Креативы») и своя подпись. Следующий параметр будет
-// строкой здесь, а не новым блоком и не полем, приклеенным к соседнему смыслу.
-//
-// ВКЛЮЧЕНИЕ НЕОБРАТИМО для обычного аккаунта (владелец 14.09.2026): оно поднимает
-// требование пикселя в выгрузке в DSP и рождает задачу трафику. Поэтому спрашиваем
-// подтверждение модалкой, а не переключаем молча по клику.
-function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
-  const [ask, setAsk] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  // Способ выбирается В МОДАЛКЕ, вместе с подтверждением: это часть одного решения,
-  // а не отдельная настройка, которую можно переключить после.
-  const [mode, setMode] = useState('own')
-  const [tag, setTag] = useState('')
-  const [ins, setIns] = useState('')
-  // Ссылка на отчёт Weborama (05.11.2026): ляжет в РК, если она собрана; ответ сервера — словами под блоком
-  const [reportUrl, setReportUrl] = useState('')
-  const [note, setNote] = useState('')
-  const on = !!deal.weborama_pixel
-  const external = (deal.weborama_pixel_mode || 'own') === 'external'
-  const canUnset = !!deal.can_unset_weborama_pixel
-  const decided = !!deal.weborama_pixel_decided
-
-  const send = (value) => {
-    setBusy(true); setErr('')
-    const body = value
-      ? { weborama_pixel: true, mode, tag: mode === 'external' ? tag.trim() : null,
-        insertion: mode === 'external' ? ins.trim() : null,
-        report_url: mode === 'external' ? (reportUrl.trim() || null) : null }
-      : { weborama_pixel: false }
-    api.put(`/sales/deals/${dealId}/campaign-extra`, body, auth())
-      .then(r => { setBusy(false); setAsk(false); setNote(r.data.report_url_note || ''); onSaved(r.data) })
-      .catch(e => { setBusy(false); setErr(detailText(e, 'Не удалось сохранить')) })
-  }
-
-  const when = deal.weborama_pixel_at
-    ? fmtDateOfMoment(deal.weborama_pixel_at)
-    : null
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {!!note && <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Отчёт Weborama: {note}</span>}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 20, height: 20, borderRadius: 6, flex: '0 0 20px', marginTop: 1,
-          border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
-          background: on ? 'var(--accent)' : 'var(--bg-card)',
-          color: 'var(--bg-card)', fontSize: 12, fontWeight: 700 }}>{on ? '✓' : ''}</span>
-        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-            Нужен пиксель Weborama
-          </span>
-          <span style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            {!on
-              ? (decided
-                ? 'Решено: не нужен. Вставки в Weborama не заводятся, пиксель в креатив не вшивается, выгрузка в DSP его не требует.'
-                : 'Решение не принято. Выберите «нужен» или «не нужен» — от этого зависит, потребует ли выгрузка в DSP пиксель по каждой площадке.')
-              : external
-                ? `Внешний тег${when ? ', загружен ' + when : ''}. Вставку завёл клиент — свою не заводим. Показы Weborama снимаются по ссылке клиента на отчёт (блок РК ниже), без ссылки — вносятся руками на сверке.`
-                : `Свой${when ? ', заказан ' + when : ''}. Трафик получил задачу; выгрузка в DSP не пойдёт, пока пиксель не получен по всем площадкам.`}
-          </span>
-        </span>
-        {/* ПОКА НЕ РЕШИЛИ — две кнопки, и обе называют решение. «Заказать» в одиночку
-            предлагало только один исход, а второй («не надо») делался бездействием — то
-            есть был неотличим от «забыли». */}
-        {canEdit && !on && !decided && (
-          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
-            <button type="button" onClick={() => send(false)} disabled={busy}
-              style={{ height: 32, padding: '0 14px', borderRadius: 9,
-                border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-                color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700,
-                fontFamily: UI, cursor: busy ? 'default' : 'pointer' }}>
-              {busy ? '…' : 'Не нужен'}
-            </button>
-            <button type="button" onClick={() => setAsk(true)} disabled={busy}
-              style={{ height: 32, padding: '0 14px', borderRadius: 9,
-                border: 'none', background: 'var(--accent)', color: 'var(--bg-card)',
-                fontSize: 12.5, fontWeight: 700, fontFamily: UI, cursor: 'pointer' }}>
-              Нужен
-            </button>
-          </span>
-        )}
-        {/* Решение «не нужен» уже принято — оставляем один ход назад. */}
-        {canEdit && !on && decided && (
-          <button type="button" onClick={() => setAsk(true)} disabled={busy}
-            style={{ marginLeft: 'auto', height: 32, padding: '0 14px', borderRadius: 9,
-              border: 'none', background: 'var(--accent)', color: 'var(--bg-card)',
-              fontSize: 12.5, fontWeight: 700, fontFamily: UI, cursor: 'pointer' }}>
-            Заказать
-          </button>
-        )}
-        {canEdit && on && canUnset && (
-          <button type="button" onClick={() => send(false)} disabled={busy}
-            style={{ marginLeft: 'auto', height: 32, padding: '0 14px', borderRadius: 9,
-              border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-              color: 'var(--danger-fg)', fontSize: 12.5, fontWeight: 700, fontFamily: UI,
-              cursor: busy ? 'default' : 'pointer' }}>
-            {busy ? '…' : 'Снять'}
-          </button>
-        )}
-        {canEdit && on && !canUnset && (
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-cap)',
-            whiteSpace: 'nowrap', marginTop: 6 }}>снимает мастер аккаунта</span>
-        )}
-      </div>
-      {on && external && !!deal.weborama_pixel_tag && (
-        <span style={{ display: 'flex', flexDirection: 'column', gap: 3,
-          background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)',
-          borderRadius: 9, padding: '8px 10px' }}>
-          <span style={{ fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase',
-            color: 'var(--text-cap)' }}>
-            тег показа{deal.weborama_ext_insertion ? ` · вставка ${deal.weborama_ext_insertion}` : ''}
-          </span>
-          {/* Тег целиком, без обрезки: его сверяют с присланным файлом посимвольно,
-              а многоточие в середине делает сверку невозможной. */}
-          <span style={{ fontFamily: MONO, fontSize: 10.5, wordBreak: 'break-all',
-            color: 'var(--text-secondary)', lineHeight: 1.5 }}>{deal.weborama_pixel_tag}</span>
-        </span>
-      )}
-      {!!err && <span style={{ fontSize: 12.5, color: 'var(--danger-fg)' }}>{err}</span>}
-
-      {ask && (
-        <Modal title="Заказать пиксель Weborama?" width={520} onClose={() => { if (!busy) setAsk(false) }}
-          footer={
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setAsk(false)} disabled={busy}
-                style={{ height: 36, padding: '0 16px', borderRadius: 10,
-                  border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-                  color: 'var(--text-secondary)', fontSize: 13, fontFamily: UI, cursor: 'pointer' }}>
-                Отмена
-              </button>
-              <button type="button" onClick={() => send(true)}
-                disabled={busy || (mode === 'external' && !tag.trim())}
-                style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none',
-                  background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13,
-                  fontWeight: 700, fontFamily: UI, cursor: busy ? 'default' : 'pointer',
-                  opacity: busy ? 0.6 : 1 }}>
-                {busy ? 'Заказываю…' : 'Заказать'}
-              </button>
-            </div>
-          }>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 11, fontSize: 13,
-            lineHeight: 1.6, color: 'var(--text-primary)' }}>
-            {/* Способ — первым: от него зависит и что произойдёт, и что надо заполнить. */}
-            <span style={{ display: 'flex', gap: 8 }}>
-              {[['own', 'Получить свой'], ['external', 'Загрузить внешний']].map(([v, l]) => (
-                <button key={v} type="button" onClick={() => setMode(v)}
-                  style={{ flex: 1, height: 34, borderRadius: 9, fontSize: 12.5,
-                    fontWeight: 700, fontFamily: UI, cursor: 'pointer',
-                    border: `1px solid ${mode === v ? 'var(--accent)' : 'var(--border-card)'}`,
-                    background: mode === v ? 'var(--accent-tint)' : 'var(--bg-card)',
-                    color: mode === v ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>
-                  {l}
-                </button>
-              ))}
-            </span>
-
-            {mode === 'own' ? (
-              <>
-                <span>Что произойдёт:</span>
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  · трафик получит задачу «нужен пиксель» в своём кабинете;<br />
-                  · выгрузка креативов в DSP будет отказывать, пока пиксель не получен по всем площадкам;<br />
-                  · тег верификатора вошьётся в разметку каждого креатива.
-                </span>
-              </>
-            ) : (
-              <>
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  Тег из выгрузки клиента — столбец <b>Impression tags</b>. Он один на всю
-                  кампанию: свою вставку заводить не будем. Показы Weborama снимем по ссылке
-                  клиента на отчёт (ниже, можно вписать и позже); без ссылки — руками на сверке.
-                </span>
-                <textarea value={tag} onChange={e => setTag(e.target.value)} rows={4}
-                  placeholder="https://wcm.weborama-tech.ru/…&a.ra=[RANDOM]"
-                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: MONO,
-                    fontSize: 11, lineHeight: 1.5, padding: '9px 10px', borderRadius: 9,
-                    border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-                    color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }} />
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>ID insertion</span>
-                  <input value={ins} onChange={e => setIns(e.target.value)}
-                    placeholder="1526"
-                    style={{ width: 120, height: 32, fontFamily: MONO, fontSize: 12,
-                      padding: '0 9px', borderRadius: 8, border: '1px solid var(--border-card)',
-                      background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                    по нему сверяемся с их отчётом</span>
-                </span>
-                {/* Ссылка на отчёт одной кампании — сервер проверит до сохранения (05.11.2026) */}
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Ссылка на отчёт Weborama · необязательно</span>
-                  <input value={reportUrl} onChange={e => setReportUrl(e.target.value)}
-                    placeholder="https://adap-interface.wbrm.ru/…/reportcenter/permalink/link/hash/…"
-                    style={{ height: 32, fontFamily: MONO, fontSize: 11.5, padding: '0 9px', borderRadius: 8,
-                      border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-                      color: 'var(--text-primary)', outline: 'none' }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                    постоянная ссылка клиента на отчёт ОДНОЙ кампании; РК ещё не собрана — впишете после сборки</span>
-                </span>
-              </>
-            )}
-
-            <span style={{ color: 'var(--warning-fg)' }}>
-              Снять заказ сможет только мастер аккаунта или админ. Действие записывается в журнал.
-            </span>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
 
 function TrafficBrief({ dealId, value, canEdit, onSaved }) {
   const [text, setText] = useState(value || '')
@@ -777,7 +565,7 @@ export default function DealCard() {
       reload()                                             // история пополнилась записью
     } catch (e) {
       setDeal(x => ({ ...x, is_self_promo: prev }))        // не сохранилось — вернуть как было
-      setPromoErr(e.response?.data?.detail || 'Не удалось изменить статус')
+      setPromoErr(detailText(e, 'Не удалось изменить статус'))
     }
   }
 
@@ -841,7 +629,7 @@ export default function DealCard() {
     if (!dealId) return
     api.get(`/ord/deal/${dealId}/assembly`, auth())
       .then(r => { setOrdSummary(r.data); setOrdErr('') })
-      .catch(e => setOrdErr(e.response?.data?.detail || 'Не удалось загрузить состояние'))
+      .catch(e => setOrdErr(detailText(e, 'Не удалось загрузить состояние')))
   }, [dealId])
 
   const loadCreatives = useCallback(() => {
@@ -997,11 +785,11 @@ export default function DealCard() {
   const fileBy = Object.fromEntries((d.files || []).map(f => [f.kind, f]))
   // ДС считается готовым по ВЫПУЩЕННОМУ приложению, а не по файлу: файла у него больше
   // нет вовсе. Черновик не в счёт — номер не занят, документ клиенту не уходил.
-  const annex = (d.annexes || [])[0]
   // Креативы — по прикреплённым на сборке, а не по файлу (как их плитка): до 15.10.2026 счётчик их не видел и показывал «1 из 7» при двух готовых.
-  const docsReady = DOC_KINDS.filter(([k]) => (k === 'ds' ? annex && !annex.is_draft
-    : k === 'creatives' ? (d.creatives_ready || 0) > 0 : fileBy[k])).length
-    + (mp ? 1 : 0)
+  // ДС, счёт и УПД — из мастер-сделки (13.11.2026): каждый документ закрытия считается отдельно.
+  const closing = masterDocsCount(d.master_docs)
+  const docsReady = DOC_KINDS.filter(([k]) => (k === 'creatives' ? (d.creatives_ready || 0) > 0 : fileBy[k])).length
+    + (mp ? 1 : 0) + closing.ready
 
   // скачивание/загрузка/удаление документов — общие хелперы (lib/dealDocs)
   const blobGet = downloadBlob
@@ -1016,7 +804,7 @@ export default function DealCard() {
       const r = await api.post(`/master-deals/deal/${d.id}/start`, {}, auth())
       router.push(`/accounts/master/${r.data.code}`)
     } catch (e) {
-      alert(e.response?.data?.detail || 'Не удалось завести ДС на старте')
+      alert(detailText(e, 'Не удалось завести ДС на старте'))
     } finally { setDocBusy('') }
   }
   const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy)
@@ -1662,7 +1450,7 @@ export default function DealCard() {
               {showBlock('docs') && (<>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={CAPS}>Документы</span>
-                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{docsReady + (d.brief_state === 'filled' ? 1 : 0)} из {DOC_KINDS.length + 2}</span>
+                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{docsReady + (d.brief_state === 'filled' ? 1 : 0)} из {DOC_KINDS.length + 2 + closing.total}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {/* Бриф — первым, над медиапланом (владелец 15.10.2026: из шапки страницы в документы). Открывает тот же диалог. */}
@@ -1702,26 +1490,6 @@ export default function DealCard() {
                         ) : null} />
                     )
                   }
-                  if (kind === 'ds') {
-                    const ann = annex
-                    return (
-                      <DocRow key={kind} ok={!!ann && !ann.is_draft} title={label}
-                        meta={ann
-                          ? `${ann.number || 'черновик'}${ann.date ? ' · ' + dm(ann.date, '') : ''}`
-                          : 'не создано'}
-                        right={ann ? (
-                          <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-                            <span onClick={() => blobGet(`/annexes/${ann.id}/pdf`, `${ann.number || 'ДС'}.pdf`)} style={DOC_ACT}>PDF</span>
-                            <span onClick={() => blobGet(`/annexes/${ann.id}/docx`, `${ann.number || 'ДС'}.docx`)} style={DOC_ACT}>DOC</span>
-                            <a href={`/directory/annexes/${ann.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>↗</a>
-                          </span>
-                        ) : (canEdit ? (
-                          <span onClick={createAnnex} style={DOC_ACT}>
-                            {docBusy === 'ds' ? 'Создаю…' : 'Создать'}
-                          </span>
-                        ) : null)} />
-                    )
-                  }
                   return (
                     <DocRow key={kind} ok={!!f} title={label}
                       meta={busy ? 'загрузка…' : (f ? `${f.filename}${f.size ? ' · ' + Math.max(1, Math.round(f.size / 1024)) + ' КБ' : ''}` : (fromBitrix ? 'из Битрикса — нет' : 'не загружен'))}
@@ -1738,6 +1506,9 @@ export default function DealCard() {
                       } />
                   )
                 })}
+                {/* Документы закрытия — из мастер-сделки: все ДС с долей сделки и комплекты (счёт + УПД) с её строками. */}
+                <MasterDocs docs={d.master_docs} creating={docBusy === 'ds'} onCreate={canEdit ? createAnnex : null}
+                  line={({ key, ...p }) => <DocRow key={key} {...p} />} />
               </div>
               </>)}
 

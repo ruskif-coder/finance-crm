@@ -4,6 +4,7 @@ import api, { auth } from '../lib/api'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDateTime } from '@/lib/dates'
 import BriefFiles from '@/components/deal/BriefFiles'
+import { detailText } from '@/lib/loadError'
 
 // Иконка «бриф» в строке сделки + всплывающее окно с текстом и инлайн-правкой.
 // Ленивая загрузка: текст тянется только при первом открытии (GET).
@@ -33,7 +34,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
       setMeta({ loaded: r.data.loaded, synced_at: r.data.synced_at })
       loadedOnce.current = true
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось загрузить бриф')
+      setErr(detailText(e, 'Не удалось загрузить бриф'))
     } finally { setLoading(false) }
   }
 
@@ -51,7 +52,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
       setMeta(m => ({ ...m, loaded: true, synced_at: r.data.synced_at }))
       setOk('Сохранено')
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось сохранить')
+      setErr(detailText(e, 'Не удалось сохранить'))
     } finally { setSaving(false) }
   }
 

@@ -13,6 +13,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
 import { cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
 
 // Реестр площадок. Собран по экрану «Справочник паблишеров» из дизайн-хендоффа
 // (docs/паблишеры.zip): строка L1 — то, по чему площадку выбирают, не открывая;
@@ -182,7 +183,7 @@ export default function Publishers() {
         api.get('/publishers/meta', auth()),
       ])
       setItems(r.data.items); setMeta(m.data)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить справочник')) }
     finally { setLoading(false) }
   }
 
@@ -198,14 +199,14 @@ export default function Publishers() {
       setItems(prev => prev.map(x => (x.id === id ? { ...x, ...(localApply || body) } : x)))
       if (detail?.id === id) setDetail(d => ({ ...d, ...(localApply || body) }))
       return true
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить')); return false }
   }
 
   const openRow = async (p) => {
     if (openId === p.id) { setOpenId(null); return }
     setOpenId(p.id); setDetail(null)
     try { const r = await api.get(`/publishers/${p.id}`, auth()); setDetail(r.data) }
-    catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить площадку') }
+    catch (e) { setError(detailText(e, 'Не удалось загрузить площадку')) }
   }
 
   // Точечная правка прямо из сводки: статус интеграции, заметка, замер трафика.
@@ -216,7 +217,7 @@ export default function Publishers() {
       const r = await api.get(`/publishers/${pid}`, auth())
       setDetail(r.data)
       setItems(prev => prev.map(x => (x.id === pid ? { ...x, surfaces: r.data.surfaces } : x)))
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сменить статус') }
+    } catch (e) { setError(detailText(e, 'Не удалось сменить статус')) }
   }
 
   const saveTraffic = async (pid, scope, value, depth) => {
@@ -230,7 +231,7 @@ export default function Publishers() {
         { scope, value: num(value), depth: scope === 'ad_requests' ? null : num(depth) }, auth())
       const r = await api.get(`/publishers/${pid}`, auth())
       setDetail(r.data)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить замер') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить замер')) }
   }
 
   const cyclePlatform = async (pid, pk, pl) => {
@@ -239,7 +240,7 @@ export default function Publishers() {
       await api.put(`/publishers/${pid}/surfaces/app/platforms/${pk}`,
         { integration_status: next, is_active: !!pl?.is_active }, auth())
       await reloadDetail(pid)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сменить статус платформы') }
+    } catch (e) { setError(detailText(e, 'Не удалось сменить статус платформы')) }
   }
 
   const reloadDetail = async (pid) => {
@@ -260,7 +261,7 @@ export default function Publishers() {
 
   const patchDetail = async (pid, key, value) => {
     try { await api.patch(`/publishers/${pid}`, { [key]: value }, auth()); await reloadDetail(pid) }
-    catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
+    catch (e) { setError(detailText(e, 'Не удалось сохранить')) }
   }
 
   // Имя файла не выдумываем: если своего нет, downloadFile берёт то, что прислал
@@ -273,7 +274,7 @@ export default function Publishers() {
   const uploadContractDoc = async (pid, linkId, file) => {
     const fd = new FormData(); fd.append('file', file)
     try { await api.post(`/publishers/${pid}/contracts/${linkId}/document`, fd, auth()); await reloadDetail(pid) }
-    catch (e) { setError(e.response?.data?.detail || 'Не удалось приложить документ') }
+    catch (e) { setError(detailText(e, 'Не удалось приложить документ')) }
   }
 
   const openPin = (field, p, e) => {
@@ -292,7 +293,7 @@ export default function Publishers() {
             const r = await api.post('/publishers/kinds', { name }, auth())
             setMeta(m => ({ ...m, kinds: [...(m.kinds || []), { id: r.data.id, name: r.data.name }] }))
             await patch(p.id, { kind: r.data.name }); setVpop(null)
-          } catch (e) { setError(e.response?.data?.detail || 'Не удалось добавить вид') }
+          } catch (e) { setError(detailText(e, 'Не удалось добавить вид')) }
         } },
       network: { title: 'Сеть', value: p.network, clearLabel: '— независимая —',
         options: (meta.networks || []).map(n => ({ value: n, label: n })),
@@ -318,7 +319,7 @@ export default function Publishers() {
       setShowForm(false); setForm(EMPTY)
       flash('Площадка заведена')
       router.push(`/publishers/${r.data.id}`)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setError(detailText(e, 'Не удалось сохранить')) }
   }
 
   const archiveCount = items.filter(p => p.status === 'АРХИВ').length

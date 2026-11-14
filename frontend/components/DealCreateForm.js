@@ -6,6 +6,7 @@ import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
 import { GenTitleBtn, Z } from './salesTableKit'
 import { COLS, COL_LIGHT, COL_SHORT, GROUP } from '@/lib/salesStatus'
+import { detailText } from '@/lib/loadError'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -193,7 +194,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
       setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
       setBrief(''); setBriefOpen(true); setBriefFiles([]); setLight('')
       onCreated && onCreated(); onClose()
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
+    } catch (e) { alert(detailText(e, 'Не удалось создать сделку')) }
     finally { setBusy(false) }
   }
 

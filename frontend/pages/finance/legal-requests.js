@@ -16,6 +16,7 @@ import { fmtDate, fmtDateTime } from '@/lib/dates'
 import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
 import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
 import { card, th, td, btnSm, primaryBtn, btn, inp, Modal, NoAccessScreen, MONO, UI } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const TONE = {
   'открыта': { color: 'var(--danger-fg)', background: 'var(--danger-tint)' },
@@ -36,7 +37,7 @@ function CloseModal({ req, kind, onClose, onDone }) {
   const submit = async () => {
     setBusy(true); setErr('')
     try { const res = await api.post(`/legal-requests/${req.id}/${kind}`, { answer }, auth()); onDone(res.data.rebuilt) }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить') }
+    catch (e) { setErr(detailText(e, 'Не удалось сохранить')) }
     finally { setBusy(false) }
   }
   return (
@@ -73,9 +74,9 @@ export default function LegalRequestsPage() {
 
   const load = useCallback(async () => {
     setErr('')
-    annexTemplatesApi.behind().then(setBehind).catch(e => { setBehind([]); setErr(e?.response?.data?.detail || 'Не удалось проверить, отстали ли шаблоны ДС от базового') })
+    annexTemplatesApi.behind().then(setBehind).catch(e => { setBehind([]); setErr(detailText(e, 'Не удалось проверить, отстали ли шаблоны ДС от базового')) })
     try { setRows((await api.get(`/legal-requests?status=${scope}`, auth())).data) }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить заявки'); setRows([]) }
+    catch (e) { setErr(detailText(e, 'Не удалось загрузить заявки')); setRows([]) }
   }, [scope])
   useEffect(() => { if (access === 'ok') load() }, [access, load])
   // Вернулись на вкладку — перечитываем заявки; не пока открыт диалог закрытия или редактор шаблона (там несохранённое).
@@ -83,7 +84,7 @@ export default function LegalRequestsPage() {
 
   const take = async (r) => {
     try { await api.post(`/legal-requests/${r.id}/take`, {}, auth()); load() }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось взять заявку') }
+    catch (e) { setErr(detailText(e, 'Не удалось взять заявку')) }
   }
 
   const head = <><Head><title>Юр запросы · Финансы | SIMB-AD ERP</title></Head><Navbar active="legal" /></>

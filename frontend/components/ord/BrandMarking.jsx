@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import api, { auth } from '@/lib/http'
 import { MONO, UI, inp, btn, Z } from '@/components/salesTableKit'
 import { overlayClose } from '@/lib/overlay'
+import { detailText } from '@/lib/loadError'
 
 /* Маркировка бренда — ОДИН диалог на два места.
 
@@ -139,7 +140,7 @@ export default function BrandMarkingDialog({ brand, onSave, onClose }) {
   const save = async () => {
     setBusy(true); setErr('')
     try { await onSave({ kktu_code: kktu, ad_object_description: text }) } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось сохранить'); setBusy(false)
+      setErr(detailText(e, 'Не удалось сохранить')); setBusy(false)
     }
   }
 

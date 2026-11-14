@@ -8,6 +8,7 @@ import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn } from '../../comp
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { markDirty, markClean } from '@/lib/unsaved'
+import { detailText } from '@/lib/loadError'
 
 // ── Наш каталог стадий (E1: движение сделки) ──
 // Этапы (орг-группировка) → стадии. У стадии: разметка 2/2/2 (для ДДС) и флаг терминала.
@@ -89,7 +90,7 @@ export default function SettingsStages() {
       await api.put('/sales/directories/stage-catalog', payload, auth())
       flash('Каталог сохранён')
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Ошибка сохранения') }
+    } catch (e) { setErr(detailText(e, 'Ошибка сохранения')) }
     finally { setSaving(false) }
   }
 

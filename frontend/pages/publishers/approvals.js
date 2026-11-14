@@ -10,6 +10,7 @@ import StuckView from '@/components/publishers/StuckView'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { todayMsk } from '@/lib/dates'
 import { grp0 } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 // Паблишеры → «Согласования»: матрица площадка × РК месяца (владелец 29.09.2026).
 // Вкладки на одних данных: светофор согласования, план площадок (показы и план
@@ -60,7 +61,7 @@ export default function PublisherApprovals() {
     const qs = new URLSearchParams({ month, ...(service ? { service_id: service } : {}), ...(scope ? { scope } : {}) })
     api.get(`/publisher-approvals/matrix?${qs}`, auth())
       .then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить матрицу'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить матрицу')))
   }, [month, service, scope])
   useEffect(() => { if (ready && view !== 'stuck') load() }, [ready, load, view])
   useRefreshOnReturn(load)

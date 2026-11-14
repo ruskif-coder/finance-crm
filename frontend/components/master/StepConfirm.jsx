@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { PortalPopover, MONO, UI } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 
@@ -17,7 +18,7 @@ export default function StepConfirm({ code, step, onClose, onDone }) {
     try {
       const r = await api.post(`/master-deals/${code}/${step.url}`, step.body || (step.track ? { track_no: track } : {}), auth())
       onDone(r.data)
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return (
     <PortalPopover open minWidth={300} maxHeight={260} offset={6} flip style={{ width: 300, padding: 14, gap: 10, borderRadius: 14, boxShadow: 'var(--shadow-float)' }}>

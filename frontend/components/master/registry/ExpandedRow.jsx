@@ -14,6 +14,7 @@ import PackDocs, { Money } from '@/components/master/registry/PackDocs'
 import StepBar from '@/components/master/registry/StepBar'
 import { stepBar } from '@/lib/masterStepBar'
 import { CAPS } from '@/components/master/registry/kit'
+import { detailText } from '@/lib/loadError'
 
 const HEAD = { ...CAPS, fontWeight: 700, letterSpacing: '.1em' }
 const COL = { display: 'flex', flexDirection: 'column', minWidth: 0, padding: '14px 18px' }
@@ -71,7 +72,7 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
   const [picked, setPicked] = useState(null)
   useEffect(() => {
     let alive = true
-    api.get(`/master-deals/${code}`, auth()).then(r => alive && setM(r.data)).catch(e => alive && setErr(e?.response?.data?.detail || 'Не удалось загрузить пакет'))
+    api.get(`/master-deals/${code}`, auth()).then(r => alive && setM(r.data)).catch(e => alive && setErr(detailText(e, 'Не удалось загрузить пакет')))
     return () => { alive = false }
   }, [code])
   const wrap = (body) => <div style={{ padding: '2px 20px 14px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-row)' }}>{body}</div>

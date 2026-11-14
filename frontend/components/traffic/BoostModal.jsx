@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { Modal, MONO } from '@/components/salesTableKit'
 import { Cube } from '@/components/LogoLoader'
 import api from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const PCTS = [10, 20, 30, 50, 100]
 const DAYS = [1, 2, 3, 5, 7]
@@ -51,7 +52,7 @@ export default function BoostModal({ row, auth, canEdit = true, onClose, onDone 
     let alive = true
     api.get(`/traffic-dashboard/campaign/${row.id}/boost`, auth())
       .then(r => { if (alive) setInfo(r.data) })
-      .catch(e => { if (alive) setErr(e?.response?.data?.detail || 'Не удалось прочитать состояние') })
+      .catch(e => { if (alive) setErr(detailText(e, 'Не удалось прочитать состояние')) })
     return () => { alive = false }
   }, [row.id, auth])
 
@@ -90,7 +91,7 @@ export default function BoostModal({ row, auth, canEdit = true, onClose, onDone 
       setRes(r.data)
       onDone && onDone()
     } catch (e) {
-      setErr(e?.response?.data?.detail || 'Не удалось выполнить')
+      setErr(detailText(e, 'Не удалось выполнить'))
     } finally { setBusy(false) }
   }
   const start = () => run(() => api.post(`/traffic-dashboard/campaign/${row.id}/boost`, { pct, days }, auth()))

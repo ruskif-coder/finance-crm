@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { MONO, UI, card, inp, btn, primaryBtn } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import { TargetingCampaignCard, useTargetingCampaign } from './TargetingCampaign'
+import { detailText } from '@/lib/loadError'
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const BOX = { ...card, padding: '16px 18px' }
@@ -107,7 +108,7 @@ export default function SiteScript({ mayEdit }) {
       setTPartner(r.data.targeting_partner || '')
       setTCamp(r.data.targeting_campaign || '')
       setWbAcc(r.data.weborama_account || '')
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить настройку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить настройку')) }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -120,7 +121,7 @@ export default function SiteScript({ mayEdit }) {
           prod_partner: pPartner, targeting_partner: tPartner, targeting_campaign: tCamp,
           weborama_account: wbAcc }, auth())
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) }
     finally { setSaving(false) }
   }
 

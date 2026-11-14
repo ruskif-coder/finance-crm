@@ -17,6 +17,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
 import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
 import { fmtDate as fmtCalendarDate, fileStamp } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -168,7 +169,7 @@ export default function Contracts() {
   // Договоры, чей кастомный шаблон ДС отстал от базы — иконка шаблона оранжевая (владелец 14.10.2026).
   const [behind, setBehind] = useState({})
   const loadBehind = () => annexTemplatesApi.behind()
-    .then(rows => setBehind(Object.fromEntries(rows.map(r => [r.contract_id, r])))).catch(e => { setBehind({}); setError(e?.response?.data?.detail || 'Не удалось проверить, отстали ли шаблоны ДС от базового') })
+    .then(rows => setBehind(Object.fromEntries(rows.map(r => [r.contract_id, r])))).catch(e => { setBehind({}); setError(detailText(e, 'Не удалось проверить, отстали ли шаблоны ДС от базового')) })
   useEffect(() => { loadBehind() }, [])
 
   const [search, setSearch] = useState('')
@@ -244,7 +245,7 @@ export default function Contracts() {
       setItems(ct.data.items)
     } catch (e) {
       if (e.response?.status === 401) { router.push('/login'); return }
-      setError(e.response?.data?.detail || 'Не удалось загрузить данные')
+      setError(detailText(e, 'Не удалось загрузить данные'))
     } finally { setLoading(false) }
   }
 
@@ -263,7 +264,7 @@ export default function Contracts() {
       await loadAll()
       return { id: res.data.id, name }
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при создании контрагента')
+      alert(detailText(e, 'Ошибка при создании контрагента'))
       return null
     }
   }
@@ -295,7 +296,7 @@ export default function Contracts() {
         finally { setFileUploading(false) }
       }
       cancelForm(); flash('Договор создан'); loadAll()
-    } catch (e) { setCreateError(e.response?.data?.detail || 'Ошибка при создании') }
+    } catch (e) { setCreateError(detailText(e, 'Ошибка при создании')) }
     finally { setCreating(false) }
   }
 
@@ -319,7 +320,7 @@ export default function Contracts() {
       await api.put(`/annexes/contract/${id}/start-no`,
         { annex_start_no: startVal === '' ? null : Number(startVal) }, auth())
       setStartEditId(null); loadAll()
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить стартовый номер') }
+    } catch (e) { alert(detailText(e, 'Не удалось сохранить стартовый номер')) }
   }
 
   const handleSave = async (id) => {
@@ -327,14 +328,14 @@ export default function Contracts() {
     try {
       await api.put(`/contracts/${id}`, payload(editDraft), auth())
       setEditId(null); loadAll()
-    } catch (e) { setEditError(e.response?.data?.detail || 'Ошибка при сохранении') }
+    } catch (e) { setEditError(detailText(e, 'Ошибка при сохранении')) }
     finally { setSaving(false) }
   }
 
   const handleDelete = async (c) => {
     if (!confirm(`Удалить договор № ${c.contract_number || '—'} (${c.counterparty_name || '—'})?`)) return
     try { await api.delete(`/contracts/${c.id}`, auth()); loadAll() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка при удалении') }
+    catch (e) { alert(detailText(e, 'Ошибка при удалении')) }
   }
 
   const downloadExport = async () => {
@@ -355,7 +356,7 @@ export default function Contracts() {
     try {
       const res = await api.post('/contracts/import/preview', fd, auth())
       setImportPreview(res.data)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при разборе файла') }
+    } catch (e) { alert(detailText(e, 'Ошибка при разборе файла')) }
     e.target.value = ''
   }
 
@@ -368,7 +369,7 @@ export default function Contracts() {
       setImportPreview(null); setImportFile(null)
       loadAll()
       alert(`Обновлено договоров: ${res.data.updated}${res.data.skipped?.length ? '\nПропущено: ' + res.data.skipped.join('\n') : ''}`)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при применении импорта') }
+    } catch (e) { alert(detailText(e, 'Ошибка при применении импорта')) }
     finally { setImportApplying(false) }
   }
 
@@ -377,7 +378,7 @@ export default function Contracts() {
     const fd = new FormData(); fd.append('file', file)
     setUploadingId(uploadTargetId)
     try { await api.post(`/contracts/${uploadTargetId}/upload`, fd, auth()); loadAll() }
-    catch (err) { alert(err.response?.data?.detail || 'Ошибка при загрузке файла') }
+    catch (err) { alert(detailText(err, 'Ошибка при загрузке файла')) }
     finally { setUploadingId(null); setUploadTargetId(null) }
     e.target.value = ''
   }
@@ -388,7 +389,7 @@ export default function Contracts() {
   const handleDeleteDoc = async (id) => {
     if (!confirm('Удалить прикреплённый документ?')) return
     try { await api.delete(`/contracts/${id}/document`, auth()); loadAll() }
-    catch (err) { alert(err.response?.data?.detail || 'Ошибка при удалении документа') }
+    catch (err) { alert(detailText(err, 'Ошибка при удалении документа')) }
   }
 
   const handleBulkApply = async () => {
@@ -405,7 +406,7 @@ export default function Contracts() {
       await api.patch('/contracts/bulk', { ids: selectedIds, ...fields }, auth())
       setSelectedIds([]); setBulkFormat(''); setBulkProlong(''); setBulkIssue(''); setBulkDays(''); setBulkCondition('')
       loadAll()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(detailText(e, 'Ошибка')) }
     finally { setBulkSaving(false) }
   }
 
@@ -415,7 +416,7 @@ export default function Contracts() {
     try {
       await api.delete('/contracts/bulk', { data: { ids: selectedIds }, ...auth() })
       setSelectedIds([]); loadAll()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(detailText(e, 'Ошибка')) }
     finally { setBulkSaving(false) }
   }
 
@@ -460,7 +461,7 @@ export default function Contracts() {
       if (id) await api.put(`/contracts/${id}`, payload(f), auth())
       else await api.post('/contracts/', payload(f), auth())
       await loadAll(); return true
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при сохранении'); return false }
+    } catch (e) { alert(detailText(e, 'Ошибка при сохранении')); return false }
     finally { setSaving(false) }
   }
 

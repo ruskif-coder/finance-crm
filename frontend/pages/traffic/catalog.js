@@ -30,6 +30,7 @@ import PublisherRules from '@/components/traffic/PublisherRules'
 import PrioSites from '@/components/traffic/PrioSites'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const PAGE_TYPES = ['главная', 'каталог', 'карточка товара', 'корзина', 'статьи', 'акции', 'лк']
 const NETWORKS = ['x-simb-web', 'x-simb']
@@ -170,7 +171,7 @@ export default function TrafficCatalog() {
       await reloadDetail()
       await loadPubs()          // список держит коды — по ним считается «без кода» и дубли
     } catch (e) {
-      setCodeErr(e?.response?.data?.detail || 'Не удалось сохранить код')
+      setCodeErr(detailText(e, 'Не удалось сохранить код'))
     }
   }
 

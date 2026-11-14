@@ -3,6 +3,7 @@ import { buildTitle, productWithSurface, TITLE_EMPTY_HINT } from '@/lib/dealTitl
 import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar, PortalPopover, Z } from '../salesTableKit'
+import MasterDocs from '@/components/deal/MasterDocs'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
 import { downloadMp } from '../../lib/mpDownload'
@@ -64,7 +65,7 @@ function DocLine({ title, meta, empty, onAdd, addLabel = '+ Добавить', r
       {oneLine ? <DocState ok={!empty} /> : <DocIcon />}
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: oneLine ? 13 : 12, fontWeight: 600, color: oneLine && empty ? 'var(--text-secondary)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
-        {!oneLine && <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', marginTop: 2 }}>{empty ? 'не загружено' : meta}</div>}
+        {!oneLine && <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', marginTop: 2 }}>{empty ? (meta || 'не загружено') : meta}</div>}
         {/* Загрузка идёт — говорим и в однострочном виде: иначе нажатие выглядит пустым. */}
         {oneLine && meta === 'загрузка…' && <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--accent)' }}>загрузка…</div>}
       </div>
@@ -105,6 +106,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const [mayReport, setMayReport] = useState(false)
   useEffect(() => { setMayReport(can(getPermissions(), 'rk_report', 'view')) }, [])
   const [draft, setDraft] = useState('')
+  const [masterDocs, setMasterDocs] = useState(null)
 
   useEffect(() => {
     let alive = true
@@ -112,6 +114,10 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
     api.get(`/sales/deals/${d.id}/history`, auth())
       .then(r => { if (alive) setHistory(r.data.items || []) })
       .catch(() => { if (alive) setHistory([]) })
+    // Документы закрытия — из мастер-сделки, только для раскрытой строки (13.11.2026).
+    api.get(`/sales/deals/${d.id}/master-docs`, auth())
+      .then(r => { if (alive) setMasterDocs(r.data) })
+      .catch(() => { if (alive) setMasterDocs({ master: null, ds: [], kits: [] }) })
     const t = setTimeout(() => alive && setGrow(true), 40)
     return () => { alive = false; clearTimeout(t) }
   }, [d.id, d.title])
@@ -215,6 +221,8 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             } />
         )
       })}
+      <MasterDocs docs={masterDocs}
+        line={({ key, ok, right, ...p }) => <DocLine oneLine={queue} key={key} empty={!ok} right={right ?? false} {...p} />} />
     </>
   )
 

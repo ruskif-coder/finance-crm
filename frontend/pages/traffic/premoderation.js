@@ -9,9 +9,10 @@ import Premoderation from '@/components/premod/Premoderation'
 import { LoadErrorScreen, UI } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const REFRESH_MS = 60000
-const detail = (e, fallback) => e?.response?.data?.detail || fallback
+const detail = (e, fallback) => detailText(e, fallback)
 
 export default function PremoderationPage() {
   const [data, setData] = useState(null)

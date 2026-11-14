@@ -1,3 +1,4 @@
+import { detailText } from './loadError'
 /* Вкладка нацеливания — одна на две кнопки «нацелить на себя»: конвейер трафиков и блок
    креатива в карточке сделки. До 25.09.2026 у каждой была своя копия, и разошлись они
    ровно так, как расходятся копии: одна писала в вкладку «готовим…», другая оставляла её
@@ -106,7 +107,7 @@ export async function issueAimAt(api, auth, path, params = {}) {
     return { active: !!r.data.active, restarted: !!r.data.restarted,
              message: r.data.restarted ? RESTART_NOTE : aimNotLive(r.data) }
   } catch (e) {
-    const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
+    const why = detailText(e, 'Не удалось выпустить ссылку нацеливания')
     aimTabFail(tab, why)
     // status и сырой ответ — для журнала в окне ожидания: человеку нужен не только текст, но и
     // «что именно ответил сервер» (09.10.2026).

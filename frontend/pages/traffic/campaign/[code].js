@@ -19,6 +19,7 @@ import RkTable, { cellText } from '@/components/rk/RkTable'
 import RkInsights, { cmpGroups } from '@/components/rk/RkInsights'
 import RkAnalytics from '@/components/rk/RkAnalytics'
 import { box, cap, title14, dm } from '@/components/rk/rkUi'
+import { detailText } from '@/lib/loadError'
 
 const SL_NAME = { day: 'по дням', week: 'по неделям', placement: 'по площадкам', creative: 'по креативам', group: 'по группам', cxp: 'креатив × площадка' }
 const MNAME = { shows: 'показы', clicks: 'клики', ctr: 'CTR', offered: 'предложено сетью', plan: '% плана', spend: 'расход, ₽', cpm: 'CPM, ₽' }
@@ -46,7 +47,7 @@ export default function RkAnalysisPage() {
       setData(r.data)
       setOn(o => (Object.keys(o).length ? o : Object.fromEntries(r.data.placements.map(p => [p.id, true]))))
       setErr('')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить разбор РК') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить разбор РК')) }
   }, [code])
   useEffect(() => { load(prevId) }, [load, prevId])
   const reload = useCallback(() => load(prevId), [load, prevId])
@@ -205,7 +206,7 @@ function Shell({ code, children }) {
   return (
     <>
       <Head><title>{code ? `Отчёт по РК ${code}` : 'Отчёт по РК'} · Трафики | SIMB-AD ERP</title></Head>
-      <Navbar asPath={fromAccounts ? '/accounts/dashboard' : undefined} />
+      <Navbar asPath={fromAccounts ? '/accounts/deals' : undefined} />
       <div style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 24px 40px', fontFamily: UI, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {children}
       </div>

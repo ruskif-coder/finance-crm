@@ -6,6 +6,7 @@ import { MONO, btnSm, card, inp, th } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
 import { fmtDateTime } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 // Сколько строк брать (владелец 01.10.2026): 0 — все.
 const LIMITS = [[500, '500'], [1000, '1000'], [0, 'все']]
@@ -41,7 +42,7 @@ export default function ExchangeLogs() {
       const r = await api.get(`/traffic-catalog/logs?${query()}`, auth())
       setRows(r.data.rows)
     } catch (e) {
-      setErr(e?.response?.data?.detail || 'Не удалось загрузить лог'); setRows([])
+      setErr(detailText(e, 'Не удалось загрузить лог')); setRows([])
     }
   }, [query])
 

@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { MONO, Z, btn } from '@/components/salesTableKit'
 import { overlayClose } from '@/lib/overlay'
+import { detailText } from '@/lib/loadError'
 
 export const STOCK_SIZES = [[240, 400], [300, 600], [640, 100], [970, 250],
   [1000, 150], [1200, 150]]
@@ -77,7 +78,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
     try {
       await api.post(`/launch-prep/set/${set.id}/primary-review`, { verdict, reason: '' }, auth())
       onReviewed(verdict)
-    } catch (e) { setReviewErr(e.response?.data?.detail || 'Не удалось сохранить'); setReviewBusy(false) }
+    } catch (e) { setReviewErr(detailText(e, 'Не удалось сохранить')); setReviewBusy(false) }
   }
 
   const list = files || []

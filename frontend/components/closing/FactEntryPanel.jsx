@@ -8,6 +8,7 @@ import { btn, inp, MONO } from '@/components/salesTableKit'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { grp, rub2 } from '@/lib/salesFormat'
 import { CAP, Check, asText, isNum, num } from '@/components/closing/closingKit'
+import { detailText } from '@/lib/loadError'
 
 export const FACT_FIELDS = {
   cpm: [['fact', 'Показы факт'], ['clicks', 'Клики факт']],
@@ -16,15 +17,31 @@ export const FACT_FIELDS = {
   fix: [['fact', 'Пакетов факт'], ['reference_shows', 'Показы справочно']],
 }
 export const PLAN_UNIT = { cpm: 'показов', video: 'показов', cpc: 'кликов', fix: 'пак.' }
+/** Поля ввода факта по строкам МП — общие для блока карточки и компактной сверки расхлопа. */
+export const factVals = (rows) => Object.fromEntries(rows.map(r => [r.row_id,
+  Object.fromEntries((FACT_FIELDS[r.kind] || FACT_FIELDS.cpm).map(([k]) => [k, asText(r[k])]))]))
+export const factFilled = (rows, vals) => rows.filter(r => isNum(vals[r.row_id]?.fact))
+export const factBad = (rows, vals) => rows.some(r => Object.values(vals[r.row_id] || {}).some(v => String(v || '').trim() !== '' && !(num(v) >= 0)))
+export const factPayload = (rows, vals) => factFilled(rows, vals).map(r => {
+  const v = vals[r.row_id]
+  const n = (k) => (isNum(v[k]) ? num(v[k]) : null)
+  return { row_id: r.row_id, fact: num(v.fact), clicks: n('clicks'), completed: n('completed'), reference_shows: n('reference_shows') }
+})
+/** Отчёт платформы — файл сделки вида `report`. */
+export const uploadReport = async (dealId, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  await api.post(`/sales/deals/${dealId}/files/report`, fd, auth())
+}
+
 export default function FactEntryPanel({ fe, dealId, cost, busy, canEdit, onSave, onCost, onUploaded }) {
-  const [vals, setVals] = useState(() => Object.fromEntries(fe.rows.map(r => [r.row_id,
-    Object.fromEntries((FACT_FIELDS[r.kind] || FACT_FIELDS.cpm).map(([k]) => [k, asText(r[k])]))])))
+  const [vals, setVals] = useState(() => factVals(fe.rows))
   const [note, setNote] = useState(fe.note || '')
   const [costVal, setCostVal] = useState(cost != null ? rub2(cost) : '')
   const [upErr, setUpErr] = useState('')
   const set = (rid, k, v) => setVals(x => ({ ...x, [rid]: { ...x[rid], [k]: v } }))
-  const filled = fe.rows.filter(r => isNum(vals[r.row_id]?.fact))
-  const bad = fe.rows.some(r => Object.values(vals[r.row_id] || {}).some(v => String(v || '').trim() !== '' && !(num(v) >= 0)))
+  const filled = factFilled(fe.rows, vals)
+  const bad = factBad(fe.rows, vals)
   const field = { ...inp, fontFamily: MONO, textAlign: 'right', width: '100%' }
   const vtr = (r) => {
     const v = vals[r.row_id] || {}
@@ -33,10 +50,8 @@ export default function FactEntryPanel({ fe, dealId, cost, busy, canEdit, onSave
   const upload = async (file) => {
     if (!file) return
     setUpErr('')
-    const fd = new FormData()
-    fd.append('file', file)
-    try { await api.post(`/sales/deals/${dealId}/files/report`, fd, auth()); onUploaded() }
-    catch (e) { setUpErr(e?.response?.data?.detail || 'Отчёт не загрузился') }
+    try { await uploadReport(dealId, file); onUploaded() }
+    catch (e) { setUpErr(detailText(e, 'Отчёт не загрузился')) }
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 12, border: '1px solid var(--accent-border)', background: 'var(--bg-tint)', marginBottom: 14 }}>
@@ -72,12 +87,10 @@ export default function FactEntryPanel({ fe, dealId, cost, busy, canEdit, onSave
         <input value={note} disabled={!canEdit} onChange={e => setNote(e.target.value)} placeholder="например: отчёт платформы за октябрь" style={{ ...inp, width: '100%' }} /></label>
       {canEdit && (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="button" disabled={busy || bad || !filled.length} style={{ ...btn(true), opacity: busy || bad || !filled.length ? 0.5 : 1 }}
-            onClick={() => onSave(filled.map(r => {
-              const v = vals[r.row_id]
-              const n = (k) => (isNum(v[k]) ? num(v[k]) : null)
-              return { row_id: r.row_id, fact: num(v.fact), clicks: n('clicks'), completed: n('completed'), reference_shows: n('reference_shows') }
-            }), note.trim())}>Сохранить факт</button>
+          {/* Источник цифр обязателен — как в компактной сверке «Моих сделок» (хендофф 14.11.2026) */}
+          <button type="button" disabled={busy || bad || !filled.length || !note.trim()} title={note.trim() ? undefined : 'Укажите источник цифр'}
+            style={{ ...btn(true), opacity: busy || bad || !filled.length || !note.trim() ? 0.5 : 1 }}
+            onClick={() => onSave(factPayload(fe.rows, vals), note.trim())}>Сохранить факт</button>
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border-row)' }}>

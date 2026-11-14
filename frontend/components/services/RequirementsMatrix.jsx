@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { card, MONO } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-faint)' }
 const TD = { padding: '7px 10px', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle', fontSize: 13 }
@@ -38,7 +39,7 @@ export default function RequirementsMatrix({ services, canEdit }) {
   const [busy, setBusy] = useState('')
 
   const load = useCallback(() => {
-    api.get('/final-recon/assembly', auth()).then(r => setData(r.data)).catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить матрицу'))
+    api.get('/final-recon/assembly', auth()).then(r => setData(r.data)).catch(e => setErr(detailText(e, 'Не удалось загрузить матрицу')))
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -55,7 +56,7 @@ export default function RequirementsMatrix({ services, canEdit }) {
         if (state === 'off') delete st[s.id]; else st[s.id] = state
         return { ...x, state: st }
       }) })) }))
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) }
     finally { setBusy('') }
   }
 
@@ -88,7 +89,7 @@ export default function RequirementsMatrix({ services, canEdit }) {
                   <td style={TD}>
                     <span title={`${it.hint || ''}${it.where ? ` Где: ${it.where}.` : ''}`} style={{ fontWeight: 600, cursor: 'help', borderBottom: '1px dashed var(--border-card)' }}>{it.title}</span>
                     <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                      {it.flow ? `только «${it.flow}»` : ''}{it.flow && it.pixel ? ' · ' : ''}{it.pixel ? 'если пиксель заказан' : ''}
+                      {it.flow ? `только «${[].concat(it.flow).join('» / «')}»` : ''}{it.flow && it.pixel ? ' · ' : ''}{it.pixel ? 'если пиксель заказан' : ''}
                     </div>
                   </td>
                   <td style={{ ...TD, fontSize: 11.5, color: 'var(--text-faint)' }}>{it.stages.join(' · ')}</td>

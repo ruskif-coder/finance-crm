@@ -11,6 +11,7 @@ import { balance, changedRows, chart, movedOf, passes } from '@/lib/reallocView.
 import { ReallocActions, ReallocKpis } from './realloc/ReallocTop'
 import { ReallocFilters, ReallocTable } from './realloc/ReallocTable'
 import { ReallocChart, ReallocHistory } from './realloc/ReallocChart'
+import { detailText } from '@/lib/loadError'
 
 const ghost = { display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 15px', borderRadius: 10, background: 'var(--bg-card)',
   border: '1px solid var(--border-card)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'inherit' }
@@ -29,7 +30,7 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
 
   const load = useCallback(() => api.get(`/traffic-dashboard/campaign/${row.id}/realloc`, auth())
     .then(r => { setV(r.data); setErr('') })
-    .catch(e => setErr(e?.response?.data?.detail || 'Не удалось посчитать перераспределение')), [row.id, auth])
+    .catch(e => setErr(detailText(e, 'Не удалось посчитать перераспределение'))), [row.id, auth])
   useEffect(() => { load() }, [load])
 
   const rows = useMemo(() => (v?.rows || []).filter(r => r.running), [v])
@@ -46,7 +47,7 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
     setBusy(true); setErr('')
     try { await fn(); await load(); setEdits({}); setDone(msg); onDone && onDone() }
     // часть действия могла пройти («Снять» — по площадке за запрос): экран перечитываем и при сбое (ревью 27.10.2026)
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось выполнить'); load() } finally { setBusy(false) }
+    catch (e) { setErr(detailText(e, 'Не удалось выполнить')); load() } finally { setBusy(false) }
   }
   const apply = async () => {
     setBusy(true); setErr('')
@@ -54,7 +55,7 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
       const r = await api.post(`/traffic-dashboard/campaign/${row.id}/realloc`,
         { plans: Object.fromEntries(changed.map(x => [x.id, edits[x.id]])), reason }, auth())
       setV(r.data.view); setEdits({}); setReason(''); setDone('планы записаны, лимиты ушли в DSP'); onDone && onDone()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось применить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось применить')) } finally { setBusy(false) }
   }
 
   if (!v) {

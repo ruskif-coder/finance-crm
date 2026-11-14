@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MONO, card, CAP, inp, chip, cell, SortHead, EditIcon } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
+import { detailText } from '@/lib/loadError'
 
 const GRID = 'minmax(220px,2fr) 150px 170px 220px 150px'
 const FILTERS = [['all', 'все'], ['on', 'подключены'], ['off', 'не подключены']]
@@ -74,7 +75,7 @@ function IdCell({ row, mayEdit, onSave }) {
       await onSave(row.id, id)
       setEditing(false)
     } catch (e) {
-      setErr(e?.response?.data?.detail || 'Не удалось сохранить')
+      setErr(detailText(e, 'Не удалось сохранить'))
     }
     setSaving(false)
   }
@@ -110,7 +111,7 @@ export default function PrioSites({ mayEdit }) {
   const load = useCallback(async () => {
     setLoading(true)
     try { setRows((await api.get('/prio/sites', auth())).data || []); setMsg('') }
-    catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось загрузить список площадок') }
+    catch (e) { setMsg(detailText(e, 'Не удалось загрузить список площадок')) }
     setLoading(false)
   }, [])
   useEffect(() => { load() }, [load])

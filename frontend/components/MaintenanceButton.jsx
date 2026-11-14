@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '../lib/http'
 import { btnSm } from './salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 export default function MaintenanceButton() {
   const [st, setSt] = useState(null)
@@ -32,7 +33,7 @@ export default function MaintenanceButton() {
     if (!window.confirm(question)) return false
     setBusy(true)
     try { setSt((await fn()).data); return true } catch (e) {
-      window.alert(e.response?.data?.detail || 'Не получилось')
+      window.alert(detailText(e, 'Не получилось'))
       return false
     } finally { setBusy(false) }
   }

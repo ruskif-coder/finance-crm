@@ -5,6 +5,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import { downloadName, fmtDateShort, grpDec } from '@/lib/salesFormat'
 import { todayMsk } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 // Вторая вкладка «Аудитория»: сетка заполнения — все поля площадок в одном месте, правка прямо в
 // ячейках, «Скачать Excel» и «Загрузить Excel» (владелец 09.10.2026). Две группы колонок:
@@ -57,7 +58,7 @@ export default function AudienceData({ grid, sources, canEdit, onSaved }) {
       setEdits({})
       setMsg({ ok: true, text: `Записано ${r.data.written}, без изменений ${r.data.skipped_same}, площадок ${r.data.publishers}` })
       onSaved?.()
-    } catch (e) { setMsg({ ok: false, text: e?.response?.data?.detail || 'Не удалось сохранить' }) } finally { setBusy('') }
+    } catch (e) { setMsg({ ok: false, text: detailText(e, 'Не удалось сохранить') }) } finally { setBusy('') }
   }
 
   const exportXlsx = async () => {
@@ -85,7 +86,7 @@ export default function AudienceData({ grid, sources, canEdit, onSaved }) {
       const fd = new FormData(); fd.append('file', f)
       const r = await api.post('/publisher-audience/import?apply=false', fd, auth())
       setPreview(r.data)
-    } catch (err) { setMsg({ ok: false, text: err?.response?.data?.detail || 'Не удалось прочитать файл' }) } finally { setBusy('') }
+    } catch (err) { setMsg({ ok: false, text: detailText(err, 'Не удалось прочитать файл') }) } finally { setBusy('') }
   }
   const applyImport = async () => {
     setBusy('import')
@@ -95,7 +96,7 @@ export default function AudienceData({ grid, sources, canEdit, onSaved }) {
       setPreview(null)
       setMsg({ ok: true, text: `Загружено: записано ${r.data.written}, площадок ${r.data.publishers}, ошибок ${r.data.errors_total}` })
       onSaved?.()
-    } catch (err) { setMsg({ ok: false, text: err?.response?.data?.detail || 'Не удалось загрузить' }) } finally { setBusy('') }
+    } catch (err) { setMsg({ ok: false, text: detailText(err, 'Не удалось загрузить') }) } finally { setBusy('') }
   }
 
   const btnS = (on) => ({ ...btn(false), height: 32, padding: '0 14px', opacity: on ? 1 : 0.5, cursor: on ? 'pointer' : 'default' })

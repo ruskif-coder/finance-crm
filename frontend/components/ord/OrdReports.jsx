@@ -8,6 +8,7 @@ import { downloadFile } from '@/lib/download'
 import { fmtDate, fmtDateTimeShort } from '@/lib/dates'
 import { grp0, rub2 } from '@/lib/salesFormat'
 import { MONO, card, inp, btn, btnSm, th, td, LoadError } from '@/components/salesTableKit'
+import { detailText } from '@/lib/loadError'
 
 const monthLabel = (ym) => {
   const [y, m] = ym.split('-').map(Number)
@@ -112,7 +113,7 @@ export default function OrdReports() {
       const r = (await api.get('/ord/reports/months', auth())).data
       setMonths(r)
       setMonth(cur => cur || (r[0] && r[0].month) || '')
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить месяцы') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить месяцы')) }
   }
   // ответ на месяц, с которого уже ушли, не рисуем: иначе при быстром переключении под шапкой нового месяца
   // оказываются строки прошлого (ревью 11.11.2026)
@@ -124,7 +125,7 @@ export default function OrdReports() {
     try {
       const d = (await api.get(`/ord/reports/${m}`, auth())).data
       if (shownMonth.current === m) setData(d)
-    } catch (e) { if (shownMonth.current === m) setErr(e.response?.data?.detail || 'Не удалось загрузить отчёт') }
+    } catch (e) { if (shownMonth.current === m) setErr(detailText(e, 'Не удалось загрузить отчёт')) }
   }
   useEffect(() => { loadMonths() }, [])
   useEffect(() => { loadMonth(month) }, [month])
@@ -138,7 +139,7 @@ export default function OrdReports() {
   const act = async (label, fn) => {
     setBusy(label); setMsg(''); setErr('')
     try { await fn(); await loadMonths(); await loadMonth(month) }
-    catch (e) { setErr(e.response?.data?.detail || 'Не получилось') }
+    catch (e) { setErr(detailText(e, 'Не получилось')) }
     finally { setBusy('') }
   }
   const upload = (e) => {

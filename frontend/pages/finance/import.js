@@ -8,6 +8,7 @@ import { firstAllowedHref } from '@/lib/nav'
 import DiadocImport from '@/components/DiadocImport'
 import { card, btn, inp, CAP, MONO, UI } from '@/components/salesTableKit'
 import { fmtFull, fmtDateShort, grpDash as fmt } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -141,7 +142,7 @@ export default function Import() {
       })
       setPreview(res.data)
     } catch (e) {
-      setSyncError(e.response?.data?.detail || 'Ошибка проверки файла')
+      setSyncError(detailText(e, 'Ошибка проверки файла'))
     } finally {
       setSyncLoading(false)
     }
@@ -172,7 +173,7 @@ export default function Import() {
       setSyncFile(null)
       setCheckedKeys({})
     } catch (e) {
-      setSyncError(e.response?.data?.detail || 'Ошибка применения')
+      setSyncError(detailText(e, 'Ошибка применения'))
     } finally {
       setApplyLoading(false)
     }

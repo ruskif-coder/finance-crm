@@ -9,6 +9,7 @@ import { downloadFile } from '@/lib/download'
 import { SIGN, signAction } from '@/lib/masterSteps'
 import { MONO, UI } from '@/components/salesTableKit'
 import safeHref from '@/lib/safeHref'
+import { detailText } from '@/lib/loadError'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ICON = {
@@ -53,7 +54,7 @@ function DeskReturned({ kit, upd_no, code, canEdit, onDone, setErr }) {
     if (text === null) return
     setBusy(true); setErr?.('')
     try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-fixed`, { text: text || null }, auth())).data) }
-    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+    catch (e) { setErr?.(detailText(e, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 220, padding: '6px 8px', borderRadius: 7, background: 'var(--danger-tint)' }}>
@@ -73,7 +74,7 @@ function DeskQuestion({ kit, upd_no, code, canEdit, onDone, setErr }) {
     if (!text || !text.trim()) return
     setBusy(true); setErr?.('')
     try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-reply`, { text: text.trim() }, auth())).data) }
-    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось ответить') } finally { setBusy(false) }
+    catch (e) { setErr?.(detailText(e, 'Не удалось ответить')) } finally { setBusy(false) }
   }
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 220, padding: '6px 8px', borderRadius: 7, background: 'var(--accent-tint)' }}>
@@ -158,7 +159,7 @@ export function SignActions({ code, url, target, sign, onDone, setErr, small = f
     }
     setBusy(true); setErr?.('')
     try { onDone((await api.post(url || `/master-deals/${code}/doc-sign`, { ...target, state, reason: reason || null }, auth())).data) }
-    catch (e) { setErr?.(e?.response?.data?.detail || 'Не удалось отметить') } finally { setBusy(false) }
+    catch (e) { setErr?.(detailText(e, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return (
     <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center' }}>
@@ -198,7 +199,7 @@ export function ScansPanel({ m, picked, setPicked, canEdit, onChanged }) {
     fd.append('file', f)
     if (target.annex_id != null) fd.append('annex_id', target.annex_id); else fd.append('upd_no', target.upd_no)
     try { onChanged((await api.post(`/master-deals/${m.code}/files`, fd, auth())).data); setPicked(null) }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить скан') } finally { setBusy(false) }
+    catch (e) { setErr(detailText(e, 'Не удалось загрузить скан')) } finally { setBusy(false) }
   }
   if (!targets.length) return null
   const dot = (c) => <span aria-hidden style={{ width: 6, height: 6, borderRadius: 2, background: c, flex: '0 0 6px' }} />

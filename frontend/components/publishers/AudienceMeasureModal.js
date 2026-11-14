@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Modal, inp, sel, btn, primaryBtn, PickValue } from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
 import { todayMsk } from '@/lib/dates'
+import { detailText } from '@/lib/loadError'
 
 // Форма одного замера: метрика, значение, источник (накопительный список — ValuePopover),
 // дата замера, поверхность, сегмент (для долей), заметка. Источник обязателен.
@@ -25,7 +26,7 @@ export default function AudienceMeasureModal({ publisher, metrics, sources, onSa
     setBusy(true); setErr('')
     try {
       await onSave({ ...f, value: v, surface_kind: f.surface_kind || null, segment: f.segment || null, note: f.note || null })
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не сохранилось') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не сохранилось')) } finally { setBusy(false) }
   }
 
   return (

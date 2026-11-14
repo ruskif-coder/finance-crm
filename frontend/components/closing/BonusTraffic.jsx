@@ -6,6 +6,7 @@ import { useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, inp } from '@/components/salesTableKit'
 import { grp } from '@/lib/salesFormat'
+import { detailText } from '@/lib/loadError'
 
 const MODES = [['pct', '%'], ['qty', 'показы'], ['rub', '₽']]
 const SHOW = { pct: (v) => `${v} % от плана`, qty: (v) => `${grp(v)} показов`, rub: (v) => `${grp(v)} ₽ без НДС` }
@@ -23,7 +24,7 @@ export default function BonusTraffic({ dealId, mode, value, canEdit, onSaved }) 
     try {
       await api.put(`/final-recon/deal/${dealId}/bonus-traffic`, clear ? { mode: null, value: null } : { mode: m, value: n }, auth())
       setEdit(false); onSaved()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
 
   return (

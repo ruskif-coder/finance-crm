@@ -21,6 +21,7 @@ import { Modal, UI, MONO } from '../salesTableKit'
 import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import { CreatePanel, Field, FieldRow, PickRow, SelectField, Tag, useCreateForm, INPUT } from './pickers'
+import { detailText } from '@/lib/loadError'
 
 export default function InitialPicker({ dealId, onPick, onDone, onClose }) {
   const [data, setData] = useState(null)
@@ -35,7 +36,7 @@ export default function InitialPicker({ dealId, onPick, onDone, onClose }) {
     setErr('')
     api.get(`/ord/deal/${dealId}/initial-options${text ? `?q=${encodeURIComponent(text)}` : ''}`, auth())
       .then(r => setData(r.data))
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить список'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить список')))
   }
   useEffect(() => { load('') }, [dealId])
   // Поиск с задержкой: в зеркале 126 договоров, запрос на каждую букву мигает списком.

@@ -2,6 +2,7 @@
 // колонка «Статусов продаж» (`lib/probability.probView`): не заданный вручную — бледнее, у сделки в работе — заперт.
 import api, { auth } from '@/lib/api'
 import { probView } from '@/lib/probability'
+import { detailText } from '@/lib/loadError'
 
 export default function ProbDot({ d, canEdit, onPick }) {
   const pv = probView(d)
@@ -22,6 +23,6 @@ export async function saveProbability(id, color, deals, setDeals) {
     setDeals(ps => ps.map(x => (x.id === id ? { ...x, probability_auto: r.data.probability_auto } : x)))
   } catch (e) {
     setDeals(ps => ps.map(x => (x.id === id ? { ...x, probability_color: prev?.probability_color ?? null, probability_auto: prev?.probability_auto } : x)))
-    alert(e.response?.data?.detail || 'Не удалось сохранить вероятность')
+    alert(detailText(e, 'Не удалось сохранить вероятность'))
   }
 }

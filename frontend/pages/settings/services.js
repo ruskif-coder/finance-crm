@@ -9,6 +9,7 @@ import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover, Z 
 import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 // ── Справочник услуг (конструктор) — отдельная страница раздела «Настройки» ──
 // Услуга: тип размещения + форма расчёта + единая/раздельная (web/app) цена + базовые
@@ -73,7 +74,7 @@ export default function SettingsServices() {
         api.get('/sales/directories/services/formats', auth()),
         api.get('/articles/', auth()),
       ])
-      api.get('/sales/directories/pipelines', auth()).then(r => setPipes((r.data.items || []).filter(p => p.closing_flow))).catch(e => { setPipes([]); setPipesErr(e?.response?.data?.detail || 'Воронки реализации не загрузились') })
+      api.get('/sales/directories/pipelines', auth()).then(r => setPipes((r.data.items || []).filter(p => p.closing_flow))).catch(e => { setPipes([]); setPipesErr(detailText(e, 'Воронки реализации не загрузились')) })
       setServices(s.data.items || []); setAddons(a.data.items || []); setFormats(f.data.items || [])
       setPalette(s.data.palette || [])
       setArticles(Array.isArray(art.data) ? art.data : (art.data.items || []))
@@ -91,12 +92,12 @@ export default function SettingsServices() {
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }
+    catch (e) { alert(detailText(e, 'Ошибка сохранения')) }
   }
   const createService = async () => {
     if (!newService.name.trim()) { alert('Введите название услуги'); return }
     try { await api.post('/sales/directories/services', svcPayload({ ...newService, name: newService.name.trim() }), auth()); setNewService(NEW_SVC); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка создания') }
+    catch (e) { alert(detailText(e, 'Ошибка создания')) }
   }
   const toggleUse = async (id, on) => { try { await api.put(`/sales/directories/services/${id}/use`, { on }, auth()); await load() } catch (e) { alert('Ошибка') } }
   const reorder = async (toId) => {
@@ -116,12 +117,12 @@ export default function SettingsServices() {
   const saveAddon = async (id) => {
     const ed = editingAddons[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/addons/${id}`, { name: ed.name, unit_price: numOrNull(ed.unit_price), period: ed.period || null, can_be_bonus: !!ed.can_be_bonus, doc_phrase: ed.doc_phrase || null }, auth()); setEditingAddons(p => { const n = { ...p }; delete n[id]; return n }); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    catch (e) { alert(detailText(e, 'Ошибка')) }
   }
   const createAddon = async () => {
     if (!newAddon.name.trim()) { alert('Введите название доп. услуги'); return }
     try { await api.post('/sales/directories/services/addons', { name: newAddon.name.trim(), unit_price: numOrNull(newAddon.unit_price), period: newAddon.period || null, can_be_bonus: !!newAddon.can_be_bonus, doc_phrase: newAddon.doc_phrase || null }, auth()); setNewAddon({ name: '', unit_price: '', period: '', can_be_bonus: false, doc_phrase: '' }); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    catch (e) { alert(detailText(e, 'Ошибка')) }
   }
   const runDel = async () => {
     if (!confirmDel) return
@@ -129,18 +130,18 @@ export default function SettingsServices() {
       if (confirmDel.kind === 'service') await api.delete(`/sales/directories/services/${confirmDel.id}/hard`, auth())
       else await api.delete(`/sales/directories/services/addons/${confirmDel.id}`, auth())
       setConfirmDel(null); await load()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка удаления') }
+    } catch (e) { alert(detailText(e, 'Ошибка удаления')) }
   }
 
   // ── форматы (справочник + M2M с услугой) ──
   const createFormat = async () => {
     if (!newFormat.name.trim()) { alert('Введите название формата'); return }
     try { await api.post('/sales/directories/services/formats', { name: newFormat.name.trim(), group: newFormat.group || null }, auth()); setNewFormat({ name: '', group: '' }); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    catch (e) { alert(detailText(e, 'Ошибка')) }
   }
   const deleteFormat = async (f) => {
     try { await api.delete(`/sales/directories/services/formats/${f.id}`, auth()); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка удаления') }
+    catch (e) { alert(detailText(e, 'Ошибка удаления')) }
   }
   const toggleFormatActive = async (f) => {
     try { await api.put(`/sales/directories/services/formats/${f.id}`, { name: f.name, group: f.group, is_active: !f.is_active }, auth()); await load() }

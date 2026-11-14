@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { MONO } from '@/components/salesTableKit'
 import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
 import { noDoubleSign } from '@/lib/annexTemplate.mjs'
+import { detailText } from '@/lib/loadError'
 
 const CAP = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 
@@ -58,7 +59,7 @@ export default function AnnexQuickEdit({ title, hint, source, defaultText, edite
 
   const save = async (value) => {
     setBusy(true); setErr('')
-    try { await onSave(value) } catch (e) { setErr((e && e.response && e.response.data && e.response.data.detail) || 'Не удалось сохранить') }
+    try { await onSave(value) } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) }
     finally { setBusy(false) }
   }
   const copyText = () => {

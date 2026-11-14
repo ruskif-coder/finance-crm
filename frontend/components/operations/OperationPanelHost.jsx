@@ -12,6 +12,7 @@ import { downloadFile } from '@/lib/download'
 import safeHref from '@/lib/safeHref'
 import OperationPanel from './OperationPanel'
 import DsViewer from '@/components/onecDesk/DsViewer'
+import { detailText } from '@/lib/loadError'
 
 const LINKS = {
   package: code => `/accounts/master/${code}`,
@@ -41,7 +42,7 @@ export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onN
     setOp(null); setError(null); setFail('')
     api.get(`/operations/${opId}/context`, auth())
       .then(r => { if (alive) setOp(toPanelOp(r.data)) })
-      .catch(e => { if (!alive) return; if (e.response?.status === 404) setError('not_found'); else setFail(e.response?.data?.detail || 'Не удалось загрузить операцию — повторите') })
+      .catch(e => { if (!alive) return; if (e.response?.status === 404) setError('not_found'); else setFail(detailText(e, 'Не удалось загрузить операцию — повторите')) })
     return () => { alive = false }
   }, [opId])
   const onAction = (key, o) => {

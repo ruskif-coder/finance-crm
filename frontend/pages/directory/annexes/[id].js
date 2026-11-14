@@ -29,6 +29,7 @@ import AnnexDateField from '@/components/annex/AnnexDateField'
 import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
 import { ExternalSignButton, ExternalAnnexView } from '@/components/annex/ExternalAnnex'
 import { SignActions, SignBadge } from '@/components/master/docParts'
+import { detailText } from '@/lib/loadError'
 
 const dm = (d) => fmtCalendarDate(d)
 
@@ -188,11 +189,11 @@ export default function AnnexAssembly() {
       const r = await api.get(`/annexes/${id}`, auth())
       setA(r.data)
       // Заявки юристу этого ДС: открытая красит шапку и держит подтверждение и чистовик (владелец 14.10.2026).
-      api.get(`/legal-requests/annex/${id}`, auth()).then(x => setLegal(x.data)).catch(e => { setLegal([]); setErr(e?.response?.data?.detail || 'Не удалось загрузить заявки юристу — блокировка ДС не проверена') })
+      api.get(`/legal-requests/annex/${id}`, auth()).then(x => setLegal(x.data)).catch(e => { setLegal([]); setErr(detailText(e, 'Не удалось загрузить заявки юристу — блокировка ДС не проверена')) })
       setNo(String(r.data.no ?? r.data.next_no ?? ''))
       setDocDate(r.data.date ? String(r.data.date).slice(0, 10) : '')
       setErr('')
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить приложение') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить приложение')) }
   }, [id])
 
   useEffect(() => { load() }, [load])
@@ -202,7 +203,7 @@ export default function AnnexAssembly() {
     try {
       await api.put(`/annexes/party/${cpId}/signer`, form, auth())
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить реквизиты') }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить реквизиты')) }
     finally { setBusy('') }
   }
 
@@ -213,7 +214,7 @@ export default function AnnexAssembly() {
                      { no: no === '' ? null : Number(no), doc_date: docDate || null }, auth())
       await load()
     }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось подтвердить номер') }
+    catch (e) { setErr(detailText(e, 'Не удалось подтвердить номер')) }
     finally { setBusy('') }
   }
 
@@ -262,7 +263,7 @@ export default function AnnexAssembly() {
     try {
       await api.post(`/annexes/${id}/rebuild`, chosen ? { choose: true, template_id: pick } : {}, auth())
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось пересоздать документ') }
+    } catch (e) { setErr(detailText(e, 'Не удалось пересоздать документ')) }
     finally { setBusy('') }
   }
 

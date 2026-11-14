@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { mln, mlnAuto, grp, pct, niceMax } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { EMPTY, cellsOf, PixelBar, PixelColumn } from '@/components/charts/PixelBars'
+import { detailText } from '@/lib/loadError'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -67,7 +68,7 @@ export default function Analytics2() {
       const params = {}; if (period.date_from) params.date_from = period.date_from; if (period.date_to) params.date_to = period.date_to
       const r = await api.get('/sales/dashboard', { params, headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
       setData(r.data)
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить') } finally { setLoading(false) }
+    } catch (e) { setError(detailText(e, 'Не удалось загрузить')) } finally { setLoading(false) }
   }
   useRefreshOnReturn(() => loadWith())
   useEffect(() => {

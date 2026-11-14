@@ -26,6 +26,7 @@ import CopyCode from '@/components/CopyCode'
 import ExpandedRow from '@/components/master/registry/ExpandedRow'
 import StatusBar from '@/components/master/registry/StatusBar'
 import { CAPS, KEEP } from '@/components/master/registry/kit'
+import { detailText } from '@/lib/loadError'
 
 // 15 колонок хендоффа v2 (21.10.2026): ширины фиксированных — как в макете; текстовые — без жёсткого минимума (`minmax(0,…)`, доли — из
 // макета): делят свободное место и обрезаются многоточием, полный текст в title. Окно владельца ≈ 2000 px — минимумы макета (200 px)
@@ -54,7 +55,7 @@ export default function MasterDealsRegistry() {
   const load = useCallback(async () => {
     setErr('')
     try { setData((await api.get('/master-deals/registry/list', auth())).data) }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить мастер-сделки'); setData({ rows: [], statuses: [], hidden: [] }) }
+    catch (e) { setErr(detailText(e, 'Не удалось загрузить мастер-сделки')); setData({ rows: [], statuses: [], hidden: [] }) }
   }, [])
   useEffect(() => { if (access === 'ok') load() }, [access, load])
   useRefreshOnReturn(load, { enabled: access === 'ok' && !asking })

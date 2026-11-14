@@ -13,6 +13,7 @@ import useLatest from '@/lib/useLatest'
 import { calcPeriods, groupCalc, newRuleFor, periodLabel, skGap } from '@/lib/agencyTerms.mjs'
 import { plural } from '@/lib/publisherRecon.mjs'
 import { CAPS, Card, FilterChip, fmtPct, KpiStrip, MiniSeg, modeTone, NUM, Scroll, Title } from './kit'
+import { detailText } from '@/lib/loadError'
 
 const CCOLS = 'minmax(220px,1.6fr) minmax(220px,1.5fr) 80px 130px 190px 56px 120px'
 const OCOLS = '80px minmax(180px,1.6fr) 100px 120px minmax(170px,1fr)'
@@ -98,13 +99,13 @@ export default function CalcView({ canEdit, isAdmin, tick, onGoEmpty, onOpenRule
     setErr('')
     api.get(`/agency-terms/calc?${query()}`, auth())
       .then((r) => { if (fresh()) setData(r.data) })
-      .catch((e) => { if (fresh()) setErr(e.response?.data?.detail || 'Расчёт не загрузился') })
+      .catch((e) => { if (fresh()) setErr(detailText(e, 'Расчёт не загрузился')) })
   }
   useEffect(load, [period, mode, tick])        // eslint-disable-line react-hooks/exhaustive-deps
 
   const act = async (fn, done) => {
     setBusy(true); setMsg('')
-    try { await fn(); setMsg(done); load() } catch (e) { setMsg(e.response?.data?.detail || 'Не получилось') } finally { setBusy(false) }
+    try { await fn(); setMsg(done); load() } catch (e) { setMsg(detailText(e, 'Не получилось')) } finally { setBusy(false) }
   }
   const month = period.length === 7 ? (data?.months || []).find((m) => m.period === period) : null
   const noRule = data?.totals.no_rule || 0

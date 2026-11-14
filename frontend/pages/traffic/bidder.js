@@ -12,6 +12,7 @@ import { grp, grpDash } from '@/lib/salesFormat'
 import api, { auth } from '@/lib/api'
 import { can, getPermissions } from '@/lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { detailText } from '@/lib/loadError'
 
 const ru = (d) => (d ? String(d).split('-').reverse().join('.') : '—')
 
@@ -119,7 +120,7 @@ function HoldBanner({ hold, onResumed }) {
     if (!window.confirm('Возобновить ночной пересчёт долей? Он пойдёт в 02:00 UTC по факту, который будет к тому времени.')) return
     setBusy(true); setErr('')
     try { await api.post('/bidder/resume', {}, auth()); onResumed() }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось возобновить') }
+    catch (e) { setErr(detailText(e, 'Не удалось возобновить')) }
     finally { setBusy(false) }
   }
   return (
@@ -155,7 +156,7 @@ export default function BidderPage() {
       setCamps(b.data)
       setRuns(c.data)
       setErr('')
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось загрузить биддер') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить биддер')) }
   }, [])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)
@@ -165,7 +166,7 @@ export default function BidderPage() {
     let alive = true
     api.get(`/bidder/layout/${cid}`, auth())
       .then(r => { if (alive) { setLay(r.data); setErr('') } })
-      .catch(e => { if (alive) setErr(e?.response?.data?.detail || 'Не удалось загрузить раскладку') })
+      .catch(e => { if (alive) setErr(detailText(e, 'Не удалось загрузить раскладку')) })
     return () => { alive = false }
   }, [cid])
 
@@ -178,7 +179,7 @@ export default function BidderPage() {
         .then(x => setRunChanges(m => ({ ...m, [r.id]: x.data })))
         .catch(e => {
           // Без этого «Загрузка…» висела бы до перезагрузки страницы (ревью 06.10.2026).
-          setErr(e?.response?.data?.detail || 'Не удалось загрузить изменения прогона')
+          setErr(detailText(e, 'Не удалось загрузить изменения прогона'))
           setOpenRun(null)
         })
     }

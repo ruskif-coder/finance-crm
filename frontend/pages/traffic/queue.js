@@ -37,6 +37,7 @@ import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffi
 import safeHref from '@/lib/safeHref'
 import CopyCode from '@/components/CopyCode'
 import { aimToneFor, aimExpired, issueAim, RESTART_NOTE } from '@/lib/aimTab'
+import { detailText } from '@/lib/loadError'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -278,7 +279,7 @@ export default function TrafficQueue() {
       setMyRepId(r.data.my_rep_id ?? null)
       setCanViewOthers(!!r.data.can_view_others)
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось загрузить очередь')
+      setErr(detailText(e, 'Не удалось загрузить очередь'))
     }
     setLoading(false)
   }, [repId])
@@ -300,7 +301,7 @@ export default function TrafficQueue() {
       setRework(null)
       await load()
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Не удалось записать вердикт')
+      setErr(detailText(e, 'Не удалось записать вердикт'))
     }
     setBusy(false)
   }
@@ -333,7 +334,7 @@ export default function TrafficQueue() {
       await api.put(`/launch-prep/set/${aim.setId}/targeting-url`, { url: aim.url.trim() }, auth())
       setAim(null)
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось сохранить ссылку')) }
     setBusy(false)
   }
 
@@ -352,7 +353,7 @@ export default function TrafficQueue() {
       // Молчание здесь означало бы, что запрос уйдёт дважды — или не уйдёт вовсе.
       setNote(MAIL_SAID[r.data?.mail] || MAIL_SAID.off)
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось записать запрос') }
+    } catch (e) { setErr(detailText(e, 'Не удалось записать запрос')) }
     setBusy(false)
   }
 
@@ -371,7 +372,7 @@ export default function TrafficQueue() {
     try {
       const r = await api.get(`/traffic/pair/${row.pair_id}/files`, auth())
       setShots({ row, files: r.data.files || [] })
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось открыть файлы') }
+    } catch (e) { setErr(detailText(e, 'Не удалось открыть файлы')) }
   }
 
   /* Пачкой — так и снимают: пять кадров одного сайта подряд. Но грузим ПО ОЧЕРЕДИ,
@@ -400,7 +401,7 @@ export default function TrafficQueue() {
           { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
         done++
       } catch (e) {
-        setErr(`${e.response?.data?.detail || 'Не удалось загрузить'} — принято ${done} из ${take.length}`)
+        setErr(`${detailText(e, 'Не удалось загрузить')} — принято ${done} из ${take.length}`)
         break
       }
     }
@@ -419,7 +420,7 @@ export default function TrafficQueue() {
       await api.delete(`/traffic/file/${id}`, auth())
       await openShots(row)
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось удалить')) }
     setBusy(false)
   }
 
@@ -430,7 +431,7 @@ export default function TrafficQueue() {
   function download(url, name) {
     api.get(url, { ...auth(), responseType: 'blob' })
       .then(r => saveResponse(r, name))
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось скачать'))
+      .catch(e => setErr(detailText(e, 'Не удалось скачать')))
   }
 
   const waiting = rows.filter(r => !r.verdict).length
