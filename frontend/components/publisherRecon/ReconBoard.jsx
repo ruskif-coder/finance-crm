@@ -11,6 +11,7 @@ import ReconModal from './ReconModal'
 import { downloadFile } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { CAPS, Dot, MonthSwitch, StatusPill, Toast, actBtn, useToast } from './reconKit'
+import { detailText } from '@/lib/loadError'
 
 const COLS = 'minmax(150px,0.9fr) minmax(100px,0.6fr) minmax(110px,0.6fr) minmax(110px,0.6fr) minmax(90px,0.5fr) minmax(104px,0.6fr) minmax(168px,0.8fr) minmax(76px,0.4fr) minmax(140px,0.8fr) 112px'
 const TILES = [
@@ -42,7 +43,7 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
     setLoading(true)
     api.get(`/publisher-recon/board?period=${month}`, auth())
       .then(r => { if (fresh()) { setData(r.data); setErr('') } })
-      .catch(e => { if (fresh()) { setData(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить сверки') } })
+      .catch(e => { if (fresh()) { setData(null); setErr(detailText(e, 'Не удалось загрузить сверки')) } })
       .finally(() => { if (fresh()) setLoading(false) })
   }, [month, latest])
   useEffect(() => { load() }, [load])
@@ -59,7 +60,7 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
       await api.post('/publisher-recon/send', { publisher_id: r.publisher_id, period: month }, auth())
       flash(`${r.site}: сверка отправлена`)
       load()
-    } catch (e) { flash(e?.response?.data?.detail || 'Не удалось отправить') } finally { setBusy(false) }
+    } catch (e) { flash(detailText(e, 'Не удалось отправить')) } finally { setBusy(false) }
   }
   const download = async (what, url) => {
     if (exporting) return
@@ -75,7 +76,7 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
       const { data: d } = await api.post('/publisher-recon/send-all', { period: month }, auth())
       flash(`Отправлено площадкам: ${d.sent}`)
       load()
-    } catch (e) { flash(e?.response?.data?.detail || 'Не удалось отправить') } finally { setBusy(false) }
+    } catch (e) { flash(detailText(e, 'Не удалось отправить')) } finally { setBusy(false) }
   }
 
   const tileVal = { all: c.all, answer: c.answer, waitAll: c.wait + c.late, ready: c.ready, closing: c.closing, done: c.done }

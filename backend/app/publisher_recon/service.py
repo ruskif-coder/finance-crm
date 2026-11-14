@@ -179,7 +179,38 @@ def spread(total: int, weights: Dict[int, int]) -> Dict[int, int]:
     return dict(zip(keys, parts))
 
 
-def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date] = None) -> PublisherRequest:
+MODES = ("even", "target")
+
+
+def distribute(total: int, facts: Dict[int, int], mode: str, target_id: Optional[int] = None) -> Dict[int, int]:
+    """Итог по РК сверки (владелец 14.11.2026). `even` — дельта пропорционально нашему факту (то же, что итог по долям,
+    `spread`); `target` — вся дельта на одну РК, остальные остаются с нашим фактом. Сумма всегда равна `total`."""
+    if mode == "even":
+        return spread(total, facts)
+    if mode != "target":
+        raise ReconError(400, "Неизвестный способ раскладки")
+    if target_id not in facts:
+        raise ReconError(400, "Выберите РК этой сверки")
+    out = dict(facts)
+    out[target_id] = facts[target_id] + total - sum(facts.values())
+    if out[target_id] < 0:
+        raise ReconError(400, f"Дельта больше показов этой РК ({_num(facts[target_id])}) — выберите другую или распределите")
+    return out
+
+
+def preview(db: Session, req: PublisherRequest, volume, mode: str, target_id: Optional[int] = None) -> dict:
+    """Что запишет «Согласовать итог» при этой раскладке — окно менеджера показывает ровно это."""
+    volume = _volume(volume)
+    if volume is None:
+        raise ReconError(400, "Укажите итог показов")
+    facts = B.target_facts(db, req.publisher_id, req.period)
+    split = distribute(volume, facts, mode, target_id)
+    return {"total": volume, "ours": sum(facts.values()), "delta": volume - sum(facts.values()),
+            "lines": [{"placement_id": k, "ours": facts[k], "agreed": split[k]} for k in facts]}
+
+
+def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date] = None,
+          mode: str = "even", target_id: Optional[int] = None) -> PublisherRequest:
     """«Согласовать итог N» — финальное решение менеджера: пишем нашу цифру, цифру площадки и итог, CPM на сейчас
     и разнесение по размещениям. Без возврата."""
     # Два «Согласовать» разом: второй ждёт первого на замке строки и видит уже зафиксированный итог — 409, а не
@@ -189,6 +220,7 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     if volume is None:
         raise ReconError(400, "Укажите итог показов")
     facts = B.target_facts(db, req.publisher_id, req.period)
+    split = distribute(volume, facts, mode, target_id)     # до записи: неверная РК — 400, а не полузаписанный итог
     cpm = db.execute(text("SELECT cpm_contract FROM sales_publishers WHERE id = :p"),
                      {"p": req.publisher_id}).scalar()
     from app.publisher_recon.razaloc import publisher_vat
@@ -197,7 +229,7 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     # НДС — как и CPM, на момент согласования: разаллокация по закрытому месяцу не пересчитывается (владелец 29.10.2026).
     rc.vat_rate = publisher_vat(db, req.publisher_id)
     db.add(rc)
-    for tid, v in spread(volume, facts).items():
+    for tid, v in split.items():
         db.add(PublisherReconLine(request_id=req.id, target_id=tid, our_volume=facts[tid], agreed_volume=v))
     req.verdict, req.decided_at = B.AGREED, datetime.utcnow()
     req.decided_by, req.decided_email = user.name or user.email, user.email
@@ -250,9 +282,10 @@ def publisher_answer(db: Session, req: PublisherRequest, author: str, email: Opt
         db.add(rc)
     req.pub_seen_at = datetime.utcnow()
     db.flush()                         # доска читает сырым SQL — без flush она не видит цифру площадки
-    if agree and not free:
+    if agree and not free and volume == sum(B.target_facts(db, req.publisher_id, req.period).values()):
         # Разногласий нет — площадка последняя, кто утверждает сверку (владелец 29.10.2026): итог фиксируется её
-        # согласием, без менеджера, и разаллокация сразу доступна. Расхождение по-прежнему решает менеджер.
+        # согласием, без менеджера, и разаллокация сразу доступна. Согласие на наше контрпредложение — с дельтой, а
+        # раскладку дельты по РК выбирает менеджер (владелец 14.11.2026): строка уходит ему «есть ответ».
         agree_total(db, req, SimpleNamespace(name=author, email=email), volume)
     return m
 

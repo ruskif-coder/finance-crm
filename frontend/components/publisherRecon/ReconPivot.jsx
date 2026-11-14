@@ -6,6 +6,7 @@ import { MONO, card } from '@/components/salesTableKit'
 import { MONTHS_FULL, grpDash, monthLabel, rub2 } from '@/lib/salesFormat'
 import { ST } from '@/lib/publisherRecon.mjs'
 import { CAPS, Dot, MonthSwitch } from './reconKit'
+import { detailText } from '@/lib/loadError'
 
 const FIRST_YEAR = 2024
 const LEGEND = [['var(--income)', 'согласовано — итог'], ['var(--violet-fg)', 'есть ответ'], ['var(--warning)', 'ожидает площадку'],
@@ -23,7 +24,7 @@ export default function ReconPivot({ year, setYear, current, onOpenRecon }) {
     setSel(null)
     api.get(`/publisher-recon/summary?year=${year}`, auth())
       .then(r => { setData(r.data); setErr('') })
-      .catch(e => { setData(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить сводную') })
+      .catch(e => { setData(null); setErr(detailText(e, 'Не удалось загрузить сводную')) })
   }, [year])
 
   const months = useMemo(() => data?.months || [], [data])

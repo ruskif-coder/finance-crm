@@ -10,7 +10,9 @@ import { fmtDayOfMoment, fmtDayTime } from '@/lib/dates'
 import { SVC_DOT } from '@/lib/masterStatus'
 import { money, parseShows, toneOf } from '@/lib/publisherRecon.mjs'
 import { CAPS, Dot, StatusPill, actBtn } from './reconKit'
+import DeltaModal from './DeltaModal'
 import { Cube } from '@/components/LogoLoader'
+import { detailText } from '@/lib/loadError'
 
 const CAMP = 'minmax(160px,1.5fr) minmax(104px,0.8fr) 50px 98px 96px 92px 92px'
 const dm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '')
@@ -21,7 +23,7 @@ const HINT = {
   ready: (r) => `Карточка появится в кабинете площадки; срок ответа — 2 рабочих дня.`,
   wait: () => 'Ход за площадкой. Итог можно зафиксировать и без ответа.',
   late: () => 'Срок ответа прошёл. Напомните или зафиксируйте итог без ответа.',
-  answer: () => 'Без возврата: в базу пишутся наша цифра, цифра площадки и итог; итог раскладывается по РК периода пропорционально доле.',
+  answer: () => 'Без возврата: в базу пишутся наша цифра, цифра площадки и итог. Если итог отличается от нашей цифры — дальше выбор, как разложить дельту по РК.',
   closing: () => 'Есть РК в размещении — сверку не отправить. Станет «готово» само, когда окончатся все РК.',
   done: (r) => `Согласовано ${fmtDayOfMoment(r.decided_at)}${r.decided_by ? ' · ' + r.decided_by : ''}. Итог зафиксирован.`
     + (r.changed ? ` После итога наш факт или состав размещений изменился (сейчас ${grpDash(r.fact_now)}) — итог не пересчитывается.` : ''),
@@ -35,6 +37,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState(false)
   const [askWithdraw, setAskWithdraw] = useState(false)   // отзыв — вторым нажатием: стирает сверку целиком
+  const [delta, setDelta] = useState(null)                 // итог с дельтой — сначала окно раскладки по РК (14.11.2026)
 
   const latest = useLatest()
   const finalSet = useRef(false)     // итог подставляем один раз: после «Ответить» перечитывание стирало набранную цифру
@@ -47,7 +50,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
         const row = r.data.row
         if (!finalSet.current || row.agreed != null) { setFinal(String(row.agreed ?? row.theirs ?? row.ours)); finalSet.current = true }
       })
-      .catch(e => { if (fresh()) setErr(e?.response?.data?.detail || 'Не удалось открыть сверку') })
+      .catch(e => { if (fresh()) setErr(detailText(e, 'Не удалось открыть сверку')) })
   }, [publisherId, period, latest])
   useEffect(() => { finalSet.current = false; load() }, [load])
 
@@ -63,7 +66,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   const run = async (fn, okMsg) => {
     if (busy) return
     setBusy(true)
-    try { await fn(); onChanged?.(okMsg); load(); setReply('') } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
+    try { await fn(); onChanged?.(okMsg); load(); setReply('') } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
 
   if (!d) {
@@ -93,6 +96,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   const withdrawBtn = [askWithdraw ? 'Точно отозвать? Переписка сотрётся' : 'Отозвать сверку', withdraw, 'g']
   const agree = () => {
     if (fin == null) { setErr('Укажите итог показов'); return }
+    if (fd !== 0) { setErr(''); setDelta(fin); return }
     run(() => api.post(`/publisher-recon/${rid}/agree`, { volume: fin }, auth()), `${r.site}: итог ${grpDash(fin)} зафиксирован`)
   }
   const answer = () => {
@@ -125,7 +129,7 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
     + ((k === 'wait' || k === 'late') && r.due_at ? ` · ответ площадки до ${dm(r.due_at)}` : '')
   const lastTheirs = [...(d.thread || [])].reverse().find(m => m.side === 'площадка' && m.volume != null)
 
-  return (
+  return (<>
     <Modal width={1240} onClose={onClose} title={title}
       summary={<span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{meta}</span>}
       footer={<>
@@ -208,6 +212,10 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
         </div>
       </div>
     </Modal>
+    {delta != null && (
+      <DeltaModal rid={rid} site={r.site} volume={delta} ours={r.ours} campaigns={d.campaigns} onClose={() => setDelta(null)}
+        onAgreed={() => { setDelta(null); onChanged?.(`${r.site}: итог ${grpDash(delta)} зафиксирован`); load() }} />)}
+    </>
   )
 }
 

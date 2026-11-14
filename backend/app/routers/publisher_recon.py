@@ -147,19 +147,32 @@ def remind(request_id: int, db: Session = Depends(get_db), user: User = Depends(
 
 class AgreeIn(BaseModel):
     volume: int
+    mode: str = "even"                  # раскладка дельты по РК: even — по доле нашего факта, target — на одну РК
+    target_id: Optional[int] = None
+
+
+@router.post("/{request_id}/agree/preview")
+def agree_preview(request_id: int, payload: AgreeIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Раскладка итога по РК до подтверждения — окно «Согласовать итог» (владелец 14.11.2026). Ничего не пишет."""
+    req = _req(db, request_id)
+    try:
+        return S.preview(db, req, payload.volume, payload.mode, payload.target_id)
+    except S.ReconError as e:
+        raise HTTPException(e.status, e.message)
 
 
 @router.post("/{request_id}/agree")
 def agree(request_id: int, payload: AgreeIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
     req = _req(db, request_id)
     try:
-        S.agree(db, req, user, payload.volume)
+        S.agree(db, req, user, payload.volume, mode=payload.mode, target_id=payload.target_id)
     except S.ReconError as e:
         db.rollback()
         raise HTTPException(e.status, e.message)
     rc = req.recon
     log_action(db, user, "publisher_recon_agree", "publisher_request", req.id,
-               f"{_label(db, req)}: итог {payload.volume} (наши {rc.our_volume}, площадки {rc.their_volume})")
+               f"{_label(db, req)}: итог {payload.volume} (наши {rc.our_volume}, площадки {rc.their_volume}), "
+               + ("дельта на РК " + str(payload.target_id) if payload.mode == "target" else "дельта по доле факта"))
     db.commit()
     N.to_site(db, req, "итог")
     return {"status": B.DONE}

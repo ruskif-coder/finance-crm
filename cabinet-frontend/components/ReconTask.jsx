@@ -7,7 +7,7 @@
  * очереди, и окно предлагает скачать разаллокацию. Расхождение фиксирует менеджер паблишеров.
  * Сумма показывается (владелец 26.10): это биллинг площадки по CPM её договора, как в «Кампаниях».
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
@@ -148,6 +148,15 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
   const [pending, setPending] = useState(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
+  // Форма расхождения рисуется под таблицей кампаний, внутри прокрутки окна: на ноутбуке площадки (~700 px по высоте)
+  // её не видно — человек нажимал «Есть расхождение», видел только «Отправить правки» и не находил поле (13.11.2026,
+  // zdesapteka.ru). Открылась — прокручиваем к ней и ставим курсор в поле цифры.
+  const diffRef = useRef(null)
+  useEffect(() => {
+    if (!diffOpen || !diffRef.current) return
+    diffRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    diffRef.current.querySelector('input')?.focus({ preventScroll: true })
+  }, [diffOpen])
   const ours = r.our_volume || 0
   const theirs = parseShows(val)
   const diff = theirs == null ? null : theirs - ours
@@ -252,7 +261,7 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
           </div>
 
           {diffOpen && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14, padding: '12px 14px', background: C.warningTint, border: `1px solid ${C.warningBorder}`, borderRadius: 14 }}>
+            <div ref={diffRef} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14, padding: '12px 14px', background: C.warningTint, border: `1px solid ${C.warningBorder}`, borderRadius: 14 }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.warningFg }}>Показов по вашим данным за {monthIn(r.period)}</span>
                 <input value={val} onChange={e => setVal(e.target.value)} inputMode="numeric" placeholder={num(ours)}

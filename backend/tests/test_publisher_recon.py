@@ -94,8 +94,10 @@ def test_full_cycle_writes_three_numbers_and_spreads_the_total(ready):
 
     S.reply(db, req, _U(), "предлагаем", row["ours"] + 400, today=date(2026, 10, 27))
     assert req.due_at == date(2026, 10, 29)                            # наш ответ продлевает срок
-    S.publisher_answer(db, req, "Площадка", None, agree=True)          # «Согласен» — с нашей цифрой, и это итог
+    S.publisher_answer(db, req, "Площадка", None, agree=True)          # «Согласен» — с нашей цифрой
     assert req.recon.their_volume == row["ours"] + 400
+    assert req.verdict is None                                         # дельта есть — раскладку выбирает менеджер (14.11)
+    S.agree(db, req, _U(), row["ours"] + 400)
 
     lines = db.execute(text("SELECT sum(agreed_volume), sum(our_volume) FROM publisher_recon_line WHERE request_id = :r"),
                        {"r": req.id}).first()
@@ -320,7 +322,7 @@ def test_dispute_still_waits_for_our_manager(ready):
 def test_cabinet_shows_the_same_figure_that_agreement_locks(ready):
     """Ревью 29.10.2026: мы предложили N, потом ответили текстом без цифры — бэкенд при «Согласен» берёт N (последнее
     наше сообщение С ЦИФРОЙ), а витрина кабинета брала последнее сообщение целиком и показывала нашу цифру вместо N.
-    С 29.10 «Согласен» — это итог, поэтому кнопка обязана показывать ровно то, что зафиксируется."""
+    Кнопка обязана показывать ровно ту цифру, что ляжет в итог (с 14.11 итог по дельте подтверждает менеджер)."""
     db, row = ready
     pid, offer = row["publisher_id"], row["ours"] + 400
     req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
@@ -330,6 +332,8 @@ def test_cabinet_shows_the_same_figure_that_agreement_locks(ready):
     db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(pid)})
     shown = db.execute(text("SELECT offer FROM pub.recon_v1 WHERE request_id = :r"), {"r": req.id}).scalar()
     S.publisher_answer(db, req, "Площадка", None, agree=True)
+    assert req.recon.their_volume == offer                             # с 14.11 итог по дельте подтверждает менеджер
+    S.agree(db, req, _U(), req.recon.their_volume)
     assert shown == offer == req.recon.agreed_volume
 
 
