@@ -153,6 +153,17 @@ register(Event(
     params={"repeat_days": 3},
 ))
 register(Event(
+    key="recon_fact_overdue", direction="traffic", group="Сверка",
+    title="Сделка 3 дня на сверке, факт не собран",
+    description=("Полный цикл: сделка на итоговой сверке дольше 3 дней, а факт по размещениям ещё не снят — его снимает трафик. "
+                 "Аккаунту это же напоминание не уходит: подтверждать ему пока нечего."),
+    tone="bad", action="Открыть сделку", widget_group="Документы", scan=True,
+    recipients=[{"type": "resolver", "value": "traffic_manager"}, {"type": "resolver", "value": "traffic_masters"}],
+    channels={"app": True, "tg": True},
+    params={"repeat_days": 3},
+))
+
+register(Event(
     key="deal_sent_to_do", direction="fin", group="Закрытие месяца",
     title="Сделка отправлена в ДО",
     description="Сверка зафиксирована, сделка ушла в мастер-сделку — дальше ДС и закрывающие.",
@@ -222,7 +233,8 @@ register(Event(
     title="Документы пакета без подписи дольше срока",
     description="Документы ушли клиенту больше 30 дней назад, а подписаны не все: нет скана бумаги, подписи в ЭДО или клиент отказал.",
     tone="bad", action="Отметить подпись", widget_group="Документы", scan=True,
-    recipients=_COLLECTOR, channels={"app": True, "tg": True},
+    # Подпись и сканы после выставления — работа финансов (матрица, владелец 14.11.2026), не собравшего пакет аккаунта.
+    recipients=[{"type": "role", "value": "manager"}], channels={"app": True, "tg": True},
     params={"repeat_days": 3},
 ))
 
@@ -318,15 +330,19 @@ register(Event(
 # файлов ДС в системе ноль, правило срабатывало на всех сделках в окне подряд.
 # Вернётся вместе с приложениями к договору (SalesAnnex), когда ДС станут данными.
 
+# «Период закрыт, закрывающих нет» (act_missing) убрано 14.11.2026 (владелец): закрывающие делает бухгалтер в 1С, дальше ведут
+# финансы — у аккаунта после «ждём 1С» хода нет (матрица услуг и стадий). Правило к тому же искало УПД файлом на сделке, а с
+# мастер-сделок они в пакете, и срабатывало почти по всем сделкам ДО (100 в день на копии прода).
+
 register(Event(
-    key="act_missing", direction="account", group="Очередь сделок",
-    title="Период закрыт, закрывающих нет",
-    description=("РК закончилась больше 5 дней назад, а УПД/счёт не выставлены. "
-                 "Пока их нет, платить клиенту не за что — это тормоз для денег."),
-    tone="warn", action="Прикрепить документы", widget_group="Документы", scan=True,
+    key="account_launch_finish", direction="account", group="Очередь сделок",
+    title="Период кончился — завершите запуск",
+    description=("Сделка запускается вне нашей DSP (контур аккаунта, приоритезация): период размещения кончился, а сделка ещё "
+                 "«В размещении». Завершить — кнопкой «Завершить» на дашборде или в карточке; дальше итоговая сверка."),
+    tone="warn", action="Завершить", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
-    channels={"app": True},
-    params={"repeat_days": 5},
+    channels={"app": True, "tg": True},
+    params={"repeat_days": 2},
 ))
 
 register(Event(

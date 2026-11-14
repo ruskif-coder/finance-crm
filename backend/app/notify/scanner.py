@@ -26,9 +26,10 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.notify import registry
+from app.notify import matrix_gate, registry
 from app.notify.bus import emit
 from app.sales.deal_label import deal_label
+from app.sales import stage_slots as SS
 from app.notify.models import NotificationAlertState, NotificationScanRun
 import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
@@ -291,8 +292,14 @@ def _deal_rule(kind: str):
         if _verdicts is None:
             _verdicts = _deal_facts(db)
         hits, today = [], date.today()
+        stage_name = {}
+        if kind == "stage_stuck":
+            from app.sales.catalog import Catalog
+            stage_name = {s.id: s.name for s in Catalog(db).by_id.values()}
         for d, v in _verdicts:
             if v.kind != kind:
+                continue
+            if kind == "stage_stuck" and not stuck_applies(stage_name.get(d.our_stage_id)):
                 continue
             if v.urgency == "normal":
                 # Лента — подмножество очереди, и отбирает она по срочности. NORMAL
@@ -494,8 +501,23 @@ def _after_backlog_overdue(db: Session, hit: Hit, now: datetime):
 # та же, что строит очередь на дашборде аккаунта; обёртка лишь разбирает её вердикты
 # по видам. invoice_overdue на неё не переезжает: он считается по операциям, а не по
 # сделкам — у него другая сущность и другой адресат.
+# «act_missing» (период закрыт, закрывающих нет) убрано 14.11.2026: закрывающие — бухгалтер и финансы, не аккаунт.
 DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_unapproved", "booking_confirm",
-                     "act_missing", "stage_stuck", "stage_unmapped"]
+                     "stage_stuck", "stage_unmapped"]
+
+
+def stuck_applies(stage_name: Optional[str]) -> bool:
+    """«Дольше нормы» — не на итоговой сверке (там своё «3 дня на сверке») и не на стадиях ДО: их ведёт статус пакета
+    (`master_deal.deal_stages`), двигать сделку руками аккаунту некуда (владелец 14.11.2026)."""
+    return stage_name not in (SS.RECON, *SS.DO_STAGES)
+
+
+def finish_due(flow: str, stage, period_to: Optional[date], today: date) -> bool:
+    """Своему запуску (контур аккаунта, приоритезация) пора «Завершить»: сделка «В размещении», период кончился вчера и раньше.
+    Полный цикл сюда не входит — его РК завершает трафик."""
+    from app.sales.account_turn import ACCOUNT_LAUNCH
+    return (flow in ACCOUNT_LAUNCH and stage is not None and stage.name == SS.LIVE
+            and period_to is not None and period_to < today)
 
 def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
     """Площадка молчит третий день после отправки комплекта.
@@ -693,7 +715,34 @@ def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
 
 def rule_recon_overdue(db: Session, ev: registry.Event) -> List[Hit]:
     from app.notify.closing import recon_overdue_hits
-    return recon_overdue_hits(db, Hit, fact_days)
+    return recon_overdue_hits(db, Hit, fact_days, "account")
+
+
+def rule_recon_fact_overdue(db: Session, ev: registry.Event) -> List[Hit]:
+    from app.notify.closing import recon_overdue_hits
+    return recon_overdue_hits(db, Hit, fact_days, "traffic")
+
+
+def rule_account_launch_finish(db: Session, ev: registry.Event) -> List[Hit]:
+    """«Период кончился — завершите запуск» (владелец 14.11.2026): своему запуску «Завершить» — ход аккаунта."""
+    from app.final_recon import flow as FLOW
+    from app.sales.catalog import Catalog
+    from app.sales.models import SalesDeal
+    cat, today = Catalog(db), date.today()
+    live = next((s for s in cat.by_id.values() if s.name == SS.LIVE), None)
+    if live is None:
+        return []
+    hits = []
+    for d in db.query(SalesDeal).filter(SalesDeal.our_stage_id == live.id, SalesDeal.period_to < today).all():
+        if not finish_due(FLOW.of_deal(db, d), live, d.period_to, today):
+            continue
+        late = (today - d.period_to).days
+        hits.append(Hit(entity_type="deal", entity_id=d.id, stage="over",
+                        title=f"{deal_label(d, service=True)}: период кончился {late} дн. назад — завершите запуск",
+                        link=f"/sales/deals/{d.code or d.id}", due_date=d.period_to, ctx={"deal": d}, code=d.code or None,
+                        facts=[{"k": "период до", "v": d.period_to.strftime("%d.%m")},
+                               {"k": "прошло", "v": fact_days(late), "fg": "warning", "hot": True}]))
+    return hits
 
 
 def rule_master_scans_overdue(db: Session, ev: registry.Event) -> List[Hit]:
@@ -732,6 +781,8 @@ def _after_sales_status_reminder(db: Session, hit: Hit, now: datetime):
 RULES = {
     "sales_status_reminder": rule_sales_status_reminder,
     "recon_overdue": rule_recon_overdue,
+    "recon_fact_overdue": rule_recon_fact_overdue,
+    "account_launch_finish": rule_account_launch_finish,
     "master_scans_overdue": rule_master_scans_overdue,
     "invoice_overdue": rule_invoice_overdue,
     "plan_month_empty": rule_plan_month_empty,
@@ -776,6 +827,8 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
             stats["rules"] += 1
             try:
                 hits = fn(db, ev)
+                # События креативов — только где матрица требует креативы (`matrix_gate`, 14.11.2026): отсеять ДО записи состояния
+                hits = [h for h in hits if matrix_gate.allowed(db, event_key, h.ctx)]
             except Exception as e:                  # noqa: BLE001 — намеренно широко
                 # Изоляция правила. До 31.08.2026 её не было, и одна опечатка в одном
                 # правиле обрывала ВЕСЬ прогон: внешний обработчик делает rollback и

@@ -114,8 +114,17 @@ def onec_desk(db: Session, key: str, m, user=None, upd_no=None, text=None) -> No
 
 # ── просрочки (сканер) ────────────────────────────────────────────────────────────────────────────
 
-def recon_overdue_hits(db: Session, Hit, fact_days) -> list:
-    """Сделка на «Итоговой сверке» дольше 3 дней и ещё не отправлена в ДО — аккаунту и мастерам аккаунтов."""
+def recon_route(flow: str, fact_state: str) -> str:
+    """Кому напоминать о затянувшейся сверке (владелец 14.11.2026, матрица): у полного цикла, пока факт по размещениям не снят,
+    ход у трафика; иначе — подтвердить сверку и «Отправить в ДО» — аккаунт. Тот же признак, что «чей ход» дашборда."""
+    from app.final_recon.flow import FULL
+    from app.sales.stage_checks import NOT_YET
+    return "traffic" if flow == FULL and fact_state == NOT_YET else "account"
+
+
+def recon_overdue_hits(db: Session, Hit, fact_days, route: str = "account") -> list:
+    """Сделка на «Итоговой сверке» дольше 3 дней и ещё не отправлена в ДО. `route` — чьи сработки отдать: account
+    (`recon_overdue`, аккаунту и мастерам) или traffic (`recon_fact_overdue`, факт не собран — трафику сделки)."""
     from app.final_recon.models import FinalReconDeal
     from app.master_deal.service import RECON_STAGE
     from app.sales.deal_label import deal_label
@@ -130,8 +139,12 @@ def recon_overdue_hits(db: Session, Hit, fact_days) -> list:
     rows = (db.query(SalesDeal, since.c[1]).join(since, since.c.deal_id == SalesDeal.id)
             .outerjoin(FinalReconDeal, FinalReconDeal.deal_id == SalesDeal.id)
             .filter(SalesDeal.our_stage_id == stage_id, since.c[1] < edge, FinalReconDeal.sent_at.is_(None)).all())
+    from app.final_recon import flow as FLOW
+    from app.sales.stage_checks import REGISTRY, Ctx
     hits = []
     for d, at in rows:
+        if recon_route(FLOW.of_deal(db, d), REGISTRY["fact_collected"].fn(Ctx(db, d)).state) != route:
+            continue
         # `at` — timestamptz (с поясом), utcnow — без: вычитать в одном виде (упало 24.10.2026 на первой просрочке)
         days = (datetime.utcnow() - (at.astimezone(timezone.utc).replace(tzinfo=None) if at.tzinfo else at)).days
         hits.append(Hit(entity_type="sales_deal", entity_id=d.id, stage="overdue",

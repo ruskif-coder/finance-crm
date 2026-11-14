@@ -18,7 +18,7 @@ from typing import Iterable, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models import Notification, User
-from app.notify import channels, registry, recipients as rcp
+from app.notify import channels, matrix_gate, registry, recipients as rcp
 from app.notify import tone as tone_of
 from app.notify.models import (NotificationSubscription, NotificationProfile,
                                NotificationDelivery)
@@ -225,6 +225,8 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
 
     ctx = ctx or {}
     facts = list(facts or [])
+    if not matrix_gate.allowed(db, event_key, ctx):
+        return []                     # креативы по сделке, которой матрица их не требует (14.11.2026)
     if user_ids is None:
         user_ids = rcp.resolve(db, ev.recipients, ctx)
 

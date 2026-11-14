@@ -16,7 +16,7 @@ def test_model_has_sent_at():
 
 def test_dispatch_stamps_the_moment_of_sending(monkeypatch):
     from app.notify import channels, registry
-    ev = registry.get("act_missing")
+    ev = registry.get("stage_stuck")
     r = SimpleNamespace(user_id=1, created_at=datetime.utcnow() - timedelta(hours=3), event_key=ev.key, channel="mail",
                         title="t", body="b", link=None, facts=[], code=None, status="queued", suppress_reason="quiet_hours",
                         sent_at=None, entity_type=None, entity_id=None, error=None)

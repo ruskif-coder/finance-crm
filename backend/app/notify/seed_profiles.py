@@ -37,7 +37,10 @@ PLAN = {
                        # Контур закрытия (21.10.2026): в приложении и дайджестом; просрочки — ещё и в телеграм.
                        **{k: ["app", "digest"] for k in ("recon_arrived", "master_deal_ready", "master_ds_created",
                                                           "master_closed")},
-                       **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")},
+                       # «Документы пакета без подписи» ушли финансам (14.11.2026) — у аккаунта только сверка.
+                       "recon_overdue": ["app", "tg"],
+                       # Своему запуску пора «Завершить» (14.11.2026) — включено всем аккаунтам, владелец: «включи всем».
+                       "account_launch_finish": ["app", "tg"],
                        "master_reverted": ["app", "tg", "mail"],      # возврат стадии пакета (12.11.2026)
                        # Приоритезация (19.10.2026) — собирает аккаунт, ему и ответы, и автостоп.
                        **{k: ["app"] for k in ("prio_site_answered", "prio_goal_reached")},
@@ -50,11 +53,13 @@ PLAN = {
                        "prio_goal_reached": ["app"],
                        **{k: ["app", "digest"] for k in ("master_deal_ready", "master_ds_created", "master_closed")},
                        "master_reverted": ["app", "tg", "mail"],
-                       **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")}},
+                       "recon_overdue": ["app", "tg"],
+                       "account_launch_finish": ["app", "tg"]},
     # Будильник «Статусов продаж» (23.10.2026) — человек ставит его себе сам, поэтому сразу во все три канала.
     "sales":          {**{k: ["app"] for k in ("mp_ready",)}, "sales_status_reminder": ["app", "tg", "mail"]},
     "fin":            {**{k: ["app", "digest"] for k in ("deal_sent_to_do", "master_wait_1c")},
-                       "master_reverted": ["app", "tg", "mail"]},
+                       "master_reverted": ["app", "tg", "mail"],
+                       "master_scans_overdue": ["app", "tg"]},       # подпись и сканы после выставления — финансы (14.11.2026)
     "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
                        "sales_status_reminder": ["app", "tg", "mail"],
                        # Поломка фонового задания — срочно (владелец 27.09.2026): крон
@@ -72,6 +77,8 @@ PLAN = {
     "traffic":        {**{k: ["app"] for k in ("traffic_new_work", "traffic_silence",
                                                  "traffic_boost_started", "traffic_boost_ended",
                                                  "traffic_manual_over_plan", "traffic_volume_unplaced")},
+                       # Сверка затянулась, а факт не снят — ход трафика (14.11.2026)
+                       "recon_fact_overdue": ["app", "tg"],
                        # Тревога биддера — мастерам трафика (06.10.2026); рядовым не
                        # адресована резолвером, профиль задаёт только каналы.
                        "cron_bidder_failed": ["app", "tg", "mail"],

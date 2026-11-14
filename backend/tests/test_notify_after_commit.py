@@ -26,7 +26,7 @@ def test_nothing_is_sent_inside_the_transaction_and_rollback_sends_nothing(monke
     db = SessionLocal()
     try:
         uid = _uid(db)
-        bus.emit(db, "act_missing", title="проверка", body="тело", user_ids=[uid], entity_type="test", entity_id=-1)
+        bus.emit(db, "stage_stuck", title="проверка", body="тело", user_ids=[uid], entity_type="test", entity_id=-1)
         rows = db.query(NotificationDelivery).filter_by(entity_type="test", entity_id=-1).all()
         assert sent == [], "отправка ушла до commit действия"
         assert {r.channel for r in rows} == {"tg", "mail"}
@@ -102,7 +102,7 @@ def test_savepoint_is_not_the_commit(monkeypatch):
     db = SessionLocal()
     try:
         uid = _uid(db)
-        bus.emit(db, "act_missing", title="проверка", user_ids=[uid], entity_type="test", entity_id=-2)
+        bus.emit(db, "stage_stuck", title="проверка", user_ids=[uid], entity_type="test", entity_id=-2)
         with db.begin_nested():
             db.execute(text("SELECT 1"))
         assert sent == [], "хук сработал на savepoint"

@@ -108,7 +108,7 @@ def text_part(db, contour: str, key: str) -> dict:
     card = _card_of(contour, key)
     if card is None:
         raise KeyError(key)
-    link = render.link_for(contour == PUB, "/accounts/dashboard") or ""
+    link = render.link_for(contour == PUB, "/accounts/deals") or ""
     facts_line = render.facts_line(SAMPLE_FACTS)
     key_tpl = card.get("template") or TEMPLATE_OF[contour]
 

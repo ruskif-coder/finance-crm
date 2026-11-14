@@ -143,6 +143,12 @@ def delivery_lag_pct(f: DealFacts) -> Optional[float]:
     return round(max(0.0, (due - f.delivery_done_pct) / due * 100), 1)
 
 
+def lag_alarm(f: DealFacts) -> Optional[float]:
+    """Отставание за порогом тревоги — или None. Одно правило для срочности, «чей ход» и строки очереди (14.11.2026)."""
+    lag = delivery_lag_pct(f)
+    return lag if lag is not None and lag >= LAG_ALARM_PCT else None
+
+
 def _days_until(d: Optional[date], today: date) -> Optional[int]:
     return None if d is None else (d - today).days
 
@@ -286,8 +292,8 @@ def evaluate(f: DealFacts, today: date) -> Verdict:
                 return Verdict(SOON, f"Период закончился {-end_in} дн. назад, стадия не сдвинута",
                                "", "placement_ended", f.period_to)
         else:
-            lag = delivery_lag_pct(f)
-            if lag is not None and lag >= LAG_ALARM_PCT:
+            lag = lag_alarm(f)
+            if lag is not None:
                 return Verdict(OVERDUE,
                                f"Отставание открутки {str(lag).replace('.', ',').removesuffix(',0')} % "
                                "от плана на сегодня",

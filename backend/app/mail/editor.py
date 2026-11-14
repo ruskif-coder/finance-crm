@@ -171,7 +171,7 @@ def sample(db: Session, contour: str) -> dict:
     if pub:
         out["площадка"] = pub.name or ""
         out["домен"] = pub.domain or ""
-    out["ссылка"] = render.link_for(contour == PUB, "/accounts/dashboard") or ""
+    out["ссылка"] = render.link_for(contour == PUB, "/accounts/deals") or ""
     return out
 
 
@@ -358,7 +358,7 @@ def compose(db: Session, contour: str, keys: List[str], *, brand: str = "SIMB-AD
         # Кнопки нет — нет и ссылки: рисовальщик письма опирается именно на неё
         # (`render._button`). Подтверждению («ЕРИД выпущен», «оплата отправлена») кнопка
         # не нужна — идти по ней некуда, а синий прямоугольник требует действия.
-        "link_abs": (render.link_for(contour == PUB, "/accounts/dashboard")
+        "link_abs": (render.link_for(contour == PUB, "/accounts/deals")
                      if c.get("show_button", True) else None),
         "facts": facts_of(db, contour, c),
         "context": None if contour == STAFF else _context(db, contour),

@@ -314,9 +314,11 @@ def test_unknown_payment_does_not_hide_stage_stuck():
 
 def test_every_kind_is_registered_except_payment():
     """Очередь и лента уведомлений обязаны говорить об одном и том же: каждый kind,
-    который умеет вернуть функция, должен иметь событие в реестре. Исключение одно —
+    который умеет вернуть функция, должен иметь событие в реестре. Исключения два —
     payment_overdue: тема дебиторки принадлежит invoice_overdue (считает по операциям,
-    где факт оплаты известен), и второе событие о том же было бы дублем."""
+    где факт оплаты известен), и второе событие о том же было бы дублем; act_missing
+    (14.11.2026): закрывающие — бухгалтер и финансы, аккаунту не рассылается по матрице,
+    вид остаётся только строкой старого дашборда."""
     from app.notify import registry
 
     kinds = {v.kind for v in [
@@ -330,8 +332,9 @@ def test_every_kind_is_registered_except_payment():
     ]}
     assert kinds == {"deal_mp_missing", "mp_unapproved", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"}
-    for k in kinds:
+    for k in kinds - {"act_missing"}:
         assert registry.get(k) is not None, f"событие {k} не зарегистрировано"
+    assert registry.get("act_missing") is None
 
 
 def test_scanner_covers_all_queue_events():
