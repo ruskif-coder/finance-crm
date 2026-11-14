@@ -316,7 +316,7 @@ def master_revert(code: str, db: Session = Depends(get_db), user: User = Depends
     """«Вернуть в раскладку»: удалить черновики ДС пакета — пока ни один не подтверждён и по ним нет заявок юристу."""
     m = _master_rw(db, code, user)
     try:
-        n = TA.revert(db, m)
+        n = TA.revert(db, m, user)
     except MS.MasterError as e:
         db.rollback()
         _err(e)
@@ -367,7 +367,7 @@ def master_agreed(code: str, db: Session = Depends(get_db), user: User = Depends
     m = _master_rw(db, code, user)
     was = m.status
     try:
-        RV.agreed(db, m)
+        RV.agreed(db, m, user)
     except RV.RevertError as e:
         db.rollback()
         raise HTTPException(e.status, e.message)
@@ -397,7 +397,7 @@ def master_confirm_ds(code: str, db: Session = Depends(get_db), user: User = Dep
             db.flush()                                 # сессии без autoflush: номер основного ДС должен быть виден ДС допов
             out.append(a)
         db.flush()
-        TA.after_confirm(db, m)                        # все ДС пакета подтверждены — ждём 1С (стартовый пакет — ждёт закрытия)
+        TA.after_confirm(db, m, user)                  # все ДС пакета подтверждены — ждём 1С (стартовый пакет — ждёт закрытия)
         return out
     try:
         done = AX.commit_confirm(db, None, drafts[0].id, work)

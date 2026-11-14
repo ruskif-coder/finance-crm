@@ -647,7 +647,7 @@ def confirm_annex(annex_id: int, payload: ConfirmIn, db: Session = Depends(get_d
             from app.master_deal.models import MasterDeal
             db.flush()
             m = db.get(MasterDeal, a.master_deal_id)
-            if TA.after_confirm(db, m):
+            if TA.after_confirm(db, m, user):
                 moved["m"] = m
         return out
     c, no = commit_confirm(db, payload.no, a.id, work)
@@ -862,7 +862,7 @@ async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = For
         from app.master_deal import to_annex as TA
         from app.master_deal.models import MasterDeal
         m = db.get(MasterDeal, a.master_deal_id)
-        if TA.after_confirm(db, m):
+        if TA.after_confirm(db, m, user):
             moved["m"] = m
     try:
         commit_confirm(db, no, a.id, work)

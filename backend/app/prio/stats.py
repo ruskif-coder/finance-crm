@@ -151,8 +151,9 @@ def target_of(db: Session, camp_id: int) -> Optional[tuple]:
 
 def pull(db: Session, client, days: Iterable[date], *, commit: bool = True) -> dict:
     """`commit=False` — для тестов: в транзакции, которую откатывает вызывающий (иначе тест оставит строки на стенде)."""
-    known = {r[0] for r in db.execute(text("SELECT camp_id FROM prio_placements WHERE camp_id IS NOT NULL"))}
-    out = {"days": 0, "snapshots": 0, "written": 0, "shrunk": [], "unknown": set(), "no_rk": set()}
+    src = dict(db.execute(text("SELECT camp_id, fact_source FROM prio_placements WHERE camp_id IS NOT NULL")).all())
+    known = set(src)
+    out = {"days": 0, "snapshots": 0, "written": 0, "shrunk": [], "unknown": set(), "no_rk": set(), "by_file": set()}
     for day in days:
         got = parse_strict(client.stats(day.isoformat(), day.isoformat()))
         out["days"] += 1
@@ -167,6 +168,11 @@ def pull(db: Session, client, days: Iterable[date], *, commit: bool = True) -> d
             out["snapshots"] += 1
             if snap.delta_shows is not None and snap.delta_shows < 0:
                 out["shrunk"].append(f"{camp_id} {day}: {snap.delta_shows}")
+            # Аккаунт на итоговой сверке загрузил итог файлом (13.11.2026) — факт площадки теперь его; снимок выше остаётся
+            # для автостопа, а в факт РК сбор больше не пишет, иначе следующая ночь затёрла бы загруженное.
+            if src.get(camp_id) == "файл":
+                out["by_file"].add(camp_id)
+                continue
             tgt = target_of(db, camp_id)
             if not tgt:
                 out["no_rk"].add(camp_id)
@@ -181,7 +187,7 @@ def pull(db: Session, client, days: Iterable[date], *, commit: bool = True) -> d
         db.commit()
     else:
         db.flush()
-    out["unknown"], out["no_rk"] = sorted(out["unknown"]), sorted(out["no_rk"])
+    out["unknown"], out["no_rk"], out["by_file"] = sorted(out["unknown"]), sorted(out["no_rk"]), sorted(out["by_file"])
     return out
 
 

@@ -185,6 +185,8 @@ def account_queue(
             "account_manager": repnames.get(d.account_manager_id),
             "sales_rep_id": d.sales_rep_id,
             "sales_rep": repnames.get(d.sales_rep_id),
+            # Ответственный трафик — для карточки сделки в режиме «Карточки» «Моих сделок» (v5, 14.11.2026).
+            "traffic_manager": repnames.get(d.traffic_manager_id),
             "payer_name": d.payer_name, "payer_counterparty_id": d.payer_counterparty_id,
             # Сумма с НДС — тем же правилом, что реестр и карточка (`gross_of`): план →
             # сохранённая сумма → ставка закона на период (ревью 23.09.2026).
@@ -368,3 +370,19 @@ def unsnooze_deal(
         log_action(db, current_user, "unsnooze_deal", "sales_deal", deal.id,
                    "возвращена в очередь")
     return {"message": "Возвращена в очередь"}
+
+
+@router.get("/account-deals/{deal_id}/now")
+def account_deal_now(
+    deal_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("accounts_dashboard", "view")),
+):
+    """Блок «Сейчас» расхлопа «Моих сделок» (v5, 13.11.2026): шаги стадий и виджет текущей стадии — бронь, «Сборка»,
+    «Рекламная кампания», «Итоговая сверка» (`app/sales/account_now.py`). Охват — как у очереди."""
+    from app.sales import account_now
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_queue_scope(db, current_user, deal)
+    return account_now.now(db, deal, date.today())

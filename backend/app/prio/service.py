@@ -211,6 +211,7 @@ def view(db: Session, deal) -> dict:
                          "erid_blockers": _erid_blockers(db, deal, pl),
                          "messages": messages(db, pl.id),
                          "status": pl.status, "camp_id": pl.camp_id, "toggle_on": pl.toggle_on,
+                         "fact_source": pl.fact_source,
                          "fact_imp": fact.get(pl.camp_id) if pl.camp_id else None,
                          "goal_reached_at": pl.goal_reached_at.isoformat(timespec="seconds") if pl.goal_reached_at else None,
                          "missing": (stage_miss + missing(pl, site)) if pl.status == M.DRAFT else [],
@@ -225,7 +226,9 @@ def view(db: Session, deal) -> dict:
         k = M.LIVE if x["status"] == M.STOPPED else x["status"]
         if k in counts:
             counts[k] += 1
+    from app.final_recon import flow as FLOW
     return {"deal_id": deal.id, "deal_code": deal.code, "exists": r is not None, "common": common, "placements": rows,
+            "flow": FLOW.of_deal(db, deal),
             "plan_volume": plan_volume(db, deal), "no_index": bool(idx) and not tot,
             "pipeline": [{"status": s, "count": counts[s]} for s in PIPELINE],
             "ready_to_send": sum(1 for x in rows if x["status"] == M.DRAFT and not x["missing"]),

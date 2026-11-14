@@ -85,6 +85,9 @@ class MasterDealUpd(Base):
     onec_draft_by = Column(Integer, ForeignKey("users.id"))
     onec_seen_at = Column(DateTime)
     sign_state = Column(String(20))            # где УПД у клиента — правит только app/master_deal/doc_sign.py
+    # Из каких сделок собран комплект и их доля: [{deal_id, code, net, gross}] — пишет to_annex.write_kits
+    # (миграция 2026-11-13_master_deal_upd_deals.sql). Пусто — старый пакет до досчёта.
+    deals = Column(JSONB)
     sign_channel = Column(String(10))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 

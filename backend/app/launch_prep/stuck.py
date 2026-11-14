@@ -17,9 +17,10 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.sales import stage_slots as SS
 from app.launch_prep.matrix import AGREED, LATE_WORKDAYS, PUBLISHER_REFUSAL as REFUSAL, REFUSED, workdays_between
 
-CUTOFF_STAGE = "Итоговая сверка"
+CUTOFF_STAGE = SS.RECON
 # «Горит / срочно / терпит» — по старту размещения у площадки (владелец 03.10.2026). То же
 # правило, что «просрочено / срочно» в кабинете площадки (cabinet-frontend/lib/urgency.js):
 # у нас и у площадки одни слова. «Срочно» — до старта не больше 3 рабочих дней.

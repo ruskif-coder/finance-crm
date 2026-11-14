@@ -70,14 +70,16 @@ def test_advance_deal_reports_refusal(monkeypatch):
 
 
 def test_one_pair_ready_is_the_only_blocking_check_of_running_stage():
-    """Вход в «В размещении» — по одной собранной площадке (миграция 2026-10-01)."""
+    """Вход в «В размещении» — по одной собранной площадке (миграция 2026-10-01). У цикла «приоритезация» — своя запирающая
+    проверка «хотя бы одна площадка запущена» (13.11.2026), действует только для него; полному циклу по-прежнему одна."""
     from sqlalchemy import text
     from app.database import SessionLocal
     db = SessionLocal()
     try:
         rows = db.execute(text(
             "SELECT c.check_key FROM sales_stage_checks c JOIN sales_stages s ON s.id = c.stage_id "
-            "WHERE s.name = 'В размещении' AND c.is_blocking")).scalars().all()
+            "WHERE s.name = 'В размещении' AND c.is_blocking "
+            "AND coalesce(c.applies_when->>'closing_flow', '') <> 'приоритезация' ORDER BY c.check_key")).scalars().all()
         assert rows == ["one_pair_ready"], rows
     finally:
         db.close()

@@ -2306,6 +2306,9 @@ DEAL_DOC_KINDS = {
     "ds": "Доп. соглашение", "invoice": "Счёт", "upd": "УПД", "report": "Отчёт", "act": "Акт",
     "creatives": "Креативы", "brief_file": "Бриф (файл)",
 }
+# Что можно ЗАГРУЖАТЬ руками. ДС, счёт, УПД и акт — только из мастер-сделки (владелец 13.11.2026): вторая, ручная копия
+# расходилась бы с документом 1С. Подписи выше остаются — по ним скачиваются и удаляются уже лежащие файлы.
+DEAL_DOC_UPLOAD_KINDS = set(DEAL_DOC_KINDS) - {"ds", "invoice", "upd", "act"}
 # Креативы — рекламные материалы под размещение: почти всегда архив или картинки,
 # поэтому список расширений общий (zip/rar/7z/jpg/png уже разрешены).
 DEAL_DOC_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".gif",
@@ -2324,6 +2327,8 @@ async def upload_deal_file(deal_id: str, kind: str, file: UploadFile = File(...)
     from app.sales.models import SalesDealFile
     if kind not in DEAL_DOC_KINDS:
         raise HTTPException(status_code=400, detail=f"Неизвестный вид документа: {kind}")
+    if kind not in DEAL_DOC_UPLOAD_KINDS:
+        raise HTTPException(status_code=400, detail=f"{DEAL_DOC_KINDS[kind]} — из мастер-сделки, руками не загружается")
     deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
@@ -2641,7 +2646,26 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # соглашение» показывает номер и дату, а не «не загружен»: ДС у нас теперь не
         # приносят файлом, а собирают — и строка обязана говорить о собранном документе.
         "annexes": _deal_annexes(db, deal.id),
+        # Документы закрытия — из мастер-сделки (13.11.2026): все ДС с долей сделки и комплекты (счёт + УПД) с её строками.
+        "master_docs": _master_docs(db, deal),
     }
+
+
+def _master_docs(db: Session, deal) -> dict:
+    from app.master_deal import deal_docs as DD
+    return DD.for_deal(db, deal)
+
+
+@router.get("/deals/{deal_id}/master-docs")
+def deal_master_docs(deal_id: str, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Документы закрытия сделки из мастер-сделки — для раскрывающейся строки реестра (там их грузят при раскрытии,
+    а не на весь список)."""
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    return _master_docs(db, deal)
 
 
 class ProbabilityIn(BaseModel):
@@ -2881,6 +2905,9 @@ def move_deal(
     if target.phase and target.phase.is_realization and not target.is_terminal:
         if payload.realization_pipeline_id is not None:
             deal.realization_pipeline_id = payload.realization_pipeline_id
+        elif not deal.realization_pipeline_id:
+            # Воронка от услуги (владелец 13.11.2026) — записываем её в сделку при входе в реализацию.
+            deal.realization_pipeline_id = _flow.service_pipeline(db, deal.service_id)
 
     guard = stage_move.manual_guard(db, deal, target, current_user, cat)
     plan = stage_move.plan_move(db, deal, target, cat)

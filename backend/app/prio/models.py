@@ -61,6 +61,8 @@ class PrioPlacement(Base):
     ord_error = Column(Text)                # erirValidationError
     ord_env = Column(String(8))             # demo | prod — контур рядом с идентификатором
     ord_synced_at = Column(DateTime)
+    # Откуда факт: «сервис» — ночная статистика; «файл» — итог, загруженный аккаунтом на сверке (2026-11-13_prio_cycle.sql)
+    fact_source = Column(String(16), nullable=False, server_default="сервис")
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
 
 

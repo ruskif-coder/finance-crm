@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
+from app.sales import stage_slots as SS
 import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей (аудит 21.10.2026)
 
 log = logging.getLogger("finance.rk_check")
@@ -90,7 +91,7 @@ START_SOON_DAYS = 3                     # «до старта» — когда �
 
 PACE_RED, PACE_YELLOW = 0.80, 0.95      # прогноз ÷ план
 SHARE_TOLERANCE = 0.02                  # допуск суммы долей и суммы планов площадок
-RUNNING_STAGE = "В размещении"           # имя стадии: `routers/traffic_dashboard.RUNNING_STAGE`
+RUNNING_STAGE = SS.LIVE                 # имя стадии — `sales/stage_slots`
 RECENT_DAYS = 3                         # «давно ли открутка» — окно для пикселя и откруток
 
 

@@ -164,12 +164,12 @@ def refresh(db: Session, m, user) -> dict:
     return {"ds": done}
 
 
-def agreed(db: Session, m) -> None:
+def agreed(db: Session, m, user=None) -> None:
     """«ДС проверены → в 1С»: после возврата на «согласование» ДС уже с номерами — подтверждать нечего, пакет идёт дальше."""
     from app.master_deal import to_annex as TA
     if m.status != ST.AGREE:
         raise RevertError(409, "Пакет не на «согласовании»")
-    if not TA.after_confirm(db, m):
+    if not TA.after_confirm(db, m, user):
         raise RevertError(409, "Не все ДС пакета подтверждены — подтвердите их («Подтвердить ДС пакета»)")
     db.flush()
 

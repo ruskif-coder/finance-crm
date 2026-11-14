@@ -50,6 +50,7 @@ from app.routers.traffic import _apply_scope, _is_master
 from app.dsp import refresh as dsp_refresh
 from app.sales.models import SalesDeal, SalesRep, SalesStage, SalesStagePhase
 from app.sales.reps import staff_users
+from app.sales import stage_slots as SS
 from app.sales.row_context import load_row_context
 from app.traffic.delivery_facts import _facts, _creatives_all, _placements_of  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
@@ -294,7 +295,7 @@ def launch_hint(dsp_block: Optional[str], vol: Optional[dict], closed: bool,
     return "; ".join(why) or None
 
 
-RUNNING_STAGE = "В размещении"
+RUNNING_STAGE = SS.LIVE
 
 
 def advance_deal(db: Session, deal, stage_name: str, user, reason: str) -> dict:
@@ -1514,7 +1515,7 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
 # `stage_key` здесь не различает: «В размещении» и «Итоговая сверка» обе носят `launch`.
 # Тем же приёмом (`stageNames`) их различает дашборд аккаунта — переименование стадии в
 # справочнике требует правки в обоих местах, и это записано там же.
-RECON_STAGE = "Итоговая сверка"
+RECON_STAGE = SS.RECON
 
 
 @router.put("/creative/{creative_id}/status")

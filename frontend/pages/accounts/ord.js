@@ -36,6 +36,7 @@ import { can, getPermissions } from '../../lib/auth'
 import OrdReports from '../../components/ord/OrdReports'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { Cube } from '../../components/LogoLoader'
+import { detailText } from '@/lib/loadError'
 
 // Согласование числительного: «удалить 2 договоров» читается как машинный текст,
 // а подтверждение сноса — ровно то место, где человек должен читать внимательно.
@@ -149,7 +150,7 @@ export default function OrdDirectory() {
       setReport({ clients: cl.data, contracts: co.data })
       await load()
     } catch (e) {
-      setErr(e.response?.data?.detail || errText(e))
+      setErr(detailText(e, errText)(e))
     } finally { setSyncing('') }
   }
 
@@ -187,7 +188,7 @@ export default function OrdDirectory() {
       if (tab === 'initial' && src) params.source = src
       const r = await api.get(url, { ...auth(), params })
       setRows(r.data)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось загрузить')) }
   }
   useEffect(() => { load() }, [tab, finState])
 
@@ -213,20 +214,20 @@ export default function OrdDirectory() {
     try {
       await api.post(`/ord/finals/${row.id}/link`, { contract_id: contractId }, auth())
       setLinking(null); load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось привязать') }
+    } catch (e) { setErr(detailText(e, 'Не удалось привязать')) }
   }
 
   const doDefer = async () => {
     try {
       await api.post(`/ord/finals/${defer.id}/defer`, { note: deferNote.trim() }, auth())
       setDefer(null); setDeferNote(''); load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отложить') }
+    } catch (e) { setErr(detailText(e, 'Не удалось отложить')) }
   }
 
   const doReopen = async (row) => {
     try {
       await api.post(`/ord/finals/${row.id}/reopen`, {}, auth()); load()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось вернуть на разбор') }
+    } catch (e) { setErr(detailText(e, 'Не удалось вернуть на разбор')) }
   }
 
   /* Закрыть зависшую попытку СО СЛОВ человека, сходившего в кабинет.
@@ -247,7 +248,7 @@ export default function OrdDirectory() {
       alert(r.data?.retry_allowed
         ? 'Попытка закрыта, повтор разрешён.'
         : 'Попытка закрыта. Повтор остаётся запрещённым — запись в кабинете уже есть.')
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось закрыть попытку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось закрыть попытку')) }
   }
 
   /* Удаление пачкой — чистка ЗЕРКАЛА, не ОРД: строка вернётся следующим синком, если в
@@ -266,7 +267,7 @@ export default function OrdDirectory() {
       setDropMsg(r.data)
       setPicked(new Set())
       await load()
-    } catch (e) { setErr(e.response?.data?.detail || errText(e)) }
+    } catch (e) { setErr(detailText(e, errText)(e)) }
     finally { setBusy(false) }
   }
 
@@ -286,7 +287,7 @@ export default function OrdDirectory() {
     try {
       const r = await api.post('/ord/import', fd, auth())
       setStat(r.data); load()
-    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить файл') }
+    } catch (e2) { setErr(detailText(e2, 'Не удалось загрузить файл')) }
     finally { setBusy(false); e.target.value = '' }
   }
 

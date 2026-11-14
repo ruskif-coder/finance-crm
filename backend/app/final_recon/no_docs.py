@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.final_recon import closing as CL
 from app.final_recon.checks import RECON_STAGE
+from app.sales import stage_slots as SS
 
-ARCHIVE = "Архив успешных сделок"
+ARCHIVE = SS.ARCHIVE
 REASON = "Закрыто без документов: бонусное размещение (сумма МП 0 ₽)"
 
 

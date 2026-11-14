@@ -117,9 +117,11 @@ def plan_move(db, deal, target, catalog: Optional[Catalog] = None) -> Plan:
     if not stage_scope.stage_applies(target.id, deal, marks):
         return Plan(target=target, current=cat.by_id.get(cur_id), is_back=is_back,
                     not_applicable=True)
+    from app.final_recon.flow import service_pipeline
+    # Воронка идёт от услуги жёстко (владелец 13.11.2026): спрашивать её надо, только если у услуги её нет.
     needs_pipeline = bool(target.phase and target.phase.is_realization
                           and not target.is_terminal
-                          and not deal.realization_pipeline_id)
+                          and not (deal.realization_pipeline_id or service_pipeline(db, deal.service_id)))
     lines = sc.evaluate(db, deal, checks_for(db, target.id))
     if not is_back and not target.is_terminal:
         lines = lines + _volumes_line(db, deal)

@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.final_recon import closing as CL
 from app.master_deal.models import MasterDeal, MasterDealItem
+from app.sales import stage_slots as SS
 
 OPEN = ("черновик",)             # в пакет можно добавлять, пока он черновик (app/master_deal/status.py)
-RECON_STAGE = "Итоговая сверка"
+RECON_STAGE = SS.RECON
 
 
 class MasterError(Exception):

@@ -10,7 +10,8 @@ from sqlalchemy import text
 
 FULL = "полный цикл"
 ACCOUNT = "контур аккаунта"
-FLOWS = (FULL, ACCOUNT)
+PRIO = "приоритезация"
+FLOWS = (FULL, ACCOUNT, PRIO)
 _KEY = "final_recon.flow_maps"
 
 
@@ -56,3 +57,9 @@ def of_deal(db, deal) -> str:
 
 def is_account(db, deal) -> bool:
     return of_deal(db, deal) == ACCOUNT
+
+
+def has_account_buttons(db, deal) -> bool:
+    """«Запустить» / «Завершить» — кнопки аккаунта: у контура аккаунта и у приоритезации (13.11.2026: трафик её не ведёт).
+    В отличие от `is_account` приоритезация — не ручной факт: РК заводится, факт приходит из статистики сервиса или файла."""
+    return of_deal(db, deal) in (ACCOUNT, PRIO)

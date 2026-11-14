@@ -21,6 +21,7 @@ import LayoutPanel from '@/components/master/LayoutPanel'
 import DsCard from '@/components/master/DsCard'
 import { CARD, Note, plural } from '@/components/master/kit'
 import { createdAnnexes } from '@/lib/masterSteps'
+import { detailText } from '@/lib/loadError'
 
 /** ДС раскладки ↔ выпущенный ДС пакета: основной (или «всё в одном») — первый основной, допы — ДС допов. */
 function docOf(m, ds) {
@@ -47,7 +48,7 @@ export default function MasterDealPage() {
   const load = useCallback(() => {
     if (!code) return
     api.get(`/master-deals/${code}`, auth()).then(r => { apply(r.data); setErr('') })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить мастер-сделку'))
+      .catch(e => setErr(detailText(e, 'Не удалось загрузить мастер-сделку')))
   }, [code])
   useEffect(() => { load() }, [load])
   // Вернулись на вкладку — перечитываем (сверки сделок могли завершиться), но не поверх несохранённого черновика.
@@ -61,15 +62,15 @@ export default function MasterDealPage() {
     try {
       const r = await api.post(`/master-deals/${code}/preview`, next, auth())
       if (my === seq.current) setPreview(r.data)
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось пересчитать раскладку') }
+    } catch (e) { setErr(detailText(e, 'Не удалось пересчитать раскладку')) }
   }
   const call = async (fn) => {
     setBusy(true); setErr('')
-    try { apply((await fn()).data); return true } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось сохранить'); return false } finally { setBusy(false) }
+    try { apply((await fn()).data); return true } catch (e) { setErr(detailText(e, 'Не удалось сохранить')); return false } finally { setBusy(false) }
   }
 
   if (!m || !draft) {
-    return (<><Navbar asPath="/accounts/dashboard" /><div style={{ padding: 24, fontFamily: UI, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{err || 'Загружаю…'}</div></>)
+    return (<><Navbar asPath="/accounts/deals" /><div style={{ padding: 24, fontFamily: UI, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{err || 'Загружаю…'}</div></>)
   }
   const lay = preview || m.layout
   const locked = !!m.issued_ds || m.status !== 'черновик'      // ДС созданы — раскладка только для чтения до «Вернуть в раскладку»
@@ -127,7 +128,7 @@ export default function MasterDealPage() {
                         const r = await api.post(`/master-deals/${m.code}/to-annex`, {}, auth())
                         apply(r.data)
                         if (r.data.annexes?.[0]) router.push(`/directory/annexes/${r.data.annexes[0].id}`)
-                      } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось создать ДС') } finally { setBusy(false) }
+                      } catch (e) { setErr(detailText(e, 'Не удалось создать ДС')) } finally { setBusy(false) }
                     }}>В конструктор ДС →</button>
                 </>
               )}
@@ -137,7 +138,7 @@ export default function MasterDealPage() {
   return (
     <>
       <Head><title>{`Закрытие ${m.code}`} · Аккаунты | SIMB-AD ERP</title></Head>
-      <Navbar asPath="/accounts/dashboard" />
+      <Navbar asPath="/accounts/deals" />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '18px 24px 40px', fontFamily: UI }}>
         <MasterHeader m={m} locked={locked} busy={busy}
           canEdit={mayEdit} onApply={apply}

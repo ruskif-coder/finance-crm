@@ -172,16 +172,24 @@ def test_booking_first_missing_requirement_is_the_button():
         payer_set=OK, final_contract=NOT_YET, realization_pipeline=NOT_YET),
         required={"payer_set", "final_contract", "realization_pipeline"}))
     assert st["action"]["label"] == "Договор ОРД"
-    assert st["action"]["do"] == "link" and st["action"]["url"] == "/sales/deals/K7Q2MD#ord"
+    assert st["action"]["do"] == "link" and st["action"]["url"] == "/sales/deals/K7Q2MD#sec-ord"
     got = [(e["v"], e["ok"]) for e in st["state"] if e["type"] == "check"]
     assert got == [("Плательщик", True), ("Договор ОРД", False), ("Воронка", False)]
+
+
+def test_missing_pipeline_still_reads_as_confirming_the_booking():
+    """Поломка: кнопка «Воронка» — непонятно, что она делает; на деле это подтверждение брони с выбором воронки."""
+    st = qs.row_state(bundle("booking", checks=_checks(payer_set=OK, final_contract=OK, realization_pipeline=NOT_YET),
+                             required={"payer_set", "final_contract", "realization_pipeline"}))
+    assert (st["action"]["label"], st["action"]["do"]) == ("Подтвердить бронь", "confirm")
+    assert "воронк" in st["action"]["hint"]
 
 
 def test_booking_all_done_confirms():
     st = qs.row_state(bundle("booking", checks=_checks(
         payer_set=OK, final_contract=OK, realization_pipeline=OK),
         required={"payer_set", "final_contract", "realization_pipeline"}))
-    assert st["action"]["label"] == "Подтвердить" and st["action"]["do"] == "confirm"
+    assert st["action"]["label"] == "Подтвердить бронь" and st["action"]["do"] == "confirm"
 
 
 def test_not_required_check_is_grey_and_not_the_button():
@@ -343,3 +351,17 @@ def test_live_without_running_creatives_has_no_screens_chip():
                                                "placements": 3, "placements_on": 0,
                                                "screens": {"got": 0, "total": 0}}))
     assert not [e for e in st["state"] if e.get("k") == "скрины"]
+
+
+def test_live_note_says_who_runs_it():
+    """Поломка (13.11.2026): у сделки, которую аккаунт запускает сам (OLV, Polza, приоритезация), в строке «ведёт трафик»."""
+    assert qs.row_state(bundle("live", delivery=None))["note"] == "ведёт трафик"
+    for fl in ("контур аккаунта", "приоритезация"):
+        assert qs.row_state(bundle("live", delivery=None, flow=fl))["note"] == "запускаете сами — «Завершить» после периода"
+
+
+def test_prep_without_creatives_in_matrix_shows_external_launch():
+    """Поломка (14.11.2026): у OLV / Альфарм-Таргета в строке «креативы 0 / 3 · ЕРИД 3 / 3», хотя по матрице им ничего не нужно."""
+    st = qs.row_state(bundle("prep", sets=3, creatives=(0, 3), erids=["a", "b", "c"], required=set(), applies=set(), flow="контур аккаунта"))
+    facts = [(e.get("k"), e.get("v")) for e in st["state"] if e["type"] in ("fact", "progress", "alert")]
+    assert facts == [("запуск", "во внешней системе")]

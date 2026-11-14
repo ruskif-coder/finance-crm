@@ -4,6 +4,7 @@
 // В макете таблица шире 1366 (1448 px) и прокручивалась бы вбок уже на ноутбуке; с
 // диапазоном она сжимается до 1366 без прокрутки, а на широком экране колонки встают
 // ровно в ширины макета. Тянется одна «Что сделать».
+import { CopyIcon } from '@/components/CopyCode'
 import { MONO, DealCodeLink, SortHead, ROW_TONE } from '@/components/salesTableKit'
 import { surfaceTag } from '@/lib/dealTitle'
 import { LAYER_DOT, mln } from './ladder'
@@ -70,7 +71,7 @@ function Cta({ row, canEdit, onAction }) {
 
 const URGENCY_HINT = { overdue: 'Просрочено', today: 'Срок — сегодня' }
 
-export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAction, onSnooze, onUnsnooze }) {
+export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAction, onSnooze, onUnsnooze, copyCode = false }) {
   const tone = ROW_TONE[r.urgency] || ROW_TONE.normal
   const startIn = r.period_from && today ? daysBetween(r.period_from, today) : null
   const endIn = r.period_to && today ? daysBetween(r.period_to, today) : null
@@ -92,6 +93,7 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
         <span title={URGENCY_HINT[r.urgency] || ''} style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 8px',
           background: r.urgency === 'overdue' || r.urgency === 'today' ? tone.dot : 'transparent' }} />
         <DealCodeLink deal={r} size={11.5} />
+        {copyCode && <CopyIcon text={r.code} size={12} title="Скопировать код сделки" />}
       </span>
 
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }} title={r.title || ''}>

@@ -31,9 +31,10 @@ from typing import Dict, List, Optional
 from sqlalchemy import text
 
 from app.ord import readiness
+from app.sales import account_turn
 from app.sales.stage_checks import REGISTRY, Ctx, OK, NOT_YET
 from app.sales.stage_slots import TAIL_SLOTS, slot_of
-from app.sales.urgency import LAG_ALARM_PCT, Verdict, delivery_lag_pct, DealFacts
+from app.sales.urgency import Verdict, DealFacts
 
 # Проверки, которые очередь считает сама. Для каждой `load` подкладывает окружение,
 # и тест держит равенство с поштучным расчётом карточки по всем ним.
@@ -121,6 +122,7 @@ class Bundle:
     annex_sum: Optional[float] = None
     pay_due: Optional[date] = None
     today: Optional[date] = None
+    flow: str = "полный цикл"            # цикл сделки (= `flow.FULL`) (`final_recon/flow`) — для «чей ход» (13.11.2026)
 
 
 def _fact(k, v):
@@ -166,7 +168,9 @@ def _applies(b: Bundle, key: str) -> bool:
 
 
 def _card(b: Bundle, anchor: str) -> str:
-    return f"/sales/deals/{b.code}#{anchor}"
+    """Секция карточки раскрывается и прокручивается только по `#sec-<id>` (`components/deal/Section.js`); голый `#ord`
+    открывал карточку сверху (найдено 13.11.2026)."""
+    return f"/sales/deals/{b.code}#sec-{anchor}"
 
 
 def _move(label, hint=""):
@@ -216,9 +220,9 @@ def _by_slot(b: Bundle):
             return state, {"label": "Договор ОРД", "do": "link", "url": _card(b, "ord"),
                            "hint": "Выберите договор в блоке ОРД карточки"}, ""
         if miss == "realization_pipeline":
-            return state, {"label": "Воронка", "do": "confirm",
-                           "hint": "Воронка выбирается при подтверждении брони"}, ""
-        return state, {"label": "Подтвердить", "do": "confirm",
+            return state, {"label": "Подтвердить бронь", "do": "confirm",
+                           "hint": "Подтвердить бронь — в диалоге выберите воронку реализации"}, ""
+        return state, {"label": "Подтвердить бронь", "do": "confirm",
                        "hint": "Подтвердить бронь — сделка уйдёт на сбор запуска"}, ""
 
     if s == "prep":
@@ -228,13 +232,20 @@ def _by_slot(b: Bundle):
         # матрице (владелец 14.10.2026): у услуги без креативов/ЕРИД они были бы неправдой.
         need_cr = _applies(b, "creatives_accepted")
         need_erid = _applies(b, "erid_issued")
-        if not b.sets:
+        external = account_turn.external_launch(b.flow, b.applies)
+        if external:
+            # Контур аккаунта (OLV, Альфарм-Таргет, Polza): по матрице креативы и ЕРИД не требуются, запуск — во внешней системе,
+            # аккаунт подтверждает его в «Моих сделках» (владелец 14.11.2026).
+            state.append(_fact("запуск", "во внешней системе"))
+        elif not b.sets:
             state.append(_alert("креативов нет", "warn") if need_cr else _fact("креативы", "нет"))
         elif not total:
             state.append(_fact("креативы", "не отправлены"))
         else:
             state.append({"type": "progress", "k": "креативы", "x": done, "y": total})
-        if b.sets and len(b.erids) >= b.sets:
+        if external:
+            pass
+        elif b.sets and len(b.erids) >= b.sets:
             state.append(_fact("ЕРИД", b.erids[0] if b.sets == 1 else f"{len(b.erids)} / {b.sets}"))
         elif b.erid_waiting:
             state.append(_fact("ЕРИД", "регистрация в ЕРИР"))
@@ -269,9 +280,8 @@ def _by_slot(b: Bundle):
                       "y": 100, "unit": "%"}]
             # Та же функция и те же условия, что у срочности: после конца флайта
             # недокрут — итог, а не отставание (иначе точка серая, а чип красный).
-            lag = delivery_lag_pct(DealFacts(delivery_done_pct=dl.get("done_pct"),
-                                             delivery_pace=dl.get("closed_pace")))
-            if not dl.get("flight_over") and lag is not None and lag >= LAG_ALARM_PCT:
+            lag = account_turn.lag_of(dl)
+            if lag is not None:
                 state.append(_alert(f"отставание {_pct(lag).lstrip('+')} %"))
         if v.kind == "placement_ended":
             state.append(_alert("период закончился", "warn"))
@@ -286,6 +296,14 @@ def _by_slot(b: Bundle):
             # видит запуск, не открывая дашборд трафика.
             if dl.get("placements_on"):
                 state.insert(0, {"type": "status", "tone": "good", "v": "запущена"})
+        if b.flow in account_turn.ACCOUNT_LAUNCH:
+            # OLV, Polza, приоритезация (13.11.2026): запуск и завершение — кнопки аккаунта. Период кончился — «Завершить»
+            # (`final_recon.launch`), отставание своего запуска — раскрыть открутку (владелец 14.11.2026: «ваш ход» без кнопки — тупик).
+            if dl is not None and dl.get("flight_over"):
+                return state, {"label": "Завершить", "do": "finish", "hint": "Период кончился — завершить запуск"}, ""
+            if dl is not None and account_turn.lagging(dl):
+                return state, {"label": "Открутка", "do": "expand", "hint": "Отставание — открутка в раскрытой строке"}, ""
+            return state, None, "запускаете сами — «Завершить» после периода"
         return state, None, "ведёт трафик"
 
     if s == "recon":
@@ -376,6 +394,11 @@ def row_state(b: Bundle) -> dict:
     return {
         "slot": b.slot, "stage_days": b.stage_days, "state": state,
         "action": action, "note": note,
+        # «Чей ход» дашборда «Мои сделки» (v5, 13.11.2026) — классификация поверх фактов и кнопки выше.
+        "turn": account_turn.turn(b, action),
+        # «Подтвердить запуск» вместо «Продолжить сборку» — то же правило, что расхлоп (`account_turn.external_launch`)
+        "external_launch": b.slot == "prep" and account_turn.external_launch(b.flow, b.applies),
+        "flow": b.flow,                                  # цикл сделки — «Мои сделки»: у контура аккаунта запуск подтверждает аккаунт
         # ЭДО и Оплата — участок финменеджера: внизу списка. Просроченная оплата
         # всплывает в рабочую часть (владелец 27.09.2026).
         "tail": tail,
@@ -396,6 +419,11 @@ class Batch:
     kktu: Dict[int, bool]
     annex: Dict[int, tuple]          # сделка → (номер последнего приложения, сумма по сделке)
     campaigns: Dict[int, object]
+
+
+def _flow_of(db, d) -> str:
+    from app.final_recon import flow
+    return flow.of_ids(db, d.realization_pipeline_id, d.service_id)
 
 
 def load(db, deals, today: date) -> Batch:
@@ -526,7 +554,7 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
     from app.sales.deal_delivery import delivery_by_deal
     from app.sales.mp_amounts import eff_net, gross_of, mp_amounts_by_deal
     from app.sales.models import SalesStageCheck
-    from app.sales.stage_checks import blocking_for, scope_matches
+    from app.sales.stage_checks import applicable_keys, blocking_for, scope_matches
     from app.sales.urgency import payment_due
     from app.sales.urgency_db import stage_since
 
@@ -566,7 +594,7 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
                if scope_matches(r.applies_when, d)]
         required = {r.check_key for r in own if blocking_for(r, d)}
         keys = chip_order(r.check_key for r in own if r.check_key in CHECK_KEYS)
-        applies = {r.check_key for r in all_rows if scope_matches(r.applies_when, d)}
+        applies = applicable_keys(all_rows, d)
         entered = since.get((d.id, d.our_stage_id))
         net, gross = amounts.get(d.id, (None, None))
         cp = d.payer_counterparty_id or d.counterparty_id
@@ -589,6 +617,6 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
             annex_sum=(batch.annex.get(d.id) or ("", None))[1],
             pay_due=(payment_due(DealFacts(period_to=d.period_to, term_days=terms.get(cp)))
                      if slot == "pay" else None),
-            today=today)
+            today=today, flow=_flow_of(db, d))
         out[d.id] = row_state(b)
     return out

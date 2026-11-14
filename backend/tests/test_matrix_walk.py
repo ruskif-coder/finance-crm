@@ -42,7 +42,8 @@ def test_every_service_walks_to_archive_by_the_matrix():
             if got != exp:
                 problems.append(f"{svc.name}: «{nxt.name}» — система {sorted(got - exp)} / матрица {sorted(exp - got)}")
             act = launch.available(db, d, cat)
-            want = {"Готовятся к старту": "launch", "В размещении": "finish"}.get(cur.name) if fl == flow.ACCOUNT else None
+            # Кнопки аккаунта — у контура аккаунта и у цикла приоритезации (13.11.2026: трафик её не ведёт)
+            want = {"Готовятся к старту": "launch", "В размещении": "finish"}.get(cur.name) if fl in (flow.ACCOUNT, flow.PRIO) else None
             if act != want:
                 problems.append(f"{svc.name}: на «{cur.name}» кнопка {act!r}, ожидалась {want!r}")
             steps.append(f"{nxt.name}: " + (", ".join(f"{k}{'■' if b else '○'}" for k, b in sorted(exp)) or "—"))

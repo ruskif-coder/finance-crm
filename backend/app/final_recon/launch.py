@@ -5,11 +5,12 @@ from typing import Optional
 
 from app.final_recon import flow
 from app.sales import stage_move
+from app.sales import stage_slots as SS
 from app.sales.catalog import Catalog
 
 ACTIONS = {
-    "launch": ("Готовятся к старту", "В размещении", "Запуск в контуре аккаунта"),
-    "finish": ("В размещении", "Итоговая сверка", "Завершение в контуре аккаунта"),
+    "launch": (SS.PREP, SS.LIVE, "Запуск в контуре аккаунта"),
+    "finish": (SS.LIVE, SS.RECON, "Завершение в контуре аккаунта"),
 }
 
 
@@ -25,7 +26,7 @@ def _by_name(cat: Catalog, name: str):
 
 def available(db, deal, cat: Optional[Catalog] = None) -> Optional[str]:
     """Какая кнопка сейчас у сделки: `launch` / `finish` / None (полный цикл или стадия не та)."""
-    if not flow.is_account(db, deal):
+    if not flow.has_account_buttons(db, deal):
         return None
     cat = cat or Catalog(db)
     cur = cat.by_id.get(deal.our_stage_id)
@@ -35,7 +36,7 @@ def available(db, deal, cat: Optional[Catalog] = None) -> Optional[str]:
 def run(db, deal, action: str, user) -> dict:
     if action not in ACTIONS:
         raise LaunchError(400, "Неизвестное действие")
-    if not flow.is_account(db, deal):
+    if not flow.has_account_buttons(db, deal):
         raise LaunchError(409, "Сделку полного цикла запускает и завершает трафик")
     src, dst, reason = ACTIONS[action]
     cat = Catalog(db)

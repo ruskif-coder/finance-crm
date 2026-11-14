@@ -36,6 +36,7 @@ from sqlalchemy import text
 
 from app.ad.stat_sources import OWN
 from app.ord import readiness
+from app.sales import stage_slots as SS
 
 # ── Исходы ───────────────────────────────────────────────────────────────────
 OK = "ok"
@@ -272,6 +273,8 @@ PLACES = {
     "payer_set":            ("Карточка сделки — шапка", "#head"),
     "final_contract":       ("Карточка сделки — блок «ОРД»", "#ord"),
     "account_finished":     ("Карточка сделки — кнопка «Завершить»", "#head"),   # контур аккаунта, app/final_recon/checks.py
+    "prio_live":            ("Карточка сделки — блок «Приоритезация», «Запустить»", "#prio"),   # app/prio/checks.py
+    "prio_fact_complete":   ("Карточка сделки — блок «Приоритезация», итог по площадкам", "#prio"),
     "ord_initial_contract": ("Карточка сделки — блок «ОРД»", "#ord"),
     "creatives_accepted":   ("Карточка сделки — блок «Креативы»", "#creatives"),
     "placements_approved":  ("Трафик — очередь согласования", "/traffic/queue"),
@@ -377,7 +380,11 @@ def _mp_one_surface(c: Ctx) -> Result:
 @register("realization_pipeline", "Воронка реализации выбрана",
           "Выберите воронку под продукт в диалоге движения")
 def _realization_pipeline(c: Ctx) -> Result:
-    return _ok() if c.deal.realization_pipeline_id else _not_yet("не выбрана")
+    """Воронка идёт от услуги жёстко (владелец 13.11.2026): своей у сделки нет — действует воронка услуги."""
+    if c.deal.realization_pipeline_id:
+        return _ok()
+    from app.final_recon.flow import service_pipeline
+    return _ok("от услуги") if service_pipeline(c.db, c.deal.service_id) else _not_yet("не выбрана")
 
 
 @register("payer_set", "Плательщик определён",
@@ -525,7 +532,7 @@ def _campaign_finished(c: Ctx) -> Result:
         SELECT s.name, ph.name FROM sales_stages s
           LEFT JOIN sales_stage_phases ph ON ph.id = s.phase_id WHERE s.id = :i
     """), {"i": c.deal.our_stage_id}).first()
-    if cur and (cur[0] == "Итоговая сверка" or (cur[1] or "").startswith("Документ")):
+    if cur and (cur[0] == SS.RECON or cur[1] == SS.DO_PHASE):
         return _na("сделка уже прошла размещение")
     if c.campaign.status in ("окончена", "архив"):
         return _ok()
@@ -697,6 +704,11 @@ def blocking_for(row, deal) -> bool:
     return bool(getattr(row, "is_blocking", False))
 
 
+def applicable_keys(rows, deal) -> set:
+    """Проверки матрицы, применимые к сделке хоть на одной стадии. Одна точка для строки очереди и расхлопа «Моих сделок»."""
+    return {r.check_key for r in rows if scope_matches(r.applies_when, deal)}
+
+
 def scope_matches(applies_when: Optional[dict], deal) -> bool:
     """Пусто — применимо всегда. Несколько ключей — И (все должны сойтись).
 
@@ -726,10 +738,11 @@ def scope_matches(applies_when: Optional[dict], deal) -> bool:
         # услуги, а различает сделки сам параметр.
         if key == "weborama_pixel" and bool(getattr(deal, "weborama_pixel", False)) != bool(want):
             return False
-        # Цикл услуги (14.10.2026, app/final_recon/flow.py): «полный цикл» / «контур аккаунта»; пусто у услуги — полный цикл.
+        # Цикл услуги (14.10.2026, app/final_recon/flow.py): «полный цикл» / «контур аккаунта» / «приоритезация»; пусто у услуги —
+        # полный цикл. Строкой — один цикл, списком — любой из (13.11.2026: «завершена аккаунтом» у контура и приоритезации).
         if key == "closing_flow":
             from app.final_recon import flow
-            if flow.of_deal(None, deal) != want:
+            if flow.of_deal(None, deal) not in (want if isinstance(want, list) else [want]):
                 return False
     return True
 
@@ -792,3 +805,4 @@ def blockers(lines) -> list:
 
 # Проверки из пакетов регистрируются их модулями (точка входа, спринт 4): контур аккаунта — app/final_recon/checks.py.
 import app.final_recon.checks  # noqa: E402,F401
+import app.prio.checks  # noqa: E402,F401 — цикл приоритезации (13.11.2026)

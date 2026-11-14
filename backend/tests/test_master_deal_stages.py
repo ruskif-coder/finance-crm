@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Сделки пакета идут за его статусом (владелец 19.10.2026, п. 2 «делаем»).
+"""Сделки пакета идут за его статусом (владелец 19.10.2026, п. 2 «делаем»; 13.11.2026 — синхронно по всем статусам ДО).
+
+13.11.2026 владелец: «засинхронить мастер-сделку со сделками» — каждому статусу пакета своя стадия сделок: черновик →
+Подготовка ДС, согласование → Согласование ДС, ждём 1С → Подготовка закрывающих, выставление → ЭДО (и бумага), ждём оплату и
+ждём сканы → Оплата, архив → Архив успешных сделок. «Отчёты в ОРД» сделки пакета проскакивают (статуса для неё нет).
 
 Пакет в «ждём оплату» → сделки в «Оплату»; в «архив» → в «Архив успешных сделок». Откат: архив → «ждём оплату» возвращает
 сделки в «Оплату», «ждём оплату» → «выставление» — в «Подготовку ДС». Сделку, которую увели со стадии пакета руками, не трогаем.
@@ -56,7 +60,35 @@ def test_deals_follow_package_forward_and_back(env):
     assert _stages(db, m) == {"Оплата"}
     m.status = ST.ISSUE
     DS.follow(db, m, ST.WAIT_PAY, _U())
-    assert _stages(db, m) == {"Подготовка ДС"}
+    assert _stages(db, m) == {"ЭДО"}
+
+
+def test_every_package_status_has_its_deal_stage(env):
+    """Поломка: стадия сделки отстаёт от статуса пакета (13.11.2026: 6 пакетов в «согласовании», сделки — на «Подготовке ДС»)."""
+    db, m = env
+    chain = [(ST.AGREE, "Согласование ДС"), (ST.WAIT_1C, "Подготовка закрывающих"), (ST.ISSUE, "ЭДО"),
+             (ST.WAIT_PAY, "Оплата"), (ST.WAIT_SCANS, "Оплата"), (ST.ARCHIVE, "Архив успешных сделок")]
+    was = ST.DRAFT
+    for status, stage in chain:
+        m.status = status
+        DS.follow(db, m, was, _U())
+        assert _stages(db, m) == {stage}, f"{status} → {stage}"
+        was = status
+    for status, stage in reversed([(ST.DRAFT, "Подготовка ДС")] + chain[:-1]):   # назад — тем же путём
+        m.status = status
+        DS.follow(db, m, was, _U())
+        assert _stages(db, m) == {stage}, f"назад: {status} → {stage}"
+        was = status
+
+
+def test_align_catches_up_deals_that_lag_behind(env):
+    """Разовая догонялка (и защита от пропущенного шага): пакет в «согласовании», сделки ещё на «Подготовке ДС» — align
+    ставит их на «Согласование ДС», не требуя, чтобы сделка стояла ровно на стадии прежнего статуса."""
+    db, m = env
+    m.status = ST.WAIT_1C
+    out = DS.align(db, m, _U())
+    assert _stages(db, m) == {"Подготовка закрывающих"} and out["moved"]
+    assert DS.align(db, m, _U())["moved"] == [], "повтор ничего не двигает"
 
 
 def test_deal_moved_away_by_hand_is_left_alone(env):
@@ -70,9 +102,10 @@ def test_deal_moved_away_by_hand_is_left_alone(env):
     assert out["skipped"], "сделку не с той стадии пропустили молча — её надо назвать"
 
 
-def test_statuses_without_stage_do_not_move(env):
+def test_start_package_waiting_for_close_does_not_move_deals(env):
+    """«Ждём закрытия» — стартовый пакет, РК ещё идёт: сделки на реализации, их не трогаем и не шумим в журнале."""
     db, m = env
     before = _stages(db, m)
-    m.status = ST.WAIT_1C
-    DS.follow(db, m, ST.AGREE, _U())
-    assert _stages(db, m) == before
+    m.status = ST.WAIT_CLOSE
+    out = DS.follow(db, m, ST.AGREE, _U())
+    assert _stages(db, m) == before and not out["moved"] and not out["skipped"]

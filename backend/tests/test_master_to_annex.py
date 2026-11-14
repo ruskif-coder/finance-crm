@@ -97,6 +97,28 @@ def test_start_no_defaults_to_the_contract_last_number(env):
     assert m.start_no == PK.effective_start_no(db, m) and m.start_no >= known, "номер закреплён в пакете"
 
 
+def _deal_stages(db, m):
+    from sqlalchemy import text
+    return {r[0] for r in db.execute(text("""SELECT st.name FROM master_deal_items i JOIN sales_deals d ON d.id = i.deal_id
+                                              JOIN sales_stages st ON st.id = d.our_stage_id WHERE i.master_deal_id = :m"""), {"m": m.id})}
+
+
+def test_creating_and_reverting_ds_moves_package_deals(env):
+    """Сделки пакета идут за статусом и на ранних шагах (владелец 13.11.2026): «В конструктор ДС» → «Согласование ДС»,
+    «Вернуть в раскладку» → «Подготовка ДС». Поломка: create/revert меняют статус пакета, не трогая сделки."""
+    from sqlalchemy import text
+    db, deals, u = env
+    m = _package(db, deals, u, {"addons_separate": False, "bonus_addons": "hide"})
+    db.execute(text("""UPDATE sales_deals SET our_stage_id = (SELECT id FROM sales_stages WHERE name = 'Подготовка ДС')
+                        WHERE id IN (SELECT deal_id FROM master_deal_items WHERE master_deal_id = :m)"""), {"m": m.id})
+    db.flush()
+    db.expire_all()
+    TA.create(db, m, u)
+    assert _deal_stages(db, m) == {"Согласование ДС"}
+    TA.revert(db, m, u)
+    assert _deal_stages(db, m) == {"Подготовка ДС"}
+
+
 def test_to_annex_refusals(env):
     db, deals, u = env
     _ready(db, deals[0])

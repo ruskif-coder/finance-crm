@@ -20,6 +20,7 @@ export const PINS = [
 ]
 
 export const emptyPins = () => Object.fromEntries(PINS.map(p => [p.key, []]))
+export const emptyFilters = () => ({ qtext: '', range: { from: '', to: '' }, pins: emptyPins(), gaps: [] })
 
 /** Фильтр строк тулбаром. Диапазон — по ПЕРЕСЕЧЕНИЮ с периодом РК, а не по старту:
  *  сделка июнь–июль в июльском диапазоне обязана быть. «Незаполненные» — ИЛИ по дырам. */

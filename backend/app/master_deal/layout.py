@@ -164,11 +164,13 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
             upd_no += 1
             net, vat_k = _r2(sum(x["net"] for x in rs)), M.doc_vat([x["net"] for x in rs], vat)
             by_deal: dict = {}
+            deal_id = {}
             for x in rs:
                 by_deal.setdefault(x["deal"], []).append(x["net"])
+                deal_id[x["deal"]] = x.get("deal_id")
             upds.append({"upd_no": upd_no, "brand": br, "service": sv, "net": net, "vat": vat_k, "gross": _r2(net + vat_k),
                          "deals": sorted(by_deal), "lines": [x["id"] for x in rs],
-                         "by_deal": [{"deal": k, "net": _r2(sum(v)), "gross": _r2(sum(v) + M.doc_vat(v, vat))}
+                         "by_deal": [{"deal": k, "deal_id": deal_id.get(k), "net": _r2(sum(v)), "gross": _r2(sum(v) + M.doc_vat(v, vat))}
                                      for k, v in sorted(by_deal.items())]})
         net, vat_ds = _r2(sum(x["net"] for x in rows)), M.doc_vat([x["net"] for x in rows], vat)
         ds_list.append({

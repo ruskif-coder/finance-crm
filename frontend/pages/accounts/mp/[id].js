@@ -12,6 +12,7 @@ import { DownloadOverlay } from '@/components/LogoLoader'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
+import { detailText } from '@/lib/loadError'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Редактор/генератор медиаплана. id === 'new' — новый; число — правка сохранённого.
@@ -127,9 +128,9 @@ export default function MpEditor() {
     }
   }, [id, dealParam])
 
-  const onAddTargeting = async (group, value) => { try { await api.post('/sales/directories/targeting', { group, value }, auth()); loadTargeting() } catch (e) { alert(e.response?.data?.detail || 'Ошибка') } return value }
-  const onAddGeo = async (name) => { try { const r = await api.post('/sales/directories/geo', { name }, auth()); loadGeo(); return r.data.id } catch (e) { alert(e.response?.data?.detail || 'Ошибка'); return null } }
-  const onCreateBrand = async (advertiserId, name) => { if (!advertiserId) return null; try { const r = await api.post('/sales/directories/brands', { name, advertiser_id: +advertiserId }, auth()); loadBrands(); return r.data.id } catch (e) { alert(e.response?.data?.detail || 'Ошибка'); return null } }
+  const onAddTargeting = async (group, value) => { try { await api.post('/sales/directories/targeting', { group, value }, auth()); loadTargeting() } catch (e) { alert(detailText(e, 'Ошибка')) } return value }
+  const onAddGeo = async (name) => { try { const r = await api.post('/sales/directories/geo', { name }, auth()); loadGeo(); return r.data.id } catch (e) { alert(detailText(e, 'Ошибка')); return null } }
+  const onCreateBrand = async (advertiserId, name) => { if (!advertiserId) return null; try { const r = await api.post('/sales/directories/brands', { name, advertiser_id: +advertiserId }, auth()); loadBrands(); return r.data.id } catch (e) { alert(detailText(e, 'Ошибка')); return null } }
 
   const toPayload = (o) => {
     const b = o.brief || {}
@@ -165,7 +166,7 @@ export default function MpEditor() {
         : r.data.unchanged ? 'Изменений нет — план уже проверен'
         : `Сохранено, версия ${r.data.version}`)
       await reloadPlan(); loadVersions()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }
+    } catch (e) { alert(detailText(e, 'Ошибка сохранения')) }
   }
 
   // Сделка из плана — второй путь её рождения, наравне с конвейером годового плана.
@@ -180,7 +181,7 @@ export default function MpEditor() {
       const r = await api.post(`/sales/media-plans/${savedId}/create-deal`, {}, auth())
       await reloadPlan(); loadDealBrief(); loadVersions()
       alert(`Сделка ${r.data.code} создана: ${r.data.title}\nСтадия: ${r.data.stage || '—'}`)
-    } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
+    } catch (e) { alert(detailText(e, 'Не удалось создать сделку')) }
   }
 
   // ── Привязка МП к сделке ──
@@ -203,7 +204,7 @@ export default function MpEditor() {
   const reloadPlan = () => api.get(`/sales/media-plans/${savedId}`, auth()).then(r => setLoaded(r.data)).catch(() => {})
   const doLink = async (dealId) => {
     try { await api.post(`/sales/media-plans/${savedId}/link-deal`, { deal_id: dealId }, auth()); await reloadPlan(); loadDealBrief(); setLinkOpen(false) }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось привязать') }
+    catch (e) { alert(detailText(e, 'Не удалось привязать')) }
   }
 
   // ── Free-text бриф связанной сделки ──
@@ -219,7 +220,7 @@ export default function MpEditor() {
   const onDealBriefSave = async (text) => {
     if (!savedId) { alert('Сначала сохраните медиаплан — потом бриф запишется в сделку'); return }
     try { const r = await api.put(`/sales/media-plans/${savedId}/deal-brief`, { brief: text }, auth()); setDealBrief(d => ({ ...(d || {}), ...r.data, has_deal: true })); alert('Бриф сохранён') }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить бриф') }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить бриф')) }
   }
 
   const onExportXlsx = async () => {

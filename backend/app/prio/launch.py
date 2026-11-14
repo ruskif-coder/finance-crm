@@ -91,7 +91,22 @@ def _launch(db: Session, deal, pid: int, client) -> M.PrioPlacement:
         _check(c, camp_id, {"toggle_on": True, "autostart": True, "goal_imp": body["goal_imp"]})
     except (PrioError, PrioApiError) as e:
         p.check_warning = f"РК {camp_id} заведена, но перечитка не сошлась — проверьте в системе приоритезации: {e}"
+    p.stage_note = _deal_goes_live(db, deal)
     return p
+
+
+def _deal_goes_live(db: Session, deal):
+    """Первая площадка пошла — сделка цикла «приоритезация» сама переходит «Готовятся к старту» → «В размещении» (13.11.2026),
+    как сделка полного цикла при запуске РК в DSP. Только вперёд; не пустило — запуск не отменяется, причина — в ответ."""
+    from app.final_recon import flow
+    from app.final_recon import launch as LAUNCH
+    if flow.of_deal(db, deal) != flow.PRIO or LAUNCH.available(db, deal) != "launch":
+        return None
+    try:
+        LAUNCH.run(db, deal, "launch", None)
+        return "Сделка переведена «В размещении»"
+    except LAUNCH.LaunchError as e:
+        return f"Сделка осталась на стадии: {e.message}"
 
 
 def toggle(db: Session, deal, pid: int, on: bool, client: PrioClient = None) -> M.PrioPlacement:

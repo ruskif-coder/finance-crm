@@ -3,10 +3,11 @@
 в реестре только импорт этого модуля."""
 from sqlalchemy import text
 
+from app.sales import stage_slots as SS
 from app.sales.stage_checks import Ctx, Result, _not_yet, _ok, register
 
-RECON_STAGE = "Итоговая сверка"
-DO_PHASE = "Документооборот (ДО)"
+RECON_STAGE = SS.RECON
+DO_PHASE = SS.DO_PHASE
 
 
 @register("account_finished", "Сделка завершена аккаунтом",

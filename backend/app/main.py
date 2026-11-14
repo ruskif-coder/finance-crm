@@ -271,40 +271,41 @@ def seed_stage_catalog():
     строк, оставшихся с прошлой (money_layer-только) версии."""
     from app.sales.models import SalesStagePhase, SalesStage
     from app.sales.stages import STAGE_BY_KEY
+    from app.sales import stage_slots as SS
     CATALOG = [
-        ("Песочница", [
+        (SS.SANDBOX_PHASE, [
             # Стартовых стадий две. «МП согласование» убрана 2026-08-17 как бюрократия
             # (миграция 2026-08-17_drop_mp_approval_stage.sql) — не возвращать.
-            ("МП Подготовка", "media_plan", False),
-            ("МП Отправлено", "media_plan", False),
-            ("Сделка не случилась", None, True),
+            (SS.MP_PREP, "media_plan", False),
+            (SS.MP_SENT, "media_plan", False),
+            (SS.NOT_HAPPENED, None, True),
         ]),
-        ("Услуги", [
-            ("Бронь", "booking", False),
-            ("Готовятся к старту", "launch_prep", False),
-            ("В размещении", "launch", False),
+        (SS.SERVICES_PHASE, [
+            (SS.BOOKING, "booking", False),
+            (SS.PREP, "launch_prep", False),
+            (SS.LIVE, "launch", False),
             # Сверка одна (миграции 2026-08-17_stage_final_reconcile + _merge_reconcile_stage):
             # предварительной и итоговой по отдельности не существует. Слой «реализуемые» —
             # сверка не закрытие, деньги на ней в работе, а не факт.
-            ("Итоговая сверка", "launch", False),
-            ("Сделка сорвалась", None, True),
+            (SS.RECON, "launch", False),
+            (SS.LOST, None, True),
         ]),
-        ("Документооборот (ДО)", [
-            ("Подготовка ДС", "closing", False),
-            ("Согласование ДС", "closing", False),
-            ("Подготовка закрывающих", "closing", False),
+        (SS.DO_PHASE, [
+            (SS.DS_PREP, "closing", False),
+            (SS.DS_AGREE, "closing", False),
+            (SS.CLOSING, "closing", False),
             # С ЭДО начинается вторая половина факта — документы в обороте
             # (миграция 2026-08-17_split_closing_layer.sql).
-            ("ЭДО", "closing_fact", False),
-            ("Отчёты в ОРД", "closing_fact", False),
-            ("Оплата", "closing_fact", False),
-            ("Архив успешных сделок", "archive", False),
+            (SS.EDO, "closing_fact", False),
+            (SS.ORD, "closing_fact", False),
+            (SS.PAY, "closing_fact", False),
+            (SS.ARCHIVE, "archive", False),
         ]),
     ]
     # Срок стадии сверх срока этапа. На свежей базе его ставит засев, а не миграция
     # 2026-08-17_account_dashboard: её номера стадий верны только для базы, на которой
     # её писали (аудит 23.09.2026, 7.6). 0 — «здесь срока нет».
-    SLA = {"МП Отправлено": 5, "В размещении": 0, "Итоговая сверка": 3, "Оплата": 0}
+    SLA = {SS.MP_SENT: 5, SS.LIVE: 0, SS.RECON: 3, SS.PAY: 0}
     layer_of = lambda key: (STAGE_BY_KEY[key]["money_layer"] if key in STAGE_BY_KEY else None)
     db = SessionLocal()
     try:
@@ -327,7 +328,7 @@ def seed_stage_catalog():
                                       sla_days=0 if final else SLA.get(sname),
                                       requires_media_plan=(not term and not entry)))
             # этап «Услуги» — реализационный (воронка выбирается на сделке)
-            for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги").all():
+            for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == SS.SERVICES_PHASE).all():
                 ph.is_realization = True
             # срок этапов: Песочница 2 дня, Услуги 5, Документооборот 5
             for ph in db.query(SalesStagePhase).all():
@@ -343,7 +344,7 @@ def seed_stage_catalog():
             if key:
                 s.stage_key, s.money_layer, changed = key, layer_of(key), changed + 1
         # добиваем флаг реализации у «Услуги» (для БД, засеянных до его появления)
-        for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги",
+        for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == SS.SERVICES_PHASE,
                                                    SalesStagePhase.is_realization.is_(False)).all():
             ph.is_realization = True; changed += 1
         # requires_media_plan — РАЗОВАЯ инициализация для баз, засеянных до появления

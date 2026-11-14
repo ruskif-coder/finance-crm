@@ -5,11 +5,10 @@ import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, sel, Pager } from '@/components/salesTableKit'
 import { toItem } from '@/components/dashboard/NotificationsWidget'
 import DealDetail from '@/components/sales/DealDetail'
-import MoveDealDialog from '@/components/sales/MoveDealDialog'
-import { SnoozeDialog, BookingConfirm, LaunchPrepDialog } from '@/components/accounts/QueueDialogs'
+import useQueueActions from '@/components/accounts/useQueueActions'
 import { WideRow, CompactRow, NotifyModal, ladderCounts } from '@/components/accounts/dashboard/TopRow'
 import EventsStrip from '@/components/accounts/dashboard/EventsStrip'
-import QueueToolbar, { applyToolbar, pinOptions, emptyPins } from '@/components/accounts/dashboard/QueueToolbar'
+import QueueToolbar, { applyToolbar, pinOptions, emptyFilters } from '@/components/accounts/dashboard/QueueToolbar'
 import { QuickPins, ActionPins } from '@/components/accounts/dashboard/QueuePins'
 import QueueRow, { QueueHead } from '@/components/accounts/dashboard/QueueRow'
 import { inStage, defaultRank, compareRows } from '@/components/accounts/dashboard/ladder'
@@ -18,6 +17,7 @@ import { dm } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { calendarDate } from '@/lib/dates'
 import { WidgetsToggle } from '@/components/traffic/dashboardKit'
+import { detailText } from '@/lib/loadError'
 
 // Дашборд аккаунта «Мои сделки» — макет «акки 3» (docs/акки 3.zip, план
 // docs/ПЛАН_дашборд_аккаунта_v3.md, решения владельца 27–28.09.2026).
@@ -36,7 +36,7 @@ const compactKey = () => {
     return `accDash.compact:${sub || 'anon'}`
   } catch { return 'accDash.compact:anon' }
 }
-const EMPTY_FILTERS = () => ({ qtext: '', range: { from: '', to: '' }, pins: emptyPins(), gaps: [] })
+const EMPTY_FILTERS = emptyFilters
 
 export default function AccountDashboard() {
   const router = useRouter()
@@ -63,10 +63,6 @@ export default function AccountDashboard() {
   // Строка очереди короткая, поэтому при раскрытии сделка догружается целиком: иначе
   // раскрывашка сказала бы «документов нет» там, где они есть.
   const [detail, setDetail] = useState(null)
-  const [moveDeal, setMoveDeal] = useState(null)
-  const [snoozeFor, setSnoozeFor] = useState(null)
-  const [prepFor, setPrepFor] = useState(null)
-  const [confirmFor, setConfirmFor] = useState(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -96,7 +92,7 @@ export default function AccountDashboard() {
       setNotifs((q3.data.items || []).map(toItem))
       setMyRepId(q1.data.my_rep_id ?? null)
       setErr('')
-    }).catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить очередь'))
+    }).catch(e => setErr(detailText(e, 'Не удалось загрузить очередь')))
       .finally(() => setLoading(false))
   }, [repId, day])
   useEffect(() => { load() }, [load])
@@ -198,31 +194,9 @@ export default function AccountDashboard() {
     return out.map(m => ({ ...m, total: m.ok + m.plan, hot: avg > 0 && (m.ok + m.plan) > avg * 1.5 }))
   }, [live, data])
 
-  const doSnooze = async (row, note, return_at) => {
-    try {
-      await api.post(`/sales/deals/${row.code || row.id}/snooze`, { note, return_at }, auth())
-      setSnoozeFor(null); load()
-    } catch (e) { alert(e?.response?.data?.detail || 'Не удалось отложить') }
-  }
-  const unsnooze = async (row) => {
-    try { await api.delete(`/sales/deals/${row.code || row.id}/snooze`, auth()); load() }
-    catch { alert('Не удалось вернуть в очередь') }
-  }
-
-  // Кнопка строки. Куда она ведёт, решил сервер (`action.do`); здесь — как это сделать.
-  // Карточку сделки открываем в новой вкладке: очередь с фильтрами остаётся на месте.
-  const runAction = (row, a) => {
-    if (a.do === 'mp') return router.push(`/accounts/mp/new?deal=${row.id}`)
-    if (a.do === 'move') return setMoveDeal(row)
-    if (a.do === 'confirm') return setConfirmFor(row)
-    if (a.do === 'prep') return setPrepFor(row)
-    if (a.do === 'expand') return expandedId === row.id ? null : toggleRow(row)
-    if (a.do === 'link' && a.url) {
-      if (a.url.startsWith('/sales/deals/')) return window.open(a.url, '_blank', 'noopener')
-      return router.push(a.url)
-    }
-    return null
-  }
+  // Кнопки строки и их диалоги — общие с «Моими сделками» (`useQueueActions`, 13.11.2026).
+  const { runAction, setSnoozeFor, unsnooze, dialogs } = useQueueActions({
+    router, load, onExpand: (row) => (expandedId === row.id ? null : toggleRow(row)) })
 
   const rowProps = { today: data?.today, canEdit, onToggle: toggleRow, onAction: runAction,
                      onSnooze: setSnoozeFor, onUnsnooze: unsnooze }
@@ -355,17 +329,7 @@ export default function AccountDashboard() {
         </div>
       </div>
 
-      {moveDeal && <MoveDealDialog deal={moveDeal} toStageKey={moveDeal.__to} toLost={moveDeal.__lost}
-        onClose={() => setMoveDeal(null)} onMoved={() => { setMoveDeal(null); load() }} />}
-      {confirmFor && (
-        <BookingConfirm row={confirmFor} onClose={() => setConfirmFor(null)}
-          onPick={(target) => { setMoveDeal({ ...confirmFor, ...target }); setConfirmFor(null) }} />
-      )}
-      {prepFor && (
-        <LaunchPrepDialog row={prepFor} onClose={() => setPrepFor(null)}
-          onToLaunch={() => { setMoveDeal({ ...prepFor, __to: 'launch' }); setPrepFor(null) }} />
-      )}
-      {snoozeFor && <SnoozeDialog row={snoozeFor} onClose={() => setSnoozeFor(null)} onSave={doSnooze} />}
+      {dialogs}
     </div>
   )
 }

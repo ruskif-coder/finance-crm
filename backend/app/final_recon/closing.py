@@ -186,6 +186,8 @@ def _fact_entry(db: Session, deal, base: list, has_rk: bool, frozen: bool) -> di
                 "vtr": round(done / shows * 100, 1) if (done is not None and shows) else None,
                 "reference_shows": int(e.fact_reference_shows) if e and e.fact_reference_shows is not None else None}
     return {"can_enter": (not has_rk) and (not frozen) and bool(rows),
+            # Отчёт платформы и себестоимость от строк МП не зависят: вносятся и без них (14.11.2026); без строк закрыт только факт.
+            "open": (not has_rk) and (not frozen),
             "report": {"filename": rep.filename} if rep else None,
             "complete": complete,
             "rows": [_row(r) for r in rows],
@@ -241,13 +243,23 @@ def _user_name(db: Session, uid: Optional[int]) -> Optional[str]:
     return (u.name or u.email) if u else None
 
 
+def _final_contract(db: Session, deal):
+    """Доходный договор сделки: выбранный вручную, иначе найденный сам — единственный договор плательщика с отметкой ОРД
+    (`resolve_final`, то же, что у требования стадии и блока ОРД)."""
+    from app.models import Contract
+    if deal.ord_final_contract_id:
+        return db.get(Contract, deal.ord_final_contract_id)
+    from app.ord import matching as M
+    return M.resolve_final(db, deal).contract
+
+
 def _closing_to(db: Session, deal) -> Optional[dict]:
     """На кого закрываем: контрагент доходного договора сделки (у контура аккаунта — посредник; владелец 19.10.2026:
     посредника присоединяем к агентству как контрагента, своей схемы «первичного заказчика» нет)."""
-    if not deal.ord_final_contract_id:
+    from app.models import Counterparty
+    c = _final_contract(db, deal)
+    if c is None:
         return None
-    from app.models import Contract, Counterparty
-    c = db.get(Contract, deal.ord_final_contract_id)
     cp = db.get(Counterparty, c.counterparty_id) if c and c.counterparty_id else None
     name = (cp.name if cp else None) or (c.counterparty_name if c else None)
     return {"name": name, "inn": (cp.inn if cp else None) or (c.inn if c else None),
@@ -351,6 +363,37 @@ def _assert_not_double(state: dict) -> None:
     if sk.get("double"):
         mp = ", ".join(f"{x:g}" for x in sk["mp_discount"]).replace(".", ",")
         raise ClosingError(409, DOUBLE_SK.format(mp=mp, sk=f"{float(sk['percent']):g}".replace(".", ",")))
+
+
+NO_CONTRACT = ("Не выбран доходный договор — сверку не подтвердить: по нему собираются ДС и закрывающие. Выберите договор в блоке ОРД "
+               "карточки или отметьте «Прямой рекламодатель».")
+
+
+def contract_missing(db: Session, deal) -> bool:
+    """Основная воронка (полный цикл): без доходного договора сверку не подтвердить, кроме прямого рекламодателя (владелец 14.11.2026).
+    Договор — тот же, что у требования стадии: выбранный вручную или единственный договор плательщика с отметкой ОРД (`resolve_final`).
+    Контур аккаунта и приоритезацию не запирает."""
+    from app.final_recon import flow as FLOW
+    from app.ord import matching as M
+    from app.ord import readiness
+    if FLOW.of_deal(db, deal) != FLOW.FULL or readiness.is_direct(deal) or deal.ord_final_contract_id:
+        return False
+    return M.resolve_final(db, deal).contract is None
+
+
+def _keep_resolved_contract(db: Session, deal) -> None:
+    """Договор найден сам — при подтверждении сверки записываем его в сделку: пакет ДС собирается только по сохранённому
+    (`master_deal.service`: «доходный договор — ключ пакета»). Иначе сверка подтверждена, а «Отправить в ДО» отказывает (14.11.2026)."""
+    if deal.ord_final_contract_id:
+        return
+    c = _final_contract(db, deal)
+    if c is not None:
+        deal.ord_final_contract_id = c.id
+
+
+def _assert_contract(db: Session, deal) -> None:
+    if contract_missing(db, deal):
+        raise ClosingError(409, NO_CONTRACT)
 
 
 def drop_confirmation(db: Session, deal_id: int) -> None:
@@ -457,6 +500,7 @@ def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None, plan_on
         "adfox_stale": _freshness(db, deal),
         "fact_source": pf["source"],
         "closing_to": _closing_to(db, deal),
+        "contract_missing": contract_missing(db, deal),        # экран гасит «Подтвердить сверку» тем же правилом
         "fact_entry": pf["entry"],
         "lines": _lines(base, extras, pf),
         "base_plan_net": base_net,
@@ -573,6 +617,8 @@ def confirm(db: Session, deal, on: bool, user) -> dict:
         raise ClosingError(409, "Сверка не посчиталась: факта ещё нет — выберите «Под МП» или дождитесь статистики")
     if on:
         _assert_not_double(state)
+        _assert_contract(db, deal)
+        _keep_resolved_contract(db, deal)
     rec.confirmed_at = datetime.utcnow() if on else None
     rec.confirmed_by = getattr(user, "id", None) if on else None
     db.flush()

@@ -5,7 +5,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop, LoadError, Z } from '@/components/salesTableKit'
-import { errText, isAuth } from '@/lib/loadError'
+import { errText, isAuth, detailText } from '@/lib/loadError'
 import api, { auth } from '@/lib/api'
 import { fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
 import { downloadMp } from '@/lib/mpDownload'
@@ -163,7 +163,7 @@ export default function MpRegistry() {
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/media-plans/${id}`, patch, auth()); setItems(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+    catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
   }
   const lbl = (opts, v) => (opts || []).find(o => String(o.value) === String(v))?.label
 
@@ -183,7 +183,7 @@ export default function MpRegistry() {
             const r = await api.post('/sales/directories/brands', { name, advertiser_id: it.advertiser_id }, auth())
             setBrandsByAdv(m => ({ ...m, [it.advertiser_id]: [...(m[it.advertiser_id] || []), { value: r.data.id, label: name }] }))
             patchCell(it.id, { brand_id: r.data.id }, { brand_id: r.data.id, brand: name }); setVpop(null)
-          } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать бренд') }
+          } catch (e) { alert(detailText(e, 'Не удалось создать бренд')) }
         } : undefined },
       period: { title: 'Период', options: periodOptions(), value: it.period, clearLabel: '— не указан —',
         apply: (v) => patchCell(it.id, { period: v }, { period: v }) },

@@ -24,10 +24,11 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app import timez
+from app.sales import stage_slots as SS
 
 # Имя, а не id: стадии — данные, и на другом стенде id окажется другим. Строка сравнивается
 # буквально, как и все русские значения в этом проекте.
-ORD_REPORT_STAGE = "Отчёты в ОРД"
+ORD_REPORT_STAGE = SS.ORD
 
 SCREENSHOT_DAYS = 30      # файлы пары
 SANDBOX_DAYS = 60         # распакованное в песочнице

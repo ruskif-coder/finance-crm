@@ -19,6 +19,7 @@ from app.annex_tpl import doc_kind as DK
 from app.final_recon import closing as CL
 from app.master_deal import layout as LY
 from app.master_deal import package as PK
+from app.master_deal import deal_stages as DST
 from app.master_deal import doc_sign as DSG
 from app.master_deal import primary as PR
 from app.master_deal import service as MS
@@ -86,7 +87,12 @@ def write_kits(db: Session, m: MasterDeal, ds: dict, annex_id: int) -> None:
     """Комплекты УПД одного ДС раскладки."""
     for k in ds["upds"]:
         db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=annex_id, brand=k["brand"], service=k["service"],
-                             net=k["net"], vat=k["vat"], gross=k["gross"]))
+                             net=k["net"], vat=k["vat"], gross=k["gross"], deals=kit_deals(k)))
+
+
+def kit_deals(k: dict) -> list:
+    """Разбивка комплекта раскладки по сделкам — то, что карточка сделки покажет как «её» комплект (13.11.2026)."""
+    return [{"deal_id": x.get("deal_id"), "code": x["deal"], "net": x["net"], "gross": x["gross"]} for x in k.get("by_deal") or []]
 
 
 def ready(db: Session, m: MasterDeal) -> list:
@@ -148,7 +154,7 @@ def create(db: Session, m: MasterDeal, user) -> list:
     if prim is not None:
         from app.sales import annex_signed
         if annex_signed.signed_state(db, prim)["signed"]:        # подпись — перепроверка прямо сейчас
-            return _close_on_signed(db, m, prim, lay)
+            return _close_on_signed(db, m, prim, lay, user)
         if DSG.at_client(prim):
             # Владелец 02.11.2026: пересобирать можно, пока ДС не ушёл клиенту; ушёл и не подписан — подмена документа на подписи.
             raise MS.MasterError(409, f"Первичный ДС {prim.number or ''} уже у клиента («{prim.sign_state}») и не подписан — "
@@ -192,10 +198,11 @@ def create(db: Session, m: MasterDeal, user) -> list:
             DSG.issued(db, a, user, reason="пересобран по факту")   # новый текст — новый круг согласования с клиентом
     m.status, m.updated_at = "согласование", datetime.utcnow()
     db.flush()
+    DST.align(db, m, user)                              # сделки пакета — на «Согласование ДС» (13.11.2026)
     return made
 
 
-def _close_on_signed(db: Session, m: MasterDeal, prim, lay: dict) -> list:
+def _close_on_signed(db: Session, m: MasterDeal, prim, lay: dict, user=None) -> list:
     """Первичный ДС подписан: ДС не трогаем, комплекты УПД по факту привязываем к нему. Закрытие больше ДС — нельзя (сверх — бонус)."""
     total = sum(ds["gross"] for ds in lay["ds"])
     if total > float(prim.total_amount or 0) + 0.01:
@@ -208,12 +215,12 @@ def _close_on_signed(db: Session, m: MasterDeal, prim, lay: dict) -> list:
     db.flush()
     # Подтверждать нечего — ДС подписан и с номером: «Подтвердить ДС пакета» ответила бы «неподтверждённых нет», а системный
     # статус руками не сдвинуть. Без этого пакет навсегда оставался в «согласовании» (ревью 02.11.2026).
-    after_confirm(db, m)
+    after_confirm(db, m, user)
     db.flush()
     return [{"id": prim.id, "kind": "primary_signed", "number": prim.number or "первичный ДС"}]
 
 
-def revert(db: Session, m: MasterDeal) -> int:
+def revert(db: Session, m: MasterDeal, user=None) -> int:
     """«Вернуть в раскладку»: удалить черновики ДС пакета. Нельзя, если ДС подтверждён или по нему открыта заявка юристу."""
     from app.sales.models import SalesAnnex
     PK._editable(db, m)
@@ -242,6 +249,7 @@ def revert(db: Session, m: MasterDeal) -> int:
             db.delete(a)
     m.status, m.updated_at = "черновик", datetime.utcnow()
     db.flush()
+    DST.align(db, m, user)                              # сделки пакета — обратно на «Подготовку ДС» (13.11.2026)
     return len(rows)
 
 
@@ -310,7 +318,7 @@ def set_basis(db: Session, m: MasterDeal, upd_no: int, text_: Optional[str]) -> 
     db.flush()
 
 
-def after_confirm(db: Session, m: MasterDeal) -> bool:
+def after_confirm(db: Session, m: MasterDeal, user=None) -> bool:
     """Все ДС пакета подтверждены — пакет уходит дальше: стартовый ждёт закрытия, обычный — УПД из 1С. Зовут ОБЕ кнопки:
     «Подтвердить ДС пакета» в карточке и «Подтвердить номер» на странице ДС (до 02.11.2026 вторая пакет не двигала, и он
     навсегда оставался в «согласовании»). True — статус сменился."""
@@ -321,4 +329,6 @@ def after_confirm(db: Session, m: MasterDeal) -> bool:
     if db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id, SalesAnnex.no.is_(None)).count():
         return False
     m.status, m.updated_at = SP.status_after_confirm(db, m), datetime.utcnow()
+    db.flush()
+    DST.align(db, m, user)                              # «ждём 1С» — сделки на «Подготовку закрывающих» (13.11.2026)
     return True

@@ -4,7 +4,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -207,12 +207,61 @@ def prio_action(deal_id: int, pid: int, action: str, body: ActIn = ActIn(), db: 
     except S.PrioError as e:
         db.rollback(); _err(e)
     warn = getattr(res, "check_warning", None)
+    stage_note = getattr(res, "stage_note", None)       # запуск первой площадки перевёл сделку (цикл «приоритезация», 13.11.2026)
     db.commit()
     # Журнал — до уведомления: действие уже сохранено, сбой письма не должен ни терять запись, ни отдавать 500 (аудит 21.10.2026).
     log_action(db, user, f"prio_{action}", "sales_deal", d.id,
                f"{d.code}: площадка запроса {pid} — {ACTIONS.get(action, action)}" + (f" · {warn}" if warn else ""))
     _notify_safe(db, d, pid, action)
-    return {**S.view(db, d), "warning": warn}
+    return {**S.view(db, d), "warning": warn, "stage_note": stage_note}
+
+
+# ── итог площадки файлом (итоговая сверка, цикл «приоритезация», 13.11.2026) ───────────────────────────────────────────
+
+@router.get("/deal/{deal_id}/fact-template.xlsx")
+def prio_fact_template(deal_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    from fastapi.responses import Response
+    from app.prio import fact_file as FF
+    d = _deal(db, deal_id, user)
+    return Response(FF.template(db, d), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="prio_{d.code}_itog.xlsx"'})
+
+
+@router.post("/deal/{deal_id}/fact-file")
+async def prio_fact_file(deal_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Итоговая статистика площадок файлом: факт этих площадок — из файла, ночной сбор их больше не трогает."""
+    from app.prio import fact_file as FF
+    d = _deal(db, deal_id, user)
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Файл больше 10 МБ — это не итоговая статистика площадки")
+    try:
+        out = FF.apply(db, d, data, user)
+    except S.PrioError as e:
+        db.rollback(); _err(e)
+    db.commit()
+    log_action(db, user, "prio_fact_file", "sales_deal", d.id,
+               f"{d.code}: итог файлом «{file.filename}» — {', '.join(out['placements'])}; строк {out['written']}, "
+               f"{out['days'][0]} — {out['days'][1]}" + (f"; не распознано: {', '.join(out['unknown'])}" if out["unknown"] else ""))
+    return {**S.view(db, d), "fact_file": out}
+
+
+class FactSourceIn(BaseModel):
+    source: str
+
+
+@router.put("/deal/{deal_id}/placements/{pid}/fact-source")
+def prio_fact_source(deal_id: int, pid: int, body: FactSourceIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Вернуть площадку к факту из статистики сервиса (на «файл» переключает только загрузка)."""
+    from app.prio import fact_file as FF
+    d = _deal(db, deal_id, user)
+    try:
+        FF.set_source(db, d, pid, body.source)
+    except S.PrioError as e:
+        db.rollback(); _err(e)
+    db.commit()
+    log_action(db, user, "prio_fact_source", "sales_deal", d.id, f"{d.code}: площадка запроса {pid} — факт из сервиса")
+    return S.view(db, d)
 
 
 @router.post("/deal/{deal_id}/bulk/{action}")
