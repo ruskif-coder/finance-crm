@@ -191,7 +191,8 @@ def _fact_entry(db: Session, deal, base: list, has_rk: bool, frozen: bool) -> di
             "report": {"filename": rep.filename} if rep else None,
             "complete": complete,
             "rows": [_row(r) for r in rows],
-            "total": float(sum(ent[r["row_id"]].fact_volume for r in rows)) if complete else None,
+            # float на каждой строке: из базы Numeric приходит Decimal, только что введённое — float (15.11.2026, был 500)
+            "total": sum(float(ent[r["row_id"]].fact_volume) for r in rows) if complete else None,
             "plan": float(sum(r.get("volume") or 0 for r in rows)),
             "note": last.source_note if last else None,
             "by": (by.name or by.email) if by else None,
@@ -444,16 +445,16 @@ def compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None, plan_onl
     независимо от выбранного режима: ДС на старте выпускается на план, когда факта и сверки ещё нет (02.11.2026).
 
     В реестре мастер-сделок (`memo`) сверка одной сделки считается один раз за запрос: «что сделать», раскладка и
-    эффективность звали её до трёх раз (аудит 21.10.2026, F1). Вне `memo` — всегда свежий расчёт."""
-    if plan_only:
-        return _compute(db, deal, rec=rec, plan_only=True)
+    эффективность звали её до трёх раз (аудит 21.10.2026, F1). Вне `memo` — всегда свежий расчёт. Ключ — (сделка, plan_only):
+    до 15.11.2026 расчёт «под МП» шёл мимо памятки, и пакет с ДС на старте считал сверку сделки дважды (раскладка и сумма в `ready`)."""
     memo = getattr(db, "info", {}).get("cl_memo") if rec is None else None
     if memo is None:
-        return _compute(db, deal, rec=rec)
-    if deal.id not in memo:
-        memo[deal.id] = _compute(db, deal)
+        return _compute(db, deal, rec=rec, plan_only=plan_only)
+    key = (deal.id, bool(plan_only))
+    if key not in memo:
+        memo[key] = _compute(db, deal, plan_only=plan_only)
     import copy
-    return copy.deepcopy(memo[deal.id])
+    return copy.deepcopy(memo[key])
 
 
 class memo:

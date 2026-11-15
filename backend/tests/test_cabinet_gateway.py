@@ -268,24 +268,32 @@ def test_creative_file_is_served_as_attachment(env):
 
 def test_creative_file_serves_the_clients_original_when_prepared(env):
     """Подготовленный под DSP архив несёт наши вставки — площадке уходит исходник."""
-    import os
+    # 15.11.2026: тест строит свой файл сам. Раньше он брал первый файл пары, а у него на стенде уже лежит исходник —
+    # чужое трогать нельзя, и тест пропускался всегда. Теперь: синтетическая строка файла в комплекте пары (в транзакции
+    # фикстуры, откатывается), сам файл и его исходник пишутся на диск под уникальным именем и удаляются в finally.
+    # Упадёт, если `cabinet_creative_file` начнёт отдавать сам хранимый (подготовленный) файл вместо
+    # `originals.path_for_publisher` — площадка получила бы наши вставки.
+    from app.files_safe import inside_uploads, remove_upload
     from app.launch_prep import originals
-    f = _file_of(env.db, env.pair.set_id)
-    if f is None:
-        pytest.skip('у креатива пары нет файла')
-    orig = originals.original_abs(f.path)
-    if not orig or os.path.exists(orig):
-        pytest.skip('у файла уже есть исходник — не трогаем чужое')
+    from app.launch_prep.models import LaunchPrepCreativeFile
+    if env.pair.set_id is None:
+        pytest.skip('у пары нет комплекта креативов')
+    rel = f'creatives/cre{env.pair.set_id}_zz_test_15112026_original.zip'
+    full, orig = inside_uploads(rel), originals.original_abs(rel)
+    assert full and orig and not os.path.exists(full) and not os.path.exists(orig)
+    f = LaunchPrepCreativeFile(set_id=env.pair.set_id, path=rel, original_name='[тест] баннер.zip', is_archive=True)
+    env.db.add(f)
+    env.db.flush()
     try:
-        originals.save(f.path, b'PK-original')
-        try:
-            r = gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
-        except HTTPException as e:      # самого файла нет на диске стенда
-            assert e.status_code == 404
-            return
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, 'wb') as fh:
+            fh.write(b'PK-prepared')
+        originals.save(rel, b'PK-original')
+        r = gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
         assert r.path == orig
     finally:
-        originals.remove(f.path)
+        originals.remove(rel)
+        remove_upload(rel)
 
 
 def test_creative_file_is_closed_after_a_decline(env):

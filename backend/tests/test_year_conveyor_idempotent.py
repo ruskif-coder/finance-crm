@@ -141,3 +141,64 @@ def test_year_out_of_range_is_refused_before_the_lock():
     with pytest.raises(HTTPException) as e:
         yp.conveyor_lock_key(99_999)
     assert e.value.status_code == 400
+
+
+# ── Бронь (владелец 14.11.2026): конвейер не трогает, а изменившуюся ячейку показывает в окне с кнопкой ──────────
+# «бронь не трогаем и дальше — с уведомлением: переписать или нет»; решает тот, кто запускает конвейер.
+
+def _to_booking(db, line):
+    deal = db.query(SalesDeal).filter(SalesDeal.year_plan_line_id == line.id).first()
+    deal.our_stage_id = _stage_by_key(db, "booking").id
+    db.flush()
+    return deal
+
+
+def test_booking_deal_is_kept_and_listed_when_its_cell_changed(db, run):
+    """Сломать: убрать заморозку брони — сумма вернётся к плану, а медиаплан пересоберётся."""
+    line, body, admin, go = run
+    deal = _to_booking(db, line)
+    deal.amount = mark = (deal.amount or 0) + 1                  # ячейка разошлась со сделкой
+    db.flush()
+    before = _plans(db, line)
+    pv = yp.create_deals_preview(body, db=db, current_user=admin)
+    assert [x["deal_id"] for x in pv["booking"]] == [deal.id], pv
+    res = go()
+    assert [x["deal_id"] for x in res["booking"]] == [deal.id], res
+    db.refresh(deal)
+    assert deal.amount == mark and _plans(db, line) == before, "бронь переписана без решения"
+
+
+def test_booking_deal_without_changes_is_not_offered(db, run):
+    line, body, admin, go = run
+    _to_booking(db, line)
+    assert yp.create_deals_preview(body, db=db, current_user=admin)["booking"] == []
+
+
+def test_rewrite_puts_a_booking_deal_back_to_its_cell(db, run):
+    """«Переписать из плана» — та же пересборка, что у конвейера, только для одной сделки и по нажатию."""
+    line, body, admin, go = run
+    deal = _to_booking(db, line)
+    deal.amount = mark = (deal.amount or 0) + 1
+    db.flush()
+    out = yp.rewrite_booking_deal(yp.RewriteIn(year=line.year, deal_id=deal.id), db=db, current_user=admin)
+    assert out["rewritten"] is True
+    db.refresh(deal)
+    assert deal.amount != mark
+    assert yp.create_deals_preview(body, db=db, current_user=admin)["booking"] == []
+
+
+def test_rewrite_refuses_deals_past_booking_and_locked_months(db, run):
+    from fastapi import HTTPException
+    line, body, admin, go = run
+    deal = db.query(SalesDeal).filter(SalesDeal.year_plan_line_id == line.id).first()
+    deal.our_stage_id = _stage_by_key(db, "launch_prep").id
+    db.flush()
+    with pytest.raises(HTTPException) as e:
+        yp.rewrite_booking_deal(yp.RewriteIn(year=line.year, deal_id=deal.id), db=db, current_user=admin)
+    assert e.value.status_code == 409
+    deal.our_stage_id = _stage_by_key(db, "booking").id
+    line.locks = {**(line.locks or {}), str(deal.plan_month): 1}
+    db.flush()
+    with pytest.raises(HTTPException) as e:
+        yp.rewrite_booking_deal(yp.RewriteIn(year=line.year, deal_id=deal.id), db=db, current_user=admin)
+    assert e.value.status_code == 409

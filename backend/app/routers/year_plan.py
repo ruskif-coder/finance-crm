@@ -38,6 +38,7 @@ from app.sales.models import (SalesYearPlan, SalesYearPlanLine, SalesAdvertiser,
                               SalesBrand, SalesService, SalesAddonService, SalesDeal,
                               SalesStage, SalesRep, SalesMediaPlan, SalesMediaPlanRow,
                               SalesMediaPlanExtra)
+from app.final_recon.money import r2
 from app.year_plan_core import _month_items, _intended_amount, _is_locked, _planned_months  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
 # Ставка НДС — не константой: текущая из карточки юрлица для новых расчётов (`app/vat.py`,
@@ -834,11 +835,12 @@ def _deal_frozen(deal, stages: dict, first_id: Optional[int] = None) -> Optional
         return "в работе"
     if getattr(st, "is_terminal", False):
         return "сделка закрыта"
-    # До «Сборки» (МП Подготовка, МП Отправлено, Бронь) сделка НЕ заморожена: она
-    # обновляется из годового плана при каждом прогоне, если на месяце нет замочка —
-    # правило владельца, подтверждено 23.09.2026. Днём 23.09 здесь стояла заморозка «ушла
-    # с первой стадии» (по пункту аудита 3.M3) — она противоречила правилу и откачена.
-    # `first_id` оставлен в подписи ради вызывающих, решения он больше не меняет.
+    # Бронь — медиаплан согласован с клиентом: конвейер его не удаляет и не пересобирает (владелец 14.11.2026: «бронь не
+    # трогаем и дальше»; аудит 13.11 — конвейер сносил план, который конструктор считает отданным). По ключу стадии, не по имени.
+    if getattr(st, "stage_key", None) == "booking":
+        return "бронь"
+    # МП Подготовка и МП Отправлено НЕ заморожены: сделка обновляется из годового плана при каждом прогоне, если на месяце
+    # нет замочка — правило владельца, подтверждено 23.09.2026. `first_id` оставлен в подписи ради вызывающих.
     return None
 
 
@@ -1096,6 +1098,26 @@ class ConveyorIn(BaseModel):
     line_id: Optional[int] = None         # запуск по одной строке-бренду
 
 
+def _rewrite_from_cell(db: Session, deal, fields: dict, line, m, svc, add, user_id, items) -> None:
+    """Переписать сделку из ячейки годового плана: поля и медиаплан заново. Одна функция на прогон конвейера и на
+    «Переписать из плана» у брони — второй копии пересборки нет."""
+    for k, v in fields.items():
+        setattr(deal, k, v)
+    for mp in db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == deal.id).all():
+        db.delete(mp)   # cascade строк/доп
+    db.flush()
+    _build_mp(db, deal, line, m, svc, add, user_id, items)
+
+
+def _booking_diverged(db: Session, why: str, deal, ctx: dict, line, m, items, user_id) -> bool:
+    """Сделка на брони, а ячейка плана с ней разошлась: конвейер её не трогает, но предлагает «Переписать из плана»
+    (владелец 14.11.2026). Остальные заморозки (реализация, срыв, закрыта) не предлагаются — там план не хозяин."""
+    if why != "бронь":
+        return False
+    return not _cell_unchanged(db, deal, _cell_fields(ctx, line, m, items), line, m,
+                               ctx["svc"], ctx["add"], user_id, items)
+
+
 @router.post("/create-deals/preview")
 def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
                          current_user: User = Depends(YP_EDIT)):
@@ -1108,6 +1130,7 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
     brand_names = {b.id: b.name for b in db.query(SalesBrand).all()}
     new_items, changed, unchanged, blocked, locked = [], [], 0, [], []
     in_work = []                      # дошедшие сделки: их конвейер не трогает
+    booking = []                      # бронь, разошедшаяся с ячейкой: «переписать или нет» решает запустивший
     stages = _stage_index(db)
     from app.sales.catalog import Catalog as _Cat
     _first = _Cat(db).first()
@@ -1143,16 +1166,18 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
                     # «изменится». Иначе человек жмёт «создать», ожидая пересборки.
                     why = _deal_frozen(existing, stages, first_id)
                     if why:
-                        in_work.append({**base, "deal_id": existing.id,
-                                        "code": existing.code, "reason": why})
+                        diverged = _booking_diverged(db, why, existing, ctx, line, m, items, current_user.id)
+                        (booking if diverged else in_work).append(
+                            {**base, "deal_id": existing.id, "code": existing.code, "reason": why,
+                             "old_amount": r2(existing.amount or 0)})
                     elif _cell_unchanged(db, existing, _cell_fields(ctx, line, m, items),
                                          line, m, ctx["svc"], ctx["add"], current_user.id, items):
                         unchanged += 1
                     else:   # перегенерируем (название/метка/МП) при повторном запуске
                         changed.append({**base, "deal_id": existing.id,
-                                        "old_amount": round(existing.amount or 0, 2)})
+                                        "old_amount": r2(existing.amount or 0)})
     return {"new": new_items, "changed": changed, "unchanged": unchanged,
-            "blocked": blocked, "locked": locked, "in_work": in_work}
+            "blocked": blocked, "locked": locked, "in_work": in_work, "booking": booking}
 
 
 @router.post("/create-deals")
@@ -1177,6 +1202,7 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
     stage_id = first.id if first else None
 
     created = updated = blocked = frozen = unchanged = 0
+    booking = []                      # бронь, разошедшаяся с ячейкой — в окно конвейера с кнопками (14.11.2026)
     in_work = []                      # дошедшие сделки, пропущенные конвейером
     stages = _stage_index(db)
     for line in lines:
@@ -1207,9 +1233,11 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                     # ниже переписывает всё и УДАЛЯЕТ медиапланы. Пропускаем и называем.
                     why = _deal_frozen(existing, stages, stage_id)
                     if why:
-                        in_work.append({"deal_id": existing.id, "code": existing.code,
-                                        "brand": ctx["brand"].get(line.brand_id),
-                                        "month": m, "reason": why})
+                        item = {"deal_id": existing.id, "code": existing.code, "line_id": line.id,
+                                "brand": ctx["brand"].get(line.brand_id), "month": m, "reason": why,
+                                "amount": fields.get("amount"), "old_amount": r2(existing.amount or 0)}
+                        diverged = _booking_diverged(db, why, existing, ctx, line, m, items, current_user.id)
+                        (booking if diverged else in_work).append(item)
                         continue
                     # Ничего не изменилось — ничего и не пишем: медиаплан остаётся тем же,
                     # с тем же id, и ссылки на него в уведомлениях живы.
@@ -1217,12 +1245,7 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                                        current_user.id, items):
                         unchanged += 1
                         continue
-                    for k, v in fields.items():
-                        setattr(existing, k, v)
-                    for mp in db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == existing.id).all():
-                        db.delete(mp)   # cascade строк/доп
-                    db.flush()
-                    _build_mp(db, existing, line, m, svc, add, current_user.id, items)
+                    _rewrite_from_cell(db, existing, fields, line, m, svc, add, current_user.id, items)
                     updated += 1
                 else:
                     deal = SalesDeal(
@@ -1255,7 +1278,53 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                f"сейлз {eff_rep}: создано {created}, обновлено {updated}, без изменений {unchanged}, "
                f"без брифа {blocked}, заморожено замком {frozen}")
     return {"created": created, "updated": updated, "unchanged": unchanged,
-            "blocked": blocked, "frozen": frozen, "in_work": in_work}
+            "blocked": blocked, "frozen": frozen, "in_work": in_work, "booking": booking}
+
+
+class RewriteIn(BaseModel):
+    year: int
+    deal_id: int
+
+
+@router.post("/create-deals/rewrite")
+def rewrite_booking_deal(payload: RewriteIn, db: Session = Depends(get_db),
+                         current_user: User = Depends(YP_EDIT)):
+    """«Переписать из плана» для сделки на брони (владелец 14.11.2026): конвейер такую сделку не трогает, а решение
+    принимает тот, кто его запускает, в окне конвейера. Та же пересборка, что у прогона, — только эта сделка.
+    Сделку дальше брони и месяц под замком не переписываем: там план не хозяин."""
+    deal = db.get(SalesDeal, payload.deal_id)
+    if deal is None or not deal.year_plan_line_id:
+        raise HTTPException(404, "Сделка не из годового плана")
+    own = db.get(SalesYearPlanLine, deal.year_plan_line_id)
+    # Область — как у прогона конвейера: строки, видимые пользователю под сейлзом этой строки (мастер — любой)
+    lines = (_target_lines(db, *_scope_reps(db, current_user, own.sales_rep_id), payload.year, None, own.id)
+             if own is not None else [])
+    if not lines:
+        raise HTTPException(403, "Строка годового плана этой сделки вам не видна")
+    line, m = lines[0], deal.plan_month
+    db.execute(sa_text("SELECT pg_advisory_xact_lock(:a, :b)"),
+               {"a": CONVEYOR_LOCK, "b": conveyor_lock_key(payload.year)})
+    db.refresh(deal)
+    if m is None or _is_locked(line, m):
+        raise HTTPException(409, "Месяц под замком — конвейер его не трогает")
+    why = _deal_frozen(deal, _stage_index(db))
+    if why != "бронь":
+        state = why or "не заморожена"
+        raise HTTPException(409, f"Переписать из плана можно только сделку на брони, а эта — {state}")
+    items = dict(_month_groups(line, m)).get(int(deal.plan_deal_idx or 0))
+    if not items:
+        raise HTTPException(409, "В ячейке плана больше нет услуг этой сделки")
+    ctx = _conveyor_ctx(db)
+    fields = _cell_fields(ctx, line, m, items)
+    if _cell_unchanged(db, deal, fields, line, m, ctx["svc"], ctx["add"], current_user.id, items):
+        return {"rewritten": False, "message": "Сделка уже совпадает с планом"}
+    was = r2(deal.amount or 0)
+    _rewrite_from_cell(db, deal, fields, line, m, ctx["svc"], ctx["add"], current_user.id, items)
+    db.commit()
+    log_action(db, current_user, "year_plan_rewrite_booking", "sales_deal", deal.id,
+               f"{deal.code}: бронь переписана из годового плана ({line.year}, месяц {m + 1}): "
+               f"сумма {was} → {r2(deal.amount or 0)}")
+    return {"rewritten": True, "deal_id": deal.id, "amount": r2(deal.amount or 0)}
 
 
 # ── сводка по всем сейлзам (только мастер) ───────────────────────────────

@@ -45,6 +45,9 @@ def test_a_zero_sum_plan_with_rows_gets_a_deal(monkeypatch):
         def order_by(self, *a):
             return self
 
+        def with_for_update(self, *a, **k):     # замок строки плана (аудит 13.11.2026) — в подставной базе не нужен
+            return self
+
         def first(self):
             return self.item
 

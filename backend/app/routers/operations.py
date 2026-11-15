@@ -5,6 +5,7 @@ from sqlalchemy import func, case, or_, and_
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
+from app.banks import BANKS
 from app.models import OPERATION_STATUSES, Operation, Article, Counterparty, User
 from app import own_company
 from app.audit import log_action
@@ -31,6 +32,14 @@ router = APIRouter()
 EXPORT_MAX_ROWS = 20000
 
 # Словарь статусов операции (`OPERATION_STATUSES`) живёт в модели — один на систему.
+
+
+def _import_status(row) -> str:
+    """Статус строки импорта. Пустая ячейка — пустой статус, то есть ошибка строки («Неизвестный статус»), а не «ОПЛАЧЕНО»:
+    план без статуса становился фактом оплаты в остатках, ДДС и P&L (аудит 13.11.2026)."""
+    import pandas as pd
+    v = row.get('status') if hasattr(row, 'get') else None
+    return str(v).strip().upper() if v is not None and pd.notna(v) else ''
 
 
 def _operation_problem(op) -> str | None:
@@ -76,6 +85,10 @@ def _operation_problem(op) -> str | None:
     if op.status == "ОПЛАЧЕНО" and not (getattr(op, "bank", None) or "").strip():
         return ("У оплаченной операции не указан банк: без него она не попадёт в остатки "
                 "и сводку ДДС.")
+    bank = (getattr(op, "bank", None) or "").strip()
+    if bank and bank not in BANKS:
+        # «Альфа-Банк» с дефисом проходил, был виден в ДДС и выпадал из остатков (аудит 13.11.2026)
+        return f"Банк «{bank}» не из списка: {', '.join(BANKS)}. Иначе операция выпадет из остатков."
     return None
 
 
@@ -663,8 +676,7 @@ def create_operation(
     # Проверка ДО записи: отказать дешевле, чем потом искать строку, выпавшую из отчётов.
     _assert_operation_valid(operation)
     db.add(operation)
-    db.commit()
-    db.refresh(operation)
+    db.flush()          # id для журнала; запись — одна, коммитом журнала ниже (аудит 13.11: 500 после записанных денег)
 
     _learn_counterparty_defaults(db, operation)
 
@@ -697,7 +709,7 @@ def _learn_counterparty_defaults(db: Session, operation: Operation):
         setattr(cp, art_field, operation.article_id)
         changed = True
     if changed:
-        db.commit()
+        db.flush()      # коммит — у вызывающего, одной записью с операцией
 
 @router.put("/{op_id}")
 def update_operation(
@@ -737,8 +749,7 @@ def update_operation(
     # правка может увести операцию из отчётов, ничего не «сломав» на вид.
     _assert_operation_valid(operation)
 
-    db.commit()
-
+    # Коммит — журналом ниже: правка и запись о ней одной записью (аудит 13.11.2026)
     # В журнал — тоже итоговые значения: иначе частичная правка запишет нули,
     # которых в операции нет.
     log_action(db, current_user, "update_operation", entity_type="operation", entity_id=op_id,
@@ -1163,7 +1174,7 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
         rows.append({
             'op_id': parsed_op_id,
             'date': parsed_date,
-            'status': str(row['status']).strip().upper() if pd.notna(row.get('status')) else 'ОПЛАЧЕНО',
+            'status': _import_status(row),
             'income': parsed_income,
             'expense': parsed_expense,
             'bank': str(row['bank']) if pd.notna(row.get('bank')) else None,
@@ -1761,6 +1772,12 @@ async def import_apply(
             status_code=403,
             detail="Эту загрузку разбирал другой пользователь. Применить её может только "
                    "он: подтверждение относится к тому, что он видел на экране.")
+    # Захват сессии ДО записи (аудит 13.11.2026): второе «Применить» того же разбора (две вкладки, повтор сети) получает 409,
+    # а не проводит строки второй раз. Строки негодны — сессия возвращается, человек правит файл, не загружая заново.
+    claimed = IMPORT_SYNC_CACHE.claim(payload.import_id)
+    if claimed is None:
+        raise HTTPException(status_code=409, detail="Этот разбор уже применяется или применён — обновите экран")
+    cached = claimed
 
     confirmed = set(payload.confirmed_keys)
     inserted = updated = skipped = 0
@@ -1849,11 +1866,13 @@ async def import_apply(
         else:
             skipped += 1
 
-    _assert_import_rows_valid(db, problems)
+    try:
+        _assert_import_rows_valid(db, problems)
+    except HTTPException:
+        db.rollback()
+        IMPORT_SYNC_CACHE[payload.import_id] = claimed      # строки негодны — разбор остаётся, файл не грузить заново
+        raise
     db.commit()
-    # `pop`, а не `del`: при двух одновременных применениях одного import_id второй
-    # получал KeyError вместо понятного отказа.
-    IMPORT_SYNC_CACHE.pop(payload.import_id, None)
 
     # ЖУРНАЛ ДЕЙСТВИЙ. Массовая запись денег — единственный путь в системе, который его
     # не оставлял: одиночная правка, массовая и удаление пишут, импорт молчал. Вопрос
@@ -1956,7 +1975,7 @@ def export_to_alfa(
 
     if not payload.ids:
         raise HTTPException(status_code=400, detail="Не указаны операции")
-    if payload.bank not in ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']:
+    if payload.bank not in BANKS:
         raise HTTPException(status_code=400, detail="Неизвестный банк")
 
     # Реквизиты нашей компании для выбранного банка.

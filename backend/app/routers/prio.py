@@ -227,13 +227,19 @@ def prio_fact_template(deal_id: int, db: Session = Depends(get_db), user: User =
                     headers={"Content-Disposition": f'attachment; filename="prio_{d.code}_itog.xlsx"'})
 
 
+FACT_FILE_MAX = 10 * 1024 * 1024
+
+
 @router.post("/deal/{deal_id}/fact-file")
-async def prio_fact_file(deal_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(EDIT)):
-    """Итоговая статистика площадок файлом: факт этих площадок — из файла, ночной сбор их больше не трогает."""
+def prio_fact_file(deal_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Итоговая статистика площадок файлом: факт этих площадок — из файла, ночной сбор их больше не трогает.
+
+    Обычный `def`, не `async` (аудит 13.11.2026): разбор xlsx и запись в базу синхронные и в `async def` останавливали весь
+    процесс на время разбора. Тело читается не больше предела + 1 байт — лишнее в память не берём."""
     from app.prio import fact_file as FF
     d = _deal(db, deal_id, user)
-    data = await file.read()
-    if len(data) > 10 * 1024 * 1024:
+    data = file.file.read(FACT_FILE_MAX + 1)
+    if len(data) > FACT_FILE_MAX:
         raise HTTPException(413, "Файл больше 10 МБ — это не итоговая статистика площадки")
     try:
         out = FF.apply(db, d, data, user)

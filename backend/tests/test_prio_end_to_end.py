@@ -172,6 +172,10 @@ def test_paid_prioritization_to_ds(db):
 def test_bonus_prioritization_closes_without_documents(db):
     """Бонусная (Q7UM3A, скидка 100 %): всё то же до статистики → «Закрыть без документов» → архив, без ДС."""
     d = _deal(db, "Q7UM3A")
+    # 15.11.2026: на проде Q7UM3A закрыта без документов 27.10 (сверка заморожена, сделка в архиве) — стенд-копия
+    # приходит с уже израсходованной сделкой. Возвращаем её в транзакции к состоянию до закрытия: сверки нет.
+    db.execute(text("DELETE FROM final_recon_deals WHERE deal_id = :d"), {"d": d.id})
+    db.expire_all()
     pubs = [r[0] for r in db.execute(text("SELECT id FROM sales_publishers WHERE is_active ORDER BY id DESC LIMIT 2"))]
     live = _assemble_and_approve(db, d, pubs, [2.0, 1.0])
     api = DayApi()

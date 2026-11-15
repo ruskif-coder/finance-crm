@@ -75,11 +75,6 @@ def format_quarter(year: int, q: int) -> str:
     return f"Q{q} {year}"
 
 
-def iso_quarter(year: int, q: int) -> str:
-    """Сортируемый вид для выгрузок и внутренних ключей: `2025-Q1`."""
-    return f"{year}-Q{q}"
-
-
 def normalize_quarter(value) -> Optional[str]:
     """Квартал в виде хранения или None, если это не квартал."""
     parsed = parse_quarter(value)

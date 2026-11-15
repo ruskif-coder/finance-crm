@@ -48,7 +48,7 @@ def for_document(db, contract, doc_date: Optional[date]) -> float:
         from app import own_company
         us = own_company.sole(db)
     rate = getattr(us, "vat_rate_income", None) if us is not None else None
-    return float(rate) if rate else on(doc_date)
+    return float(rate) if rate is not None else on(doc_date)    # 0 — «не облагается», не «не задано» (аудит 13.11)
 
 
 def current(db) -> float:
@@ -56,7 +56,7 @@ def current(db) -> float:
     from app import own_company
     cp = own_company.sole(db)
     rate = getattr(cp, "vat_rate_income", None) if cp else None
-    return float(rate) if rate else DEFAULT_PCT
+    return float(rate) if rate is not None else DEFAULT_PCT
 
 
 # Ставки, которые бывали по закону. Ставка, выведенная делением посчитанных сумм, —

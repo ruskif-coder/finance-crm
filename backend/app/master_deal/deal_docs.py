@@ -12,6 +12,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.final_recon.money import r2
+
 
 def _master_of(db: Session, deal_id: int) -> Optional[dict]:
     r = db.execute(text("""SELECT m.id, m.code, m.status FROM master_deal_items i JOIN master_deals m ON m.id = i.master_deal_id
@@ -29,7 +31,7 @@ def _ds(db: Session, deal_id: int) -> list:
          ORDER BY a.no IS NULL, a.no, a.sub_no NULLS FIRST, a.id"""), {"d": deal_id}).mappings().all()
     return [{"id": r["id"], "no": r["no"], "number": r["number"], "date": r["date"], "is_draft": r["no"] is None,
              "sign_state": r["sign_state"], "master_deal_id": r["master_deal_id"],
-             "share": round(float(r["amount"] or 0), 2), "total": round(float(r["total_amount"] or 0), 2),
+             "share": r2(r["amount"] or 0), "total": r2(r["total_amount"] or 0),
              "shared_with": list(r["others"] or [])} for r in rows]
 
 
@@ -50,8 +52,8 @@ def _kits(db: Session, deal_id: int) -> list:
             "invoice_no": k.onec_invoice_no, "invoice_date": k.onec_invoice_date,
             "upd_no_1c": k.onec_upd_no, "upd_date": k.onec_upd_date,
             "in_1c": k.onec_state == "внесён", "sign_state": k.sign_state,
-            "share_net": round(float(share.get("net") or 0), 2), "share_gross": round(float(share.get("gross") or 0), 2),
-            "total_gross": round(float(k.onec_gross if k.onec_gross is not None else k.gross or 0), 2),
+            "share_net": r2(share.get("net") or 0), "share_gross": r2(share.get("gross") or 0),
+            "total_gross": r2(k.onec_gross if k.onec_gross is not None else k.gross or 0),
             "shared_with": sorted(x.get("code") for x in k.deals if x.get("deal_id") != deal_id),
             "files": {slot: f["id"] for slot, f in files.items() if slot in ("invoice", "upd")},
         })

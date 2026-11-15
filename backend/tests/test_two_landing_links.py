@@ -95,18 +95,3 @@ def test_web_mode_puts_web_link_into_banner():
 def test_app_link_refuses_whitespace_and_intent(bad):
     with pytest.raises(ValueError):
         R.validate_app_link(bad)
-
-
-def test_split_plan_backfills_app_link_and_reports_conflicts():
-    """Перенос: app-пара с одной веб-ссылкой получает её же во второе поле (иначе после
-    выкладки откатилась бы с «есть» на «запрошена»); занятое второе поле с ДРУГОЙ ссылкой
-    — конфликт, не перезапись."""
-    from importlib import import_module
-    S = import_module("scripts.2026-10-06_split_app_links")
-    web = "https://aptekalegko.ru/x"
-    assert S.plan_row(web, None, "app") == (web, web, None)
-    assert S.plan_row(web, None, "web") is None
-    assert S.plan_row(SDK, None, "app") == ("https://maksavit.ru/", SDK, None)
-    w, a, why = S.plan_row(SDK, "storefront://other", "app")
-    assert why and "конфликт" in why
-    assert S.plan_row(web, "storefront://x", "app") is None, "уже разнесено — не трогаем"

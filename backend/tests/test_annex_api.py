@@ -632,7 +632,9 @@ def test_deals_of_one_advertiser_still_assemble(env):
     rows = env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).all()
     assert sorted(r.deal_id for r in rows) == sorted(ids)
     # Разнесённое сходится с приложением до копейки.
-    assert round(sum(r.amount for r in rows), 2) == 1000.0
+    # 15.11.2026: сверяем с суммой самого приложения, а не с переданной 1000 — с 06.09.2026
+    # главный медиаплан, и у сделок с МП сумма приложения = сумма плана (на данных прода 335 500).
+    assert round(sum(r.amount for r in rows), 2) == round(float(out["total_amount"]), 2)
     env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).delete()
     env.db.query(SalesAnnex).filter(SalesAnnex.id == out["id"]).delete()
     env.db.commit()

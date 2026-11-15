@@ -28,10 +28,17 @@
 ```bash
 ssh root@<сервер>
 cd /root/finance
-bash deploy.sh backend      # git pull + docker cp + restart
-bash deploy.sh frontend     # git pull + docker cp + пересборка Next
-bash deploy.sh full         # docker compose up -d --build
+git pull --ff-only origin main          # прод-конфиги сохранить и вернуть — см. ниже
+bash deploy.sh migrate backend/migrations/<файл>.sql   # миграции ДО кода, с записью в учёт
+bash deploy.sh release backend          # образ + снимок :prev + проверка живости + автооткат
+bash deploy.sh release frontend
+bash deploy.sh release cabinet_frontend
+bash deploy.sh rollback <сервис>        # вернуть предыдущий образ
 ```
+
+**Основной путь — `release`.** Действия `backend` / `frontend` (`docker cp` в живой контейнер) — старый запасной путь:
+отката у них нет, а скопированный код пропадает при пересоздании контейнера (аудит 13.11.2026). Проверка живости
+бэкенда с 14.11.2026 спрашивает базу: при упавшей базе `release` не объявит успех и откатит образ.
 
 ### Три вещи, о которых скрипт не знает
 

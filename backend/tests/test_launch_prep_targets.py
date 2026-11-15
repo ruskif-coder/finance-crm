@@ -46,11 +46,28 @@ def _purge(session):
 # ── разрешение услуги ────────────────────────────────────────────────────────
 def test_service_is_resolved_from_product_by_name(db):
     """Ссылки на услугу у сделки нет — есть имя, и оно совпадает у живых сделок."""
-    svc = db.query(SalesService).filter(SalesService.is_active.is_(True)).first()
-    assert svc, "в справочнике нет ни одной услуги"
-    deal = db.query(SalesDeal).filter(SalesDeal.product == svc.name).first()
-    if deal is None:
-        pytest.skip(f"нет сделки с продуктом «{svc.name}»")
+    # Сделка БЕЗ ссылки на услугу и порядок явно (14.11.2026): `.first()` без сортировки брал сделку с уже проставленной
+    # услугой, и ответ по ссылке расходился с услугой по имени — тест падал от порядка строк, а не от кода.
+    # 15.11.2026: услуга берётся не «первая в справочнике» (у неё на стенде нет ни одной сделки с таким продуктом — тест
+    # пропускался всегда), а та, чьё имя стоит в продукте живой сделки без ссылки и без медиаплана (медиаплан — более
+    # ранний источник и подменил бы проверяемый путь). Нет такой — тест строит её сам: живой сделке без МП в транзакции
+    # ставится продукт = имя услуги и снимается ссылка (откат в `_purge`). Упадёт, если `resolve_service` перестанет
+    # сверять `deal.product` со справочником по имени или вернёт услугу без названного источника.
+    from sqlalchemy import exists
+    from app.sales.models import SalesMediaPlan
+    no_mp = ~exists().where(SalesMediaPlan.deal_id == SalesDeal.id)
+    hit = (db.query(SalesDeal, SalesService)
+           .join(SalesService, SalesService.name == SalesDeal.product)
+           .filter(SalesService.is_active.is_(True), SalesDeal.service_id.is_(None), no_mp)
+           .order_by(SalesService.id, SalesDeal.id).first())
+    if hit:
+        deal, svc = hit
+    else:
+        svc = db.query(SalesService).filter(SalesService.is_active.is_(True)).order_by(SalesService.id).first()
+        deal = db.query(SalesDeal).filter(no_mp).order_by(SalesDeal.id).first()
+        assert svc and deal, "в справочнике нет услуги или на стенде нет сделки без медиаплана"
+        deal.product, deal.service_id = svc.name, None
+        db.flush()
 
     got, reason = resolve_service(db, deal)
     assert got is not None and got.id == svc.id

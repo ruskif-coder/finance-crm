@@ -620,13 +620,17 @@ def deactivate_service(service_id: int, db: Session = Depends(get_db),
 @router.delete("/services/{service_id}/hard")
 def delete_service_hard(service_id: int, db: Session = Depends(get_db),
                         current_user: User = Depends(SVC_DELETE)):
-    """Полное удаление услуги из справочника. Сделки хранят услугу строкой
-    (SalesDeal.product), не FK — их не задевает. Но услуга может быть строкой
-    микс-приложения (SalesAnnexItem.service_id, NOT NULL FK): в этом случае
-    каскад порушил бы аннекс, поэтому удаление блокируем. Зачищаем строки прайса,
-    затем удаляем услугу."""
+    """Полное удаление услуги из справочника. Удаляется только неиспользуемая: у сделок `service_id` — внешний ключ
+    (миграция 2026-09-13_deal_service; прежняя строка «сделки хранят услугу строкой» была неверна — аудит 13.11.2026), и
+    удаление упиралось в него ответом 500. Строка микс-приложения (SalesAnnexItem.service_id) — тоже блок. Прочие ссылки
+    (разметка стадий, план, агентские условия) отказывают понятным 400, а не 500. Зачищаем строки прайса, затем услугу."""
+    from sqlalchemy.exc import IntegrityError
     svc = _require(db, SalesService, service_id, "Услуга")
     name = svc.name
+    n = db.query(SalesDeal.id).filter(SalesDeal.service_id == service_id).count()
+    if n:
+        raise HTTPException(status_code=400,
+            detail=f"Услуга стоит у сделок ({n}) — удалить нельзя. Скройте её из справочника (мягкое удаление).")
     used = db.query(SalesAnnexItem.id).filter(SalesAnnexItem.service_id == service_id).first()
     if used:
         raise HTTPException(status_code=400,
@@ -634,7 +638,13 @@ def delete_service_hard(service_id: int, db: Session = Depends(get_db),
                    "Скройте её из справочника (мягкое удаление).")
     db.query(SalesPriceListItem).filter(SalesPriceListItem.service_id == service_id).delete()
     db.delete(svc)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400,
+            detail="На услугу ссылаются другие разделы (разметка стадий, план продаж, агентские условия) — удалить нельзя. "
+                   "Скройте её из справочника (мягкое удаление).")
     log_action(db, current_user, "delete_sales_service", "sales_service", service_id, name)
     return {"message": "Услуга удалена"}
 

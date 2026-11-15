@@ -11,11 +11,11 @@
 from typing import Optional
 
 from app.final_recon import flow as FLOW
-from app.sales.urgency import DealFacts, lag_alarm
+from app.sales.urgency import BOOKING_CONFIRM_DAYS, DealFacts, lag_alarm
 
 NUDGE_DAYS = 14          # МП у клиента дольше — пора напомнить (допущение эталона, 13.11.2026)
 STUCK_DAYS = 45          # дольше — завис
-BOOKING_DAYS = 15        # бронь подтверждают за 15 дней до старта (`urgency.BOOKING_CONFIRM_DAYS`)
+BOOKING_DAYS = BOOKING_CONFIRM_DAYS   # бронь подтверждают за N дней до старта — одно число со срочностью (аудит 13.11)
 ACCOUNT_LAUNCH = (FLOW.ACCOUNT, FLOW.PRIO)   # «Запустить» / «Завершить» — кнопки аккаунта (`flow.has_account_buttons`)
 ASSEMBLY_KEYS = {"creatives_accepted", "erid_issued"}   # пункты матрицы, из которых состоит сборка
 
@@ -81,7 +81,7 @@ def lagging(dl: dict) -> bool:
 
 def _recon(b) -> dict:
     r = (b.checks or {}).get("fact_collected")
-    if b.flow == "полный цикл" and r is not None and getattr(r, "state", None) == "not_yet":
+    if b.flow == FLOW.FULL and r is not None and getattr(r, "state", None) == "not_yet":
         return _t(False, "трафик")                       # факт по размещениям снимает трафик (не площадки; «неприменимо» — не ждём)
     return _t(True)                                      # подтвердить сверку, «Отправить в ДО»
 

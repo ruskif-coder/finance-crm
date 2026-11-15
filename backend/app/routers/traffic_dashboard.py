@@ -23,6 +23,7 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 import logging
+from contextlib import contextmanager
 
 from app.dsp import client as ds
 from app import timez
@@ -225,26 +226,40 @@ def _campaign_chain(db: Session, c) -> str:
     return _chain_of(c, [(p.id, p.status) for p in pls], _creatives_of(db, c.id))
 
 
-def _dsp_follow(db: Session, c) -> Optional[str]:
+def _dsp_follow(db: Session, c, snap) -> Optional[str]:
     """Кампания в DSP следует нашему ИТОГОВОМУ статусу РК (владелец 23.09.2026: «кнопка
-    управляет»). Звать ПОСЛЕ своих изменений и ДО коммита.
+    управляет»). Звать ПОСЛЕ своих изменений; `snap` — снимок `dsp_follow.take` до них.
 
     Итоговому, а не нажатому: «запущена» у нас — факт (крутит хоть одна площадка), и
     «Запустить» без запущенных площадок оставляет РК «готовой» — тогда DSP стоит.
 
-    Сбой DSP откатывает наши изменения: экран не должен говорить о кампании то, чего в
-    DSP нет. Крона нет — DSP узнаёт о плане и статусе только нажатием.
+    С 14.11.2026 (аудит 13.11): наши изменения КОММИТЯТСЯ до вызовов DSP — замок долей и транзакция не держатся на время
+    десятков HTTP. Сбой DSP по кампании откатывает их по снимку: экран не должен говорить о кампании то, чего в DSP нет.
+    Подробно — `app/ad/dsp_follow.py`. Крона нет — DSP узнаёт о плане и статусе только нажатием.
     """
+    from app.ad import dsp_follow
     from app.dsp.campaigns import apply_status
-    from app.dsp.client import MsError
 
     db.flush()
     target = effective_campaign_status(c.status, _campaign_chain(db, c))
+
+    def refused(e, skipped):
+        tail = f" Не вернули (их уже изменили после нас): {'; '.join(skipped)}." if skipped else ""
+        return HTTPException(502, f"DSP не принял смену статуса — изменения отменены: {e}.{tail}")
+
+    return dsp_follow.run(db, c, snap, lambda: apply_status(db, c, target),
+                          lock_shares=lambda: _lock_shares(db, c.id), on_refused=refused)
+
+
+@contextmanager
+def _follow_slot(campaign_id: int):
+    """Один проход в DSP на РК; занято — 409 сразу, без ожидания (аудит 13.11.2026)."""
+    from app.ad import dsp_follow
     try:
-        return apply_status(db, c, target)
-    except MsError as e:
-        db.rollback()
-        raise HTTPException(502, f"DSP не принял смену статуса — изменения не сохранены: {e}")
+        with dsp_follow.one_at_a_time(campaign_id):
+            yield
+    except dsp_follow.FollowBusy as e:
+        raise HTTPException(409, str(e))
 
 
 # Что можно поднять массовым стартом РК (владелец 01.10.2026): согласованные и ещё не
@@ -1442,73 +1457,76 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         raise HTTPException(400, f"Выбрать можно {CAMPAIGN_MANUAL + ('запущена',)}; "
                                  f"«ожидает сборки» и «готова» считаются сами")
     c, _deal = _campaign_in_scope(db, campaign_id, user)
-    _lock_shares(db, campaign_id)          # до первой записи статуса: параллельные запуски — по одному
-    # Объёмы по площадкам больше плана РК — РК не запускаем (владелец 27.09.2026).
-    if payload.status == "запущена":
-        volumes.guard(db, _deal.id)
-    # Из архива DSP назад не включается: вместо вечного «DSP не принял» — отказ сразу.
-    if (c.ms_campaign_xxhash and c.status in build.CAMPAIGN_CLOSED
-            and payload.status not in build.CAMPAIGN_CLOSED):
-        raise HTTPException(400, "Кампания в DSP в архиве и снова не запускается — "
-                                 "для продолжения нужна новая РК")
-    # ЗАПУСК И ОСТАНОВКА — ПОСЛЕ ВЫКЛАДКИ В DSP (владелец 29.09.2026): до неё кнопки
-    # меняли бы только нашу пометку, а в сети ничего бы не менялось — это вводит в
-    # заблуждение. Исключение — РК, где DSP не нужна ни одной площадке (крутят сами).
-    blocked = dsp_not_ready(db, c)
-    if blocked and payload.status in ("запущена", "пауза", "остановлена"):
-        raise HTTPException(409, blocked)
-    old, c.status = c.status, payload.status
+    from app.ad import dsp_follow
+    with _follow_slot(c.id):         # один проход в DSP на РК (аудит 13.11.2026)
+        _lock_shares(db, campaign_id)          # до первой записи статуса: параллельные запуски — по одному
+        snap = dsp_follow.take(db, c)          # до первой записи: откат при отказе DSP (аудит 13.11.2026)
+        # Объёмы по площадкам больше плана РК — РК не запускаем (владелец 27.09.2026).
+        if payload.status == "запущена":
+            volumes.guard(db, _deal.id)
+        # Из архива DSP назад не включается: вместо вечного «DSP не принял» — отказ сразу.
+        if (c.ms_campaign_xxhash and c.status in build.CAMPAIGN_CLOSED
+                and payload.status not in build.CAMPAIGN_CLOSED):
+            raise HTTPException(400, "Кампания в DSP в архиве и снова не запускается — "
+                                     "для продолжения нужна новая РК")
+        # ЗАПУСК И ОСТАНОВКА — ПОСЛЕ ВЫКЛАДКИ В DSP (владелец 29.09.2026): до неё кнопки
+        # меняли бы только нашу пометку, а в сети ничего бы не менялось — это вводит в
+        # заблуждение. Исключение — РК, где DSP не нужна ни одной площадке (крутят сами).
+        blocked = dsp_not_ready(db, c)
+        if blocked and payload.status in ("запущена", "пауза", "остановлена"):
+            raise HTTPException(409, blocked)
+        old, c.status = c.status, payload.status
 
-    raised = 0
-    started = []        # площадки, запущенные ВПЕРВЫЕ — им письмо «стартовала» (В-4)
-    if payload.status == "запущена" and payload.with_placements:
-        # Поднимаем и отключённые, и стоящие на паузе — но только те, которым ЕСТЬ ЧЕМ
-        # крутить: без согласованного креатива запуск запрещён тем же правилом, что и
-        # поштучно (`can_start_placement`). Молча обойти его здесь значило бы завести
-        # чёрный ход в обход собственной проверки.
-        creatives = _creatives_of(db, c.id)
-        from app.launch_prep import pub_rules
-        pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
-        modes = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id) for p in pls})
-        for p in pls:
-            mode = (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")
-            if (p.status in START_RAISABLE and not mass_start_skip(mode)
-                    and not start_block(db, c, p, creatives.get(p.id, []), mode)):
-                p.status = "запущен"
-                if _mark_first_start(p):
-                    started.append(p.id)
-                build.mark_target_placed(db, p)
-                raised += 1
-        if raised:
-            build.recompute_shares(db, c.id)
+        raised = 0
+        started = []        # площадки, запущенные ВПЕРВЫЕ — им письмо «стартовала» (В-4)
+        if payload.status == "запущена" and payload.with_placements:
+            # Поднимаем и отключённые, и стоящие на паузе — но только те, которым ЕСТЬ ЧЕМ
+            # крутить: без согласованного креатива запуск запрещён тем же правилом, что и
+            # поштучно (`can_start_placement`). Молча обойти его здесь значило бы завести
+            # чёрный ход в обход собственной проверки.
+            creatives = _creatives_of(db, c.id)
+            from app.launch_prep import pub_rules
+            pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
+            modes = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id) for p in pls})
+            for p in pls:
+                mode = (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")
+                if (p.status in START_RAISABLE and not mass_start_skip(mode)
+                        and not start_block(db, c, p, creatives.get(p.id, []), mode)):
+                    p.status = "запущен"
+                    if _mark_first_start(p):
+                        started.append(p.id)
+                    build.mark_target_placed(db, p)
+                    raised += 1
+            if raised:
+                build.recompute_shares(db, c.id)
 
-    stopped = _cascade_placements(db, c.id, payload.status)
-    dsp_status = _dsp_follow(db, c)
-    started = _keep_first_starts(db, started, dsp_status)
-    # РК крутит — сделка «В размещении» (владелец 01.10.2026), с требованиями стадии.
-    stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
-             if dsp_status == ds.LAUNCHED else None)
+        stopped = _cascade_placements(db, c.id, payload.status)
+        dsp_status = _dsp_follow(db, c, snap)
+        started = _keep_first_starts(db, started, dsp_status)
+        # РК крутит — сделка «В размещении» (владелец 01.10.2026), с требованиями стадии.
+        stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
+                 if dsp_status == ds.LAUNCHED else None)
 
-    db.commit()
-    if raised or stopped:
-        from app.ad import volumes_now
-        volumes_now.push_limits(db, c)     # объём перераскладан — лимиты в DSP сразу (08.10.2026)
-    targeting = (_wake_quietly(db, c.deal_id)
-                 if dsp_status == ds.LAUNCHED and old != "запущена" else None)
-    # Площадкам — только о СТАРТЕ и только один раз: письмо получает площадка, которую
-    # эта кнопка запустила ВПЕРВЫЕ (аудит 01.10.2026, В-4). «Пауза → запущен»
-    # повторяется, и письмо «кампания стартовала» на третий раз перестают читать.
-    if started:
-        _tell_publishers_started(db, c, started)
-    log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
-               f"{rk_label(db, c.id)}: {old} → {c.status}"
-               + (f"; поднято площадок {raised}" if raised else "")
-               + (f"; спущено на площадки {stopped}" if stopped else "")
-               + (f"; в DSP {dsp_status}" if dsp_status else ""))
-    return {"id": c.id, "status": c.status, "placements_raised": raised,
-            "placements_stopped": stopped, "dsp_status": dsp_status,
-            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage,
-            "targeting": targeting}
+        db.commit()
+        if raised or stopped:
+            from app.ad import volumes_now
+            volumes_now.push_limits(db, c)     # объём перераскладан — лимиты в DSP сразу (08.10.2026)
+        targeting = (_wake_quietly(db, c.deal_id)
+                     if dsp_status == ds.LAUNCHED and old != "запущена" else None)
+        # Площадкам — только о СТАРТЕ и только один раз: письмо получает площадка, которую
+        # эта кнопка запустила ВПЕРВЫЕ (аудит 01.10.2026, В-4). «Пауза → запущен»
+        # повторяется, и письмо «кампания стартовала» на третий раз перестают читать.
+        if started:
+            _tell_publishers_started(db, c, started)
+        log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
+                   f"{rk_label(db, c.id)}: {old} → {c.status}"
+                   + (f"; поднято площадок {raised}" if raised else "")
+                   + (f"; спущено на площадки {stopped}" if stopped else "")
+                   + (f"; в DSP {dsp_status}" if dsp_status else ""))
+        return {"id": c.id, "status": c.status, "placements_raised": raised,
+                "placements_stopped": stopped, "dsp_status": dsp_status,
+                "dsp_check": getattr(c, "_dsp_check", None), "stage": stage,
+                "targeting": targeting}
 
 
 # Стадия, на которую «Завершить РК» двигает сделку. Резолвим ПО ИМЕНИ, потому что
@@ -1912,64 +1930,67 @@ def set_placement_status(placement_id: int, payload: StatusIn,
         raise HTTPException(404, "Площадка в РК не найдена")
     # Область видимости — та же, что у РК: до 23.09.2026 здесь её не спрашивали вовсе.
     c, _deal = _campaign_in_scope(db, p.campaign_id, user)
-    # Параллельные «запустить площадку» шли каждый по своим неподтверждённым статусам, и доли ложились
-    # по устаревшей раскладке (LBS2QH 07.10.2026: у всех 25 %). Теперь по одному — замок ДО записи.
-    _lock_shares(db, p.campaign_id)
-    # Статус — по строке, перечитанной ПОСЛЕ замка: пока второй «Вернуть» ждал, площадку могли
-    # запустить, и проверка до замка затёрла бы «запущен» статусом цепочки (ревью 31.10.2026).
-    db.refresh(p)
-    if payload.status == PLACEMENT_RETURN and p.status != PLACEMENT_OFF:
-        raise HTTPException(400, "Вернуть в распределение можно только отключённую площадку")
-    # «Площадка запущена только при хоть одном согласованном креативе» (владелец
-    # 04.09.2026). Запрет НА СЕРВЕРЕ, а не серой кнопкой: спрятанная кнопка возвращается
-    # первым же рефакторингом, а запущенная площадка без согласованного материала — это
-    # показ несогласованного баннера.
-    if payload.status == "запущен":
-        volumes.guard(db, _deal.id)       # объёмы больше плана РК (27.09.2026)
-    # Пауза КРУТЯЩЕЙ площадки не держится никогда: остановить то, что тратит, важнее
-    # проверки (ревью 30.09.2026 — креатив вернули на переделку, а площадка крутит).
-    if payload.status == "запущен" or (payload.status == "пауза" and p.status != "запущен"):
-        why = start_block(db, c, p, _creatives_of(db, p.campaign_id).get(p.id, []))
-        if why == "нет согласованного креатива":
-            raise HTTPException(400, "Нет ни одного согласованного креатива — "
-                                     "площадку нельзя запустить")
-        if why:
-            raise HTTPException(409, DSP_NOT_UPLOADED)
-    # Возврат — по согласованию креативов, тем же правилом, что экран и синк (владелец 31.10.2026).
-    new = (best_chain_status(_as_placement_scale(x["status"])
-                             for x in _creatives_of(db, p.campaign_id).get(p.id, []))
-           if payload.status == PLACEMENT_RETURN else payload.status)
-    old, p.status = p.status, new
-    first = _mark_first_start(p)
-    build.recompute_shares(db, p.campaign_id)
-    # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту
-    # строку ставили кнопкой на карточке сделки, и карточка говорила «в размещении» о
-    # площадке, которая ждёт запуска, при несобранной РК и ненаступившем сроке
-    # (владелец 18.09.2026). Один факт — одно место записи.
-    moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
-    # Сняли, не открутив ни показа, — пара возвращается из «в размещении» (01.10.2026).
-    if old == "запущен" and p.status != "запущен":
-        build.unmark_target_placed(db, p)
-    # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
-    # последняя остановленная — «готова». DSP следует.
-    dsp_status = _dsp_follow(db, c)
-    first = bool(_keep_first_starts(db, [p.id] if first else [], dsp_status))
-    stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
-             if dsp_status == ds.LAUNCHED else None)
-    db.commit()
-    # Смена статуса перераскладывает объём между площадками: лимиты креативов в DSP — сразу, а не ночью
-    # (владелец 08.10.2026, оперативный старт). Сбой — в отчёт и в журнал, не в ошибку действия.
-    from app.ad import volumes_now
-    limits = volumes_now.push_limits(db, c)
-    # Первый запуск площадки её кнопкой — то же письмо, что с кнопки РК (В-4).
-    if first:
-        _tell_publishers_started(db, c, [p.id])
-    pub_name = publisher_name(db, p.publisher_id)
-    log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
-               f"{rk_label(db, p.campaign_id)}: площадка {pub_name} {old} → {p.status}"
-               + (f"; получателей переведено в размещение: {moved}" if moved else ""))
-    return {"id": p.id, "status": p.status, "targets_placed": moved,
-            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage, "limits": limits}
+    from app.ad import dsp_follow
+    with _follow_slot(c.id):         # один проход в DSP на РК (аудит 13.11.2026)
+        # Параллельные «запустить площадку» шли каждый по своим неподтверждённым статусам, и доли ложились
+        # по устаревшей раскладке (LBS2QH 07.10.2026: у всех 25 %). Теперь по одному — замок ДО записи.
+        _lock_shares(db, p.campaign_id)
+        snap = dsp_follow.take(db, c)          # до первой записи: откат при отказе DSP (аудит 13.11.2026)
+        # Статус — по строке, перечитанной ПОСЛЕ замка: пока второй «Вернуть» ждал, площадку могли
+        # запустить, и проверка до замка затёрла бы «запущен» статусом цепочки (ревью 31.10.2026).
+        db.refresh(p)
+        if payload.status == PLACEMENT_RETURN and p.status != PLACEMENT_OFF:
+            raise HTTPException(400, "Вернуть в распределение можно только отключённую площадку")
+        # «Площадка запущена только при хоть одном согласованном креативе» (владелец
+        # 04.09.2026). Запрет НА СЕРВЕРЕ, а не серой кнопкой: спрятанная кнопка возвращается
+        # первым же рефакторингом, а запущенная площадка без согласованного материала — это
+        # показ несогласованного баннера.
+        if payload.status == "запущен":
+            volumes.guard(db, _deal.id)       # объёмы больше плана РК (27.09.2026)
+        # Пауза КРУТЯЩЕЙ площадки не держится никогда: остановить то, что тратит, важнее
+        # проверки (ревью 30.09.2026 — креатив вернули на переделку, а площадка крутит).
+        if payload.status == "запущен" or (payload.status == "пауза" and p.status != "запущен"):
+            why = start_block(db, c, p, _creatives_of(db, p.campaign_id).get(p.id, []))
+            if why == "нет согласованного креатива":
+                raise HTTPException(400, "Нет ни одного согласованного креатива — "
+                                         "площадку нельзя запустить")
+            if why:
+                raise HTTPException(409, DSP_NOT_UPLOADED)
+        # Возврат — по согласованию креативов, тем же правилом, что экран и синк (владелец 31.10.2026).
+        new = (best_chain_status(_as_placement_scale(x["status"])
+                                 for x in _creatives_of(db, p.campaign_id).get(p.id, []))
+               if payload.status == PLACEMENT_RETURN else payload.status)
+        old, p.status = p.status, new
+        first = _mark_first_start(p)
+        build.recompute_shares(db, p.campaign_id)
+        # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту
+        # строку ставили кнопкой на карточке сделки, и карточка говорила «в размещении» о
+        # площадке, которая ждёт запуска, при несобранной РК и ненаступившем сроке
+        # (владелец 18.09.2026). Один факт — одно место записи.
+        moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
+        # Сняли, не открутив ни показа, — пара возвращается из «в размещении» (01.10.2026).
+        if old == "запущен" and p.status != "запущен":
+            build.unmark_target_placed(db, p)
+        # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
+        # последняя остановленная — «готова». DSP следует.
+        dsp_status = _dsp_follow(db, c, snap)
+        first = bool(_keep_first_starts(db, [p.id] if first else [], dsp_status))
+        stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
+                 if dsp_status == ds.LAUNCHED else None)
+        db.commit()
+        # Смена статуса перераскладывает объём между площадками: лимиты креативов в DSP — сразу, а не ночью
+        # (владелец 08.10.2026, оперативный старт). Сбой — в отчёт и в журнал, не в ошибку действия.
+        from app.ad import volumes_now
+        limits = volumes_now.push_limits(db, c)
+        # Первый запуск площадки её кнопкой — то же письмо, что с кнопки РК (В-4).
+        if first:
+            _tell_publishers_started(db, c, [p.id])
+        pub_name = publisher_name(db, p.publisher_id)
+        log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
+                   f"{rk_label(db, p.campaign_id)}: площадка {pub_name} {old} → {p.status}"
+                   + (f"; получателей переведено в размещение: {moved}" if moved else ""))
+        return {"id": p.id, "status": p.status, "targets_placed": moved,
+                "dsp_check": getattr(c, "_dsp_check", None), "stage": stage, "limits": limits}
 
 
 # ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────

@@ -127,6 +127,11 @@ def upload_image(client, data: bytes, filename: str = "teaser.jpg",
     Загрузчик отвечает 200 и text/html, а телом — JSON (как и у архива): `{"result": {"file":
     {"file_url", "resolution", …}}}` либо `{"error": …}` (замер 13.10.2026).
     """
+    from app import external_writes as EW
+    try:
+        EW.require("Загрузка картинки тизера в DSP")     # прямой POST мимо транспорта клиента (аудит 13.11.2026)
+    except RuntimeError as e:
+        raise cr.CreativeError(str(e)) from e
     check_image(data, filename)
     url = client.upload_get_url("teaser")
     if not isinstance(url, str) or not url.startswith("http"):

@@ -28,7 +28,7 @@ TrafficDashboard.jsx`, разделы 3–5; он же остаётся спец
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Iterable, List, Optional, Sequence
+from typing import Optional, Sequence
 
 from app.bidder.rules import capped_shares, floor_to_fact  # noqa: F401,E402 — реэкспорт
 
@@ -643,50 +643,6 @@ def _day_rates(need: float, fl: Flight, boost: Optional[tuple], today: date):
 
     return ((lambda d: boosted if in_window(d) else after),
             (lambda d: need * k if in_window(d) else 0.0))
-
-
-# ── недокрут по площадкам поперёк РК (виджет «Площадки-виновники») ───────────
-
-def culprits(campaign_rows: Iterable[dict], limit: int = 30) -> List[dict]:
-    """Сводка недокрута по площадке поперёк ВСЕХ переданных РК.
-
-    Виджета нет в спеке модуля — он выведен из §5: доля площадки считается в каждой РК
-    отдельно, поэтому «кто тянет вниз весь портфель» иначе видно только если раскрыть
-    каждую РК и сложить в голове.
-
-    На вход — уже посчитанные строки площадок (`distribute().rows`) с добавленным
-    `publisher_id`/`domain`. Функция ничего не считает заново: два места, считающие
-    недокрут по-своему, разошлись бы на первой же правке порогов.
-
-    `limit` здесь — потолок ОТВЕТА, а не то, что видно: виджет показывает первые десять
-    и дальше скроллит (владелец 04.09.2026). Обрезать до видимого значило бы не пускать
-    в скролл ничего, а `share` считается от суммы отданных строк — при обрезке по
-    видимому доля одиннадцатой площадки просто исчезала бы из знаменателя.
-    """
-    by_pub: dict = {}
-    for row in campaign_rows:
-        under = row.get("under")
-        if not under:
-            continue
-        key = row.get("publisher_id") or row.get("domain")
-        acc = by_pub.setdefault(key, {
-            "publisher_id": row.get("publisher_id"), "domain": row.get("domain"),
-            "code": row.get("code"), "campaigns": 0, "under": 0.0, "statuses": set(),
-        })
-        acc["campaigns"] += 1
-        acc["under"] += float(under)
-        acc["statuses"].add(row.get("status"))
-
-    out = sorted(by_pub.values(), key=lambda a: -a["under"])[:limit]
-    total = sum(a["under"] for a in out) or 1.0
-    for a in out:
-        a["under"] = round(a["under"])
-        a["share"] = round(a["under"] / total, 4)
-        # Одна площадка в разных РК бывает в разных статусах — тогда честнее сказать
-        # «частично», чем выбрать один из них и выдать за общий.
-        a["status"] = next(iter(a["statuses"])) if len(a["statuses"]) == 1 else "частично"
-        a.pop("statuses")
-    return out
 
 
 # ── статус площадки из конвейера согласования ────────────────────────────────

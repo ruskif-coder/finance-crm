@@ -37,19 +37,35 @@ def env(monkeypatch):
         db.close()
 
 
-def _deal_of(db, service):
-    from app.sales.models import SalesDeal
-    row = db.execute(text("""
+_FREE_DEAL_WITH_MP = """
         SELECT d.id FROM sales_deals d
-          JOIN sales_services s ON s.id = d.service_id AND s.name = :s
+          JOIN sales_services s ON s.id = d.service_id {service_cond}
           JOIN sales_media_plans mp ON mp.deal_id = d.id AND mp.status <> 'rejected'
           JOIN sales_media_plan_rows r ON r.plan_id = mp.id AND r.unit_price > 0 AND r.volume > 0
          WHERE NOT EXISTS (SELECT 1 FROM master_deal_items i WHERE i.deal_id = d.id)
            AND NOT EXISTS (SELECT 1 FROM final_recon_deals f WHERE f.deal_id = d.id AND f.sent_at IS NOT NULL)
-         GROUP BY d.id ORDER BY d.period_from DESC NULLS LAST, d.id DESC LIMIT 1"""), {"s": service}).first()
-    if not row:
-        pytest.skip(f"на стенде нет сделки «{service}» с медиапланом")
-    return db.get(SalesDeal, row[0])
+           AND d.period_from IS NOT NULL
+         GROUP BY d.id ORDER BY d.period_from DESC NULLS LAST, d.id DESC LIMIT 1"""
+
+
+def _deal_of(db, service):
+    """Свободная сделка услуги с медиапланом. 15.11.2026: если у услуги такой сделки на стенде нет (у «eFMCG» все десять
+    уже в мастер-сделках или без МП), тест строит её сам — берёт свободную сделку другой услуги и переводит её на
+    нужную услугу внутри транзакции фикстуры (откат). Путь до ДС решается услугой (`FLOW.is_account` по её воронке),
+    так что сделка с подставленной услугой проходит ровно путь этой услуги. Тест упадёт, если путь «сверка → ДС» для
+    услуги сломается: сверка не подтвердится, раскладка пуста, конструктор ничего не создаст или сумма ДС ≠ к закрытию."""
+    from app.sales.models import SalesDeal, SalesService
+    row = db.execute(text(_FREE_DEAL_WITH_MP.format(service_cond="AND s.name = :s")), {"s": service}).first()
+    if row:
+        return db.get(SalesDeal, row[0])
+    svc = db.query(SalesService).filter(SalesService.name == service).first()
+    row = db.execute(text(_FREE_DEAL_WITH_MP.format(service_cond=""))).first()
+    if svc is None or row is None:
+        pytest.skip(f"на стенде нет услуги «{service}» или свободной сделки с медиапланом")
+    d = db.get(SalesDeal, row[0])
+    d.service_id = svc.id
+    db.flush()
+    return d
 
 
 def _contract_with_template(db):

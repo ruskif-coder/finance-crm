@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.final_recon import flow as FLOW
+from app.final_recon.money import r2
 from app.sales import account_turn as AT
 from app.sales import stage_slots as SS
 
@@ -25,7 +26,7 @@ SLOT_STEP = {"booking": 0, "prep": 1, "live": 2, "recon": 3}
 
 
 def _r(v) -> Optional[float]:
-    return None if v is None else round(float(v), 2)
+    return None if v is None else r2(v)
 
 
 def assembly(sets: int, checked: int, pairs_ok: int, pairs: int, erid_sets: int, rk_ready: bool) -> list:

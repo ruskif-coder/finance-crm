@@ -85,10 +85,43 @@ def test_entered_fact_drives_the_block(db):
 def test_partial_entry_is_not_a_fact(db):
     d = _deal_without_rk(db)
     rows = CL.compute(db, d)["fact_entry"]["rows"]
+    # 15.11.2026: вторую базовую строку тест строит сам — у первой подходящей сделки стенда строка одна, и тест
+    # пропускался всегда. Копия первой строки МП добавляется в тот же план внутри транзакции фикстуры (откат).
+    # Упадёт, если `compute` начнёт считать факт сделки по ЛЮБОЙ введённой строке, а не по всем строкам МП.
     if len(rows) < 2:
-        pytest.skip("у сделки одна базовая строка")
+        from app.sales.models import SalesMediaPlanRow
+        src = db.get(SalesMediaPlanRow, rows[0]["row_id"])
+        db.add(SalesMediaPlanRow(plan_id=src.plan_id, sort_order=(src.sort_order or 0) + 1, position=src.position,
+                                 format=src.format, model=src.model, inventory=src.inventory, volume=src.volume,
+                                 unit_price=src.unit_price, discount=src.discount))
+        db.flush()
+        rows = CL.compute(db, d)["fact_entry"]["rows"]
+    assert len(rows) >= 2, "вторая базовая строка не попала в ввод факта"
     CL.save_fact(db, d, {rows[0]["row_id"]: 100}, None, _U())
     assert CL.compute(db, d)["fact_shows"] is None, "факт не по всем строкам — это не факт сделки"
+
+
+def test_fact_entered_in_two_saves_sums_without_500(db):
+    """Факт по строкам в два приёма: первая строка уже в базе (Numeric → Decimal), вторая только что введена (float).
+
+    До 15.11.2026 итог `total` складывал Decimal с float и падал TypeError — аккаунт получал 500 на сделке контура с двумя и
+    более базовыми строками. Сломать: убрать приведение к float в сумме `total` (`closing.py`, `_fact_entry`)."""
+    d = _deal_without_rk(db)
+    rows = CL.compute(db, d)["fact_entry"]["rows"]
+    if len(rows) < 2:                                   # вторую строку строим сами, как в test_partial_entry_is_not_a_fact
+        from app.sales.models import SalesMediaPlanRow
+        src = db.get(SalesMediaPlanRow, rows[0]["row_id"])
+        db.add(SalesMediaPlanRow(plan_id=src.plan_id, sort_order=(src.sort_order or 0) + 1, position=src.position,
+                                 format=src.format, model=src.model, inventory=src.inventory, volume=src.volume,
+                                 unit_price=src.unit_price, discount=src.discount))
+        db.flush()
+        rows = CL.compute(db, d)["fact_entry"]["rows"]
+    CL.save_fact(db, d, {rows[0]["row_id"]: 100}, None, _U())
+    db.flush()
+    db.expire_all()                                      # первая строка читается из базы — Decimal
+    CL.save_fact(db, d, {r["row_id"]: 50.5 for r in rows[1:]}, None, _U())
+    fe = CL.compute(db, d)["fact_entry"]
+    assert fe["complete"] and fe["total"] == pytest.approx(100 + 50.5 * (len(rows) - 1))
 
 
 @pytest.mark.parametrize("bad", [{-1: 10}, "neg"])

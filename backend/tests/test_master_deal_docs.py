@@ -66,12 +66,29 @@ def test_deal_outside_master_gets_empty_kits_and_no_master(env):
 def test_two_ds_of_one_deal_are_both_listed(env):
     """Случай 2: допы отдельным ДС — у сделки два ДС и минимум два комплекта."""
     db, deals, u = env
-    m = _package(db, deals[:1], u, {"addons_separate": True, "bonus_addons": "zero"})
+    # 15.11.2026: платный доп тест строит сам. Раньше он брал первую сделку набора, а у неё на стенде платных допов нет —
+    # второго ДС не было, и тест пропускался всегда. Теперь берётся сделка набора с платным допом, а нет такой — в
+    # последний неотклонённый МП первой сделки добавляется доп «[тест] …» с суммой (в транзакции фикстуры, откат).
+    # Упадёт, если `deal_docs.for_deal` снова отдаст сделке только первый ДС или потеряет комплект ДС допов.
+    from sqlalchemy import text
+    from app.sales.models import SalesMediaPlanExtra
+    paid_sql = text("""
+        SELECT mp.id, EXISTS (SELECT 1 FROM sales_media_plan_extras e WHERE e.plan_id = mp.id AND e.total > 0
+                                 AND lower(btrim(coalesce(e.mode, ''))) <> 'бонус')
+          FROM sales_media_plans mp WHERE mp.deal_id = :d AND mp.status <> 'rejected'
+         ORDER BY mp.version DESC, mp.id DESC LIMIT 1""")
+    plans = {d.id: db.execute(paid_sql, {"d": d.id}).first() for d in deals}
+    deal = next((d for d in deals if plans[d.id] and plans[d.id][1]), None)
+    if deal is None:
+        deal = deals[0]
+        db.add(SalesMediaPlanExtra(plan_id=plans[deal.id][0], sort_order=99, name="[тест] Комплект рекламных материалов",
+                                   period="разово", mode="Полная цена", price=30000.0, total=30000.0))
+        db.flush()
+    m = _package(db, [deal], u, {"addons_separate": True, "bonus_addons": "zero"})
     lay = LY.layout(db, m)
-    if len(lay["ds"]) < 2:
-        pytest.skip("у сделки стенда нет платных допов — второго ДС не будет")
+    assert len(lay["ds"]) >= 2, "платный доп при «допы отдельным ДС» не дал второго ДС"
     TA.create(db, m, u)
-    got = DD.for_deal(db, deals[0])
+    got = DD.for_deal(db, deal)
     assert len(got["ds"]) >= 2 and len(got["kits"]) >= 2
     assert all(not k["shared_with"] for k in got["kits"]), "сделка одна — комплекты не общие"
 

@@ -7,53 +7,76 @@
 - правка МП после «Создать ДС» не доходит до ДС (снимок строк заморожен навсегда);
 - обновление стирает правку текста, сделанную в конструкторе;
 - обновляется подтверждённый ДС — документ с номером меняется задним числом.
-Живой пакет стенда M-0018 (XKKTAZ, ДС-черновик), транзакция откатывается."""
+Пакет стенда «согласование» с черновым ДС, который уже в ногу со сделками; транзакция откатывается.
+До 15.11.2026 тест брал живой M-0018 и всегда пропускался: на копии прода у M-0018 ДС уже подтверждён."""
 import copy
 
 import pytest
 
 import app.model_registry  # noqa: F401
 
+FAKE_DATE = "2020-01-01"            # дата «до правки МП» — заведомо не та, что в раскладке
+
+
+def _fmt(iso):
+    return f"{iso[8:10]}.{iso[5:7]}.{iso[:4]}"
+
 
 @pytest.fixture
 def pkg():
+    from sqlalchemy import text
     from app.database import SessionLocal
+    from app.master_deal import sync_rows as SR
     from app.master_deal.models import MasterDeal
     from app.sales.models import SalesAnnex
     db = SessionLocal()
-    m = db.query(MasterDeal).filter_by(code="M-0018").first()
-    a = db.query(SalesAnnex).filter_by(master_deal_id=m.id).first() if m else None
-    if m is None or a is None or a.no is not None or not a.rows:
+    ids = [i for (i,) in db.execute(text("""
+        SELECT DISTINCT m.id FROM master_deals m JOIN sales_annexes a ON a.master_deal_id = m.id
+         WHERE m.status = 'согласование' AND a.no IS NULL ORDER BY m.id"""))]
+    found = None
+    for mid in ids:
+        m = db.get(MasterDeal, mid)
+        if SR.sync(db, m) != []:                     # черновик отстал от сделок — исходное состояние не чистое
+            db.rollback()
+            continue
+        for a in db.query(SalesAnnex).filter_by(master_deal_id=m.id, no=None).order_by(SalesAnnex.id):
+            row = next((i for i, r in enumerate(a.rows or []) if r.get("date_from")), None)
+            if row is not None:
+                found = (m, a, row)
+                break
+        if found:
+            break
+    if not found:
         db.close()
-        pytest.skip("нужен M-0018 с черновым ДС")
+        pytest.skip("на стенде нет пакета «согласование» с черновым ДС в ногу со сделками")
+    m, a, i = found
     rows = copy.deepcopy(a.rows)
-    for r in rows:
-        if r.get("date_from"):
-            r["date_from"] = "2026-10-01"                  # как в снимке 04.11 — до правки МП
+    orig = str(rows[i]["date_from"])[:10]
+    rows[i]["date_from"] = FAKE_DATE                 # как будто МП поправили после «Создать ДС»
     a.rows = rows
     db.flush()
     try:
-        yield db, m, a
+        yield db, m, a, orig
     finally:
         db.rollback()
         db.close()
 
 
 def test_draft_ds_takes_new_dates_and_keeps_text_edits(pkg):
-    db, m, a = pkg
+    db, m, a, orig = pkg
     from app.master_deal import sync_rows as SR
     edits = copy.deepcopy(a.blocks)
     changes = SR.sync(db, m)
-    assert any("01.10.2026 → 02.10.2026" in c for c in changes), changes
-    assert any(r.get("date_from") == "2026-10-02" for r in a.rows), "дата строки — из МП"
+    assert any(f"{_fmt(FAKE_DATE)} → {_fmt(orig)}" in c for c in changes), changes
+    assert not any(str(r.get("date_from"))[:10] == FAKE_DATE for r in a.rows), "дата строки — из МП"
     assert a.blocks == edits, "правки текста в конструкторе не трогаем"
     assert SR.sync(db, m) == [], "второй раз менять нечего"
 
 
 def test_confirmed_ds_is_not_touched(pkg):
-    db, m, a = pkg
+    db, m, a, _orig = pkg
     from app.master_deal import sync_rows as SR
     a.no = 92
     db.flush()
     assert SR.sync(db, m) == []
-    assert all(r.get("date_from") in (None, "2026-10-01") for r in a.rows)
+    assert any(str(r.get("date_from"))[:10] == FAKE_DATE for r in a.rows), "подтверждённый ДС не меняется задним числом"

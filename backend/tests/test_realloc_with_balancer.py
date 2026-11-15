@@ -13,25 +13,32 @@ from app.database import SessionLocal
 
 @pytest.fixture
 def rk():
+    # 15.11.2026: на копии прода у всех живых РК уже стоят ручные планы «Перераспределить» (у первой по id — у всех
+    # 18 площадок, сумма планов больше плана РК), и тесты падали на чужих ручных планах, а не на правилах. Теперь:
+    # РК — с наименьшим числом ручных планов, ручные планы снимаются и раскладка пересчитывается по весам внутри
+    # транзакции. Всё, включая commit кода (`db.commit = db.flush`), откатывается — стенд не пишется и не
+    # восстанавливается задним числом, как раньше.
     db = SessionLocal()
     cid = db.execute(text("""
         SELECT c.id FROM ad_campaign c JOIN ad_campaign_placement p ON p.campaign_id = c.id
          WHERE c.status NOT IN ('окончена', 'архив') AND c.plan_show > 0 AND c.date_start IS NOT NULL
          GROUP BY c.id HAVING count(*) FILTER (WHERE p.status = 'запущен' AND p.weight > 0) >= 3
-         ORDER BY c.id LIMIT 1""")).scalar()
+         ORDER BY count(p.fixed_plan), c.id LIMIT 1""")).scalar()
     if cid is None:
         db.close()
         pytest.skip("на стенде нет РК с тремя запущенными площадками")
-    saved = {p.id: (p.plan_show, p.share, p.fixed_plan, p.status)
-             for p in db.query(AdCampaignPlacement).filter(AdCampaignPlacement.campaign_id == cid)}
-    run_from = db.execute(text("SELECT coalesce(max(id), 0) FROM bidder_run")).scalar()
-    yield db, db.get(AdCampaign, cid)
-    db.rollback()
-    for p in db.query(AdCampaignPlacement).filter(AdCampaignPlacement.campaign_id == cid):
-        p.plan_show, p.share, p.fixed_plan, p.status = saved[p.id]
-    db.execute(text("DELETE FROM bidder_run WHERE id > :r"), {"r": run_from})
-    db.commit()
-    db.close()
+    real_commit = db.commit
+    db.commit = db.flush
+    db.execute(text("UPDATE ad_campaign_placement SET fixed_plan = NULL WHERE campaign_id = :c"), {"c": cid})
+    db.expire_all()
+    build.recompute_shares(db, cid)
+    db.flush()
+    try:
+        yield db, db.get(AdCampaign, cid)
+    finally:
+        db.commit = real_commit
+        db.rollback()
+        db.close()
 
 
 def _pls(db, cid):
@@ -98,7 +105,6 @@ def test_routes_preview_refuse_and_apply(rk, monkeypatch):
     from types import SimpleNamespace
     from fastapi import HTTPException
     from app.ad import boost_apply
-    from app.models import AuditLog
     from app.routers import traffic_dashboard as td
     monkeypatch.setattr(boost_apply, "_sync", lambda db, camp, client: {"updated": 0, "failed": [], "zero": []})
     db, camp = rk
@@ -120,11 +126,7 @@ def test_routes_preview_refuse_and_apply(rk, monkeypatch):
         out = td.realloc_reset(camp.id, db, admin)
         assert out["view"]["has_manual"] is False
     finally:
-        db.rollback()
-        db.query(AuditLog).filter(AuditLog.action.in_(("traffic_realloc", "traffic_realloc_reset")),
-                                  AuditLog.details.like("%")).filter(AuditLog.user_id.is_(None)).delete(
-            synchronize_session=False)
-        db.commit()
+        db.rollback()                                    # журнал действий — в той же транзакции, откатывается с ней
 
 
 def test_realloc_is_refused_while_boost_is_live(rk, monkeypatch):

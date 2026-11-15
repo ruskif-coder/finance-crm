@@ -663,6 +663,20 @@ from app.routers import agency_terms as agency_terms_router  # noqa: E402 — «
 app.include_router(agency_terms_router.router, prefix="/api/agency-terms", tags=["agency-terms"])
 app.include_router(cabinet_gateway_recon.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
 
+def _db_ping() -> None:
+    from sqlalchemy import text as _t
+    with engine.connect() as c:
+        c.execute(_t("SELECT 1"))
+
+
 @app.get("/")
 def root():
+    """Живость для healthcheck контейнера и `deploy.sh release`: с запросом к базе (аудит 13.11.2026). Статический ответ
+    считал бэкенд здоровым при упавшей базе — выкладка объявляла успех и не откатывалась."""
+    from fastapi.responses import JSONResponse
+    try:
+        _db_ping()
+    except Exception:  # noqa: BLE001 — любая причина = «не здоров»; подробности в логе
+        logger.warning("healthcheck: база не отвечает", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "db_down"})
     return {"status": "ok", "message": "Finance API running"}

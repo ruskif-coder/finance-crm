@@ -18,7 +18,7 @@
 баннеров.
 """
 from datetime import date, datetime
-from typing import Iterable, Optional
+from typing import Optional
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -33,16 +33,6 @@ ORD_REPORT_STAGE = SS.ORD
 SCREENSHOT_DAYS = 30      # файлы пары
 SANDBOX_DAYS = 60         # распакованное в песочнице
 ARCHIVE_DAYS = 730        # исходные архивы креативов — два года (владелец)
-
-
-def last_exit(rows: Iterable) -> Optional[datetime]:
-    """Чистое ядро: последний выход из стадии по строкам истории.
-
-    `rows` — пары (from_stage_id, at) в любом порядке. Пусто → None, и это НЕ «давно»,
-    а «не выходила»: см. `is_expired`.
-    """
-    moments = [at for _from, at in rows if at is not None]
-    return max(moments) if moments else None
 
 
 def closed_at(db: Session, deal_id: int) -> Optional[datetime]:

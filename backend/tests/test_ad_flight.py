@@ -12,7 +12,7 @@ from datetime import date
 
 from app.ad.flight import (PLACEMENT_IN_PLAN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
                            PLACEMENT_STATUSES,
-                           culprits, daily_buckets, distribute, flight_of, forecast_of,
+                           daily_buckets, distribute, flight_of, forecast_of,
                            need_per_day, progress, under_of)
 
 SEP = date(2026, 9, 1)
@@ -233,24 +233,6 @@ def test_facts_land_in_their_own_bucket():
     out = daily_buckets(3_000_000, 200_000, fl, facts, grain='week', today=TODAY)
     assert out['buckets'][0]['shows'] == 200_000
     assert out['buckets'][0]['clicks'] == 1_000
-
-
-# ── площадки-виновники ───────────────────────────────────────────────────────
-
-def test_culprits_sum_undershoot_across_campaigns():
-    """Недокрут одной площадки складывается по всем РК, статус — «частично» при разнобое."""
-    rows = [
-        {'publisher_id': 1, 'domain': 'dialog.ru', 'status': 'запущен', 'under': 500_000},
-        {'publisher_id': 1, 'domain': 'dialog.ru', 'status': 'пауза', 'under': 300_000},
-        {'publisher_id': 2, 'domain': 'aptekabv.ru', 'status': 'запущен', 'under': 200_000},
-        {'publisher_id': 3, 'domain': 'zdes.ru', 'status': 'запущен', 'under': None},
-    ]
-    out = culprits(rows)
-    assert [c['domain'] for c in out] == ['dialog.ru', 'aptekabv.ru'], 'нулевые не попадают'
-    assert out[0]['under'] == 800_000 and out[0]['campaigns'] == 2
-    assert out[0]['status'] == 'частично', 'разные статусы в разных РК — не выбираем один'
-    assert out[1]['status'] == 'запущен'
-    assert round(sum(c['share'] for c in out), 4) == 1.0
 
 
 # ── словарь статусов ─────────────────────────────────────────────────────────

@@ -20,7 +20,8 @@ def op_order_key(o):
     Раньше `o.date or o.id` сравнивал дату с числом и ронял баланс 500-й (07.10.2026)."""
     return (o.date is None, o.date or date.min, o.id)
 
-BANKS_ORDER = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
+from app.banks import BANKS as _BANKS
+BANKS_ORDER = list(_BANKS)
 
 QUARTER_MONTHS = {
     'Q1': ['01', '02', '03'],

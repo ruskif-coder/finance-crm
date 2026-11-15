@@ -94,7 +94,11 @@ def test_deal_without_media_plan_still_gets_campaign_with_empty_plan():
               AND NOT EXISTS (SELECT 1 FROM sales_media_plans mp WHERE mp.deal_id = c.deal_id)
               -- контур аккаунта (14.10.2026): прогон таким РК не заводит; заведённые раньше в подсчёт не идут
               AND p.closing_flow IS DISTINCT FROM 'контур аккаунта'
-        """)).scalar()
+              -- 15.11.2026: считаем только сделки, которые прогон и обходит (стадии сборки и дальше).
+              -- РК сорвавшейся сделки (ZJRAU3, «Сделка не случилась») остаётся с пустым планом,
+              -- но прогон её не видит — сравнивать её с no_media_plan было ошибкой теста.
+              AND d.our_stage_id = ANY(:st)
+        """), {"st": build.assembly_stage_ids(db)}).scalar()
         assert empty == res["no_media_plan"], "сделки без МП должны быть РК с пустым планом"
     finally:
         db.rollback()

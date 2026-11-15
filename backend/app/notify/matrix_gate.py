@@ -7,6 +7,7 @@
 парам. Включили креативы для услуги в матрице — события снова идут, правка кода не нужна.
 
 Проверка стоит в двух местах одного потока: в `bus.emit` (события по действию) и в сканере до записи состояния (по расписанию)."""
+from types import SimpleNamespace
 from typing import Optional
 
 CREATIVE_EVENTS = {"creative_set_sent", "creative_verdict", "traffic_rework", "creative_silence", "traffic_silence",
@@ -27,6 +28,19 @@ def allowed(db, event_key: str, ctx: Optional[dict]) -> bool:
     if deal is None or db is None:
         return True
     from app.final_recon import flow
-    from app.sales.models import SalesStageCheck
     from app.sales.stage_checks import applicable_keys
-    return allowed_for(event_key, flow.of_deal(db, deal), applicable_keys(db.query(SalesStageCheck).all(), deal))
+    return allowed_for(event_key, flow.of_deal(db, deal), applicable_keys(_matrix(db), deal))
+
+
+_KEY = "notify.matrix_gate.rows"
+
+
+def _matrix(db):
+    """Матрица требований — ОДИН раз на сессию (аудит 13.11.2026: читалась на каждое событие и каждую сработку сканера).
+    Сессия живёт запрос или прогон крона; правка матрицы идёт своей сессией и видна со следующего запроса."""
+    rows = db.info.get(_KEY)
+    if rows is None:
+        from app.sales.models import SalesStageCheck
+        rows = db.info[_KEY] = [SimpleNamespace(check_key=r.check_key, applies_when=r.applies_when)
+                                for r in db.query(SalesStageCheck).all()]
+    return rows

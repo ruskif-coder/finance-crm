@@ -17,7 +17,10 @@ from app.master_deal.models import MasterDeal
 @pytest.fixture
 def packages():
     db = SessionLocal()
-    ms = db.query(MasterDeal).order_by(MasterDeal.id).all()
+    # Пакет в стартовой фазе (ДС на старте, «ждём закрытия») раскладывается по медиаплану: сверки ещё нет, сделка в работе
+    # (`master_deal.start`). Сравнивать его со сверкой — ошибка теста, а не раскладки (M-0002 на копии прода, 15.11.2026).
+    from app.master_deal.start import in_start_phase
+    ms = [m for m in db.query(MasterDeal).order_by(MasterDeal.id).all() if not in_start_phase(db, m)]
     if not ms:
         db.close()
         pytest.skip("на стенде нет мастер-сделок")

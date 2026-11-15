@@ -19,14 +19,6 @@ from app.models import Counterparty
 from app.routers import counterparties as CP
 
 
-@pytest.mark.parametrize("name,form", [
-    ("ООО «Ромашка»", "ООО"), ("РОМАШКА ООО", "ООО"), ("ПАО Сбербанк", "ПАО"), ("АО «Фарма»", "АО"),
-    ("ИП Иванов И.И.", "ИП"), ("Иванов Иван", None), ("ООО-шка Медиа", None), ("", None), (None, None),
-])
-def test_guess_from_name(name, form):
-    assert LF.guess(name) == form
-
-
 @pytest.mark.parametrize("form,code", [
     ("ООО", "JuridicalPerson"), ("АО", "JuridicalPerson"), ("ПАО", "JuridicalPerson"), ("ИП", "IndividualEntrepreneur"),
     ("самозанятый", "PhysicalPerson"), ("физлицо", "PhysicalPerson"),

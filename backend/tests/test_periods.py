@@ -68,10 +68,6 @@ def test_quarter_parts_keep_the_old_shape_for_the_report_code():
     assert periods.quarter_parts("2025-07") is None
 
 
-def test_iso_form_for_exports():
-    assert periods.iso_quarter(2025, 1) == "2025-Q1"
-
-
 # ── запись приводится к одному виду на уровне модели ─────────────────────────
 
 @pytest.mark.parametrize("raw,want", [("2025-Q1", "Q1 2025"), ("1 квартал 2026", "Q1 2026"),

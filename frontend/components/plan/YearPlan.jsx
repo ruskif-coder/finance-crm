@@ -11,6 +11,7 @@
  * undefined читается как «не провалена», поэтому доливка данных не нужна.
  * заполняется по кнопке «Обновить данные о сделках» (проп onMatch).
  */
+import BookingDiverged from '@/components/plan/BookingDiverged'
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { markDirty, markClean } from '@/lib/unsaved';
 import { PortalPopover, Z } from '../salesTableKit';
@@ -196,7 +197,7 @@ export default function YearPlan({
   onSave, onMatch, saving = false, matching = false, savedAt = '', readOnly = false,
   reps = [], repValue = null, onRep = () => {}, ownRepId = null, isMaster = false,
   mode = 'edit', allData = [], onVerifyPassword, onAddTargeting,
-  onConveyorPreview, onConveyorApply, onExport, exporting = false, vatPct = null,
+  onConveyorPreview, onConveyorApply, onConveyorRewrite, onExport, exporting = false, vatPct = null,
 }) {
   const [groups, setGroups] = useState(initial);
   const [pendingDel, setPendingDel] = useState(null);   // { kind:'group'|'brand', gid, bid, label }
@@ -420,15 +421,16 @@ export default function YearPlan({
             {conv.done && (
               <>
                 <span style={{ fontSize: 13.5, color: T.t2, lineHeight: 1.5 }}>
-                  Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}{conv.done.in_work?.length ? <>, в работе пропущено <b style={{ color: T.warning }}>{conv.done.in_work.length}</b></> : null}.
+                  Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}{conv.done.in_work?.length ? <>, в работе пропущено <b style={{ color: T.warning }}>{conv.done.in_work.length}</b></> : null}{conv.done.booking?.length ? <>, бронь с изменённым планом — <b style={{ color: T.warning }}>{conv.done.booking.length}</b></> : null}.
                 </span>
+                {!!conv.done.booking?.length && <BookingDiverged items={conv.done.booking} onRewrite={onConveyorRewrite} />}
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <span onClick={() => setConv(null)} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
                 </div>
               </>
             )}
             {conv.preview && !conv.done && !conv.error && (() => {
-              const { new: neu = [], changed = [], unchanged = 0, blocked = [], locked: frozen = [], in_work: inWork = [] } = conv.preview;
+              const { new: neu = [], changed = [], unchanged = 0, blocked = [], locked: frozen = [], in_work: inWork = [], booking = [] } = conv.preview;
               const nothing = neu.length === 0 && changed.length === 0;
               return (
                 <>
@@ -440,7 +442,9 @@ export default function YearPlan({
                     {blocked.length > 0 && <span>без брифа: <b style={{ color: T.danger }}>{blocked.length}</b></span>}
                     {frozen.length > 0 && <span>заморожено замком: <b style={{ color: T.accent }}>{frozen.length}</b></span>}
                     {inWork.length > 0 && <span>в работе: <b style={{ color: T.warning }}>{inWork.length}</b></span>}
+                    {booking.length > 0 && <span>бронь, план изменился: <b style={{ color: T.warning }}>{booking.length}</b></span>}
                   </div>
+                  {booking.length > 0 && <BookingDiverged items={booking} onRewrite={onConveyorRewrite} />}
                   {/* Дошедшая сделка — безусловный мастер: план ей больше не хозяин.
                       Список именной: «есть сделки в работе» без имён не подсказывает,
                       какие ячейки останутся прежними и почему. */}

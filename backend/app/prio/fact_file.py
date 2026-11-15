@@ -72,6 +72,13 @@ def apply(db: Session, deal, data: bytes, user) -> dict:
         a["uniques"].append(r["uniques"])
     if not agg:
         raise PrioError(400, f"В файле нет строк этой сделки: название кампании — «{deal.code}-КОДПЛОЩАДКИ»")
+    rk_cache: dict = {}
+
+    def rk_of(pub):                                  # одна площадка РК на издателя — один запрос, а не на каждый день (аудит 13.11)
+        if pub not in rk_cache:
+            rk_cache[pub] = _rk_placement(db, camp, pub)
+        return rk_cache[pub]
+
     for (pid, day), a in agg.items():
         u = a["uniques"]
         uniques = u[0] if len(u) == 1 else None          # уники двух строк одного дня не складываются (правило импорта Adfox)
@@ -80,7 +87,7 @@ def apply(db: Session, deal, data: bytes, user) -> dict:
             VALUES (:c, :p, :d, :s, :k, :u, :src, now())
             ON CONFLICT ON CONSTRAINT uq_ad_stat DO UPDATE
                SET shows = EXCLUDED.shows, clicks = EXCLUDED.clicks, uniques = EXCLUDED.uniques, imported_at = now()"""),
-            {"c": camp, "p": _rk_placement(db, camp, a["pub"]), "d": day, "s": a["shows"], "k": a["clicks"], "u": uniques,
+            {"c": camp, "p": rk_of(a["pub"]), "d": day, "s": a["shows"], "k": a["clicks"], "u": uniques,
              "src": SOURCE})
     names = []
     for pid in hit:

@@ -17,6 +17,13 @@ def allowed() -> bool:
     return (os.getenv("EXTERNAL_WRITES") or "on").strip().lower() not in OFF
 
 
+def require(what: str) -> None:
+    """Отказать до любого HTTP, если запись наружу выключена. Для прямых `httpx.post` мимо транспорта клиента — загрузка
+    файлов в хранилище DSP, генератор ссылок нацеливания (аудит 13.11.2026: они обходили выключатель)."""
+    if not allowed():
+        raise RuntimeError(f"{what}: {REFUSAL}")
+
+
 def dsp_is_read(method: str) -> bool:
     """Методы DSP вида «Сущность.действие»: чтение — `get…` (getInfo, getPeriod, getUploadFileUrl)."""
     return method.split(".", 1)[-1].startswith("get")

@@ -103,7 +103,6 @@ def test_unknown_scope_key_does_not_widen():
     """
     d = _Deal(service_id=7)
     assert sc.scope_matches({"servise": 7}, d) is False
-    assert sc.unknown_scope_keys({"servise": 7, "service_id": 7}) == ["servise"]
 
 
 def test_self_promo_lifts_only_the_initial_contract():
@@ -188,7 +187,6 @@ def test_broken_scope_does_not_crash_the_whole_list():
     for bad in ("строка", [1, 2], 42):
         assert sc.valid_scope(bad) is False
         assert sc.scope_matches(bad, _Deal()) is False
-        assert sc.unknown_scope_keys(bad)
 
     class _Row:
         check_key, applies_when, is_blocking, hint = "payer_set", "мусор", True, None
@@ -259,13 +257,23 @@ def test_demo_only_fact_is_unknown_not_done(db):
     дашборд стенда был бы пустым. Без разделения проверка «факт собран» была бы зелёной
     здесь и пустой на проде, то есть соврала бы ровно там, где её принимают.
     """
+    # 15.11.2026: демо-факт тест строит сам. На стенде нет РК с демо-строками (а прежний запрос брал бы и РК, где рядом
+    # с демо лежит боевой факт, — там «неизвестно» и не должно быть), и тест пропускался всегда. Теперь: живая РК с
+    # размещениями и без единой строки нашего счётчика; каждому размещению в транзакции пишется демо-строка (откат в
+    # фикстуре). Упадёт, если `fact_collected` начнёт считать демо боевым фактом (вернёт «выполнено») или потеряет
+    # слово «демо» в объяснении.
+    from app.ad.stat_sources import OWN
     row = db.execute(text("""
-        SELECT c.deal_id FROM ad_campaign c
-         WHERE EXISTS (SELECT 1 FROM ad_campaign_stat s
-                        WHERE s.campaign_id = c.id AND s.source = 'demo')
-         LIMIT 1""")).first()
+        SELECT c.deal_id, c.id FROM ad_campaign c
+         WHERE EXISTS (SELECT 1 FROM ad_campaign_placement pl WHERE pl.campaign_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM ad_campaign_stat s WHERE s.campaign_id = c.id AND s.source = ANY(:src))
+         ORDER BY c.id LIMIT 1"""), {"src": list(OWN)}).first()
     if not row:
-        pytest.skip("на стенде нет РК с демо-фактом")
+        pytest.skip("на стенде нет РК с размещениями без факта нашего счётчика")
+    db.execute(text("""
+        INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks, source)
+        SELECT pl.campaign_id, pl.id, DATE '2026-11-15', 1000, 0, 'demo'
+          FROM ad_campaign_placement pl WHERE pl.campaign_id = :c"""), {"c": row[1]})
     from app.sales.models import SalesDeal
     deal = db.query(SalesDeal).filter(SalesDeal.id == row[0]).first()
     r = sc.REGISTRY["fact_collected"].fn(sc.Ctx(db, deal))

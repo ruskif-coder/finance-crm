@@ -116,6 +116,12 @@ def _count_queries(db, fn):
 
 
 def test_query_count_does_not_grow_with_deals(db):
+    """Запросов не больше «пачка + по одному поиску доходного договора на плательщика без выбранного договора».
+
+    15.11.2026: поиск доходного договора (`resolve_final`) зависит только от плательщика и считается один раз на плательщика
+    (памятка сборки), подписанты — одним запросом на всех. Переписать поиск пачкой значило бы завести вторую копию правила
+    выбора договора, поэтому его доля растёт с числом РАЗНЫХ плательщиков (их десятки), но не с числом сделок. Сломать:
+    вернуть поиск на каждую сделку — рост пойдёт по сделкам, и тест упадёт."""
     deals = _open_deals(db)
     if len(deals) < 20:
         pytest.skip("мало сделок для замера")
@@ -123,10 +129,15 @@ def test_query_count_does_not_grow_with_deals(db):
     # или РК, и тогда часть запросов пропускается — разница была бы не ростом, а пропуском.
     verdicts = {d.id: Verdict("normal") for d in deals}
     half = deals[: len(deals) // 2]
+
+    def unresolved_payers(ds):
+        return len({(d.payer_counterparty_id, d.payer_name) for d in ds if not d.ord_final_contract_id})
     few = _count_queries(db, lambda: qs.build(db, half, verdicts, TODAY))
     many = _count_queries(db, lambda: qs.build(db, deals, verdicts, TODAY))
-    assert many <= few + 2, f"запросов на {len(half)} сделок {few}, на {len(deals)} — {many}"
-    assert many <= 30, f"{many} запросов на очередь — где-то запрос на строку"
+    per_payer = 2 * (unresolved_payers(deals) - unresolved_payers(half))       # плательщик и его договоры — на плательщика
+    assert many <= few + 2 + per_payer, (f"запросов на {len(half)} сделок {few}, на {len(deals)} — {many} "
+                                         f"(допустимо по плательщикам +{per_payer})")
+    assert many - 2 * unresolved_payers(deals) <= 30, f"{many} запросов на очередь — где-то запрос на строку"
 
 
 # ─────────────────────────── 3. строка по стадии ───────────────────────────

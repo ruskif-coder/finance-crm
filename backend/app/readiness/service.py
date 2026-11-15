@@ -197,17 +197,6 @@ def build(db: Session, cp_id: int, user) -> Optional[dict]:
     }
 
 
-def build_many(db: Session, ids: List[int]) -> Dict[int, dict]:
-    """`{bad, warn}` по каждому — для значка в реестре; все блоки, как у админа."""
-    on = msk_now().date()
-    out = {}
-    for cp in db.query(Counterparty).filter(Counterparty.id.in_(list(ids) or [0])).all():
-        kinds = kinds_of(db, cp)
-        cs = _checks(db, cp, kinds, blocks_for(kinds), on)
-        out[cp.id] = {"bad": sum(c["sev"] == "bad" for c in cs), "warn": sum(c["sev"] == "warn" for c in cs)}
-    return out
-
-
 def lookup(db: Session, inn: str, kpp: Optional[str] = None, see_advertisers: bool = True) -> dict:
     """Дубли при заведении: юрлица с тем же ИНН (`exact` — и КПП тот же; другой КПП — филиал) и рекламодатели с ним."""
     inn = (inn or "").strip()

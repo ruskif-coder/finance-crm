@@ -91,6 +91,11 @@ def upload_zip(client, data: bytes, filename: str = "creative.zip",
     Возвращает `{"url": …, "html": …}` — URL нужен для разбора, когда загрузчик ответит
     не тем, чего ждали.
     """
+    from app import external_writes as EW
+    try:
+        EW.require("Загрузка архива креатива в DSP")     # прямой POST мимо транспорта клиента (аудит 13.11.2026)
+    except RuntimeError as e:
+        raise CreativeError(str(e)) from e
     check_zip(data, filename)
     # Сюда попадает только то, что едет в НАШУ DSP, — значит и подготовка к ней уместна
     # всегда: архив, загруженный до 25.09.2026 или креатив, чей состав поменяли после

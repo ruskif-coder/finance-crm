@@ -32,11 +32,6 @@ def version_of(db: Session, template_id: int, version: int) -> Optional[AnnexTpl
     return db.query(AnnexTplVersion).filter_by(template_id=template_id, version=version).first()
 
 
-def custom_of(db: Session, contract_id: int) -> Optional[AnnexTplTemplate]:
-    """Основной шаблон договора (до 27.10.2026 шаблон договора был один — это он)."""
-    return main_of(db, contract_id)
-
-
 def customs_of(db: Session, contract_id: int) -> list:
     """Шаблоны договора: основной первым, остальные по имени."""
     return (db.query(AnnexTplTemplate).filter_by(scope="custom", contract_id=contract_id)

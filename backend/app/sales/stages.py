@@ -9,7 +9,6 @@
 Исходная логика — GetCWValue_Fast в modFillinClearData.bas текущего Excel-файла,
 где та же раскладка зашита в код по каждой воронке отдельно.
 """
-from app.sales.normalize import normalize_name
 
 MONEY_LAYERS = ("планируемые", "реализуемые", "фактические")
 
@@ -54,28 +53,3 @@ SLA_DEFAULTS = {
     "archive": 0,
 }
 
-
-def build_stage_index(rows) -> dict:
-    """Строит индекс из строк bitrix_stage_map.
-
-    Ключ — пара нормализованных (воронка, стадия): у разных воронок разные названия
-    стадий, ведущие в один слой, поэтому ключом не может быть одна стадия.
-    Значение — слой денег как есть, без нормализации: он сравнивается литерально
-    в отчётах и обязан совпадать с одним из MONEY_LAYERS."""
-    index = {}
-    for r in rows:
-        key = (normalize_name(r.pipeline), normalize_name(r.bitrix_stage))
-        index[key] = r.money_layer
-    return index
-
-
-def resolve_money_layer(index: dict, pipeline, stage) -> str | None:
-    """Возвращает слой денег или None, если пара неизвестна.
-
-    None — значимый результат, а не ошибка: неизвестная стадия не относится
-    ни к одному слою и должна попасть в очередь сопоставления, а не молча
-    в «планируемые». Витрина показывает такие сделки в корзине «Без группы»,
-    чтобы итог по слоям сходился с общим итогом."""
-    if pipeline is None or stage is None:
-        return None
-    return index.get((normalize_name(pipeline), normalize_name(stage)))

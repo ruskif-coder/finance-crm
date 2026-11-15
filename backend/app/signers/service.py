@@ -45,6 +45,19 @@ def default_of(db: Session, cp_id: Optional[int]) -> Optional[CounterpartySigner
     return db.query(CounterpartySigner).filter_by(counterparty_id=cp_id, is_default=True).first()
 
 
+def parties_of(db: Session, cps) -> dict:
+    """`party_of` для многих юрлиц разом — подписанты по умолчанию одним запросом (очередь аккаунта, 15.11.2026). Тот же
+    ответ, что `party_of(db, cp)` без договора: сторона документа с подписантом юрлица по умолчанию."""
+    from app.sales.annex import party
+    cps = [c for c in cps if c is not None]
+    if not cps:
+        return {}
+    signers = {s.counterparty_id: s for s in db.query(CounterpartySigner)
+               .filter(CounterpartySigner.counterparty_id.in_([c.id for c in cps]), CounterpartySigner.is_default.is_(True))
+               .order_by(CounterpartySigner.id)}
+    return {c.id: party(c, signers.get(c.id), None) for c in cps}
+
+
 def _get(db: Session, signer_id: int) -> CounterpartySigner:
     s = db.query(CounterpartySigner).filter_by(id=signer_id).with_for_update().first()
     if s is None:

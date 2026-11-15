@@ -13,7 +13,7 @@
 """
 import io
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -418,14 +418,6 @@ def test_ladder_order_is_not_accidental():
     """Чем ближе файл к доказательству, тем дольше он живёт. Перестановка этих чисел
     местами означала бы, что мы стираем доказательства раньше самих баннеров."""
     assert retention.SCREENSHOT_DAYS < retention.SANDBOX_DAYS < retention.ARCHIVE_DAYS
-
-
-def test_last_exit_takes_the_latest(env):  # noqa: F811
-    """Ушла со стадии и вернулась — считаем от последнего выхода."""
-    base = datetime(2026, 1, 1)
-    rows = [(14, base), (14, base + timedelta(days=40)), (13, None)]
-    assert retention.last_exit(rows) == base + timedelta(days=40)
-    assert retention.last_exit([]) is None
 
 
 def test_closed_at_reads_the_ord_stage(env):  # noqa: F811

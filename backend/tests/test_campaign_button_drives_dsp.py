@@ -74,6 +74,9 @@ class _Db:
     def rollback(self):
         self.rollbacks += 1
 
+    def execute(self, *a, **k):          # снимок пар сбора запуска (`dsp_follow.take`) — в подставной базе их нет
+        return SimpleNamespace(all=lambda: [], scalar=lambda: None)
+
 
 
 @pytest.fixture(autouse=True)
@@ -143,13 +146,42 @@ def test_stopping_reaches_dsp(press, ours, theirs):
     assert press["ms"].calls == [("status", XX, theirs)]
 
 
-def test_dsp_failure_rolls_our_change_back(press):
+def test_dsp_failure_reverts_our_change(press, monkeypatch):
+    """С 14.11.2026 (аудит 13.11): наше изменение коммитится ДО вызовов DSP, а отказ DSP по кампании возвращает его по
+    снимку. Сломать: убрать откат — экран скажет «крутится», а в DSP стоит."""
+    from app.ad import dsp_follow
     press["ms"] = FakeMs(fail=True)
+    was = press["camp"].status
+    seen = {}
+
+    def fake_restore(db, snap):
+        seen["status_before_restore"] = press["camp"].status
+        press["camp"].status = snap.campaign_status
+        return []
+    monkeypatch.setattr(dsp_follow, "restore", fake_restore)
     with pytest.raises(HTTPException) as e:
         press["go"]("запущена")
-    assert e.value.status_code == 502
-    assert press["db"].rollbacks and not press["db"].commits, (
-        "экран скажет «крутится», а в DSP стоит")
+    assert e.value.status_code == 502 and "отменены" in e.value.detail
+    assert seen["status_before_restore"] == "запущена" and press["camp"].status == was
+
+
+def test_dsp_is_called_after_our_change_is_committed(press):
+    """Сломать: вернуть вызовы DSP до коммита — транзакция и замок долей РК снова держатся десятки секунд."""
+    db, ms = press["db"], press["ms"]
+    seen = []
+    real = ms.campaign_set_status
+    ms.campaign_set_status = lambda *a, **k: (seen.append(db.commits), real(*a, **k))[1]
+    press["go"]("пауза")
+    assert seen and seen[0] >= 1, "статус ушёл в DSP до коммита нашего изменения"
+
+
+def test_second_press_while_dsp_is_busy_is_409_at_once(press):
+    """Сломать: убрать «один проход на РК» — второй клик после таймаута браузера запустит второй полный проход в DSP."""
+    from app.ad import dsp_follow
+    with dsp_follow.one_at_a_time(press["camp"].id):
+        with pytest.raises(HTTPException) as e:
+            press["go"]("пауза")
+    assert e.value.status_code == 409 and press["ms"].calls == []
 
 
 def test_campaign_not_in_dsp_cannot_be_started_or_stopped(press):

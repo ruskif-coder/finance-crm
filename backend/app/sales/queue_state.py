@@ -32,7 +32,7 @@ from sqlalchemy import text
 
 from app.ord import readiness
 from app.sales import account_turn
-from app.sales.stage_checks import REGISTRY, Ctx, OK, NOT_YET
+from app.sales.stage_checks import BATCH_MEMO, REGISTRY, Ctx, OK, NOT_YET
 from app.sales.stage_slots import TAIL_SLOTS, slot_of
 from app.sales.urgency import Verdict, DealFacts
 
@@ -547,6 +547,19 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
     """Состояние строки для каждой сделки очереди: {сделка: row_state + stage_days}.
 
     `amounts` — {сделка: (до НДС, с НДС)} по правилу плана; роутер их уже посчитал."""
+    deals = list(deals)
+    if not deals:
+        return {}
+    # Памятка на время ОДНОЙ сборки: проверки, зависящие только от плательщика (доходный договор, подписант), считаются
+    # один раз на плательщика, а не на сделку (`stage_checks.batch_memo`). Снимается в конце — карточку не задевает.
+    db.info[BATCH_MEMO] = {}
+    try:
+        return _build(db, deals, verdicts, today, amounts)
+    finally:
+        db.info.pop(BATCH_MEMO, None)
+
+
+def _build(db, deals, verdicts, today, amounts):
     from app.models import Counterparty
     from app.launch_prep import erid_service as lp
     from app.sales import stage_scope
@@ -558,13 +571,17 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
     from app.sales.urgency import payment_due
     from app.sales.urgency_db import stage_since
 
-    deals = list(deals)
-    if not deals:
-        return {}
     ids = [d.id for d in deals]
     cat = Catalog(db)
     marks = stage_scope.stage_services(db)
     batch = load(db, deals, today)
+    # Подписанты плательщиков — одним запросом на всех (проверка «подписант заполнен» берёт их из памятки сборки)
+    from app.signers.service import parties_of
+    memo = db.info.get(BATCH_MEMO)
+    if memo is not None:
+        payers = {c.payer.id: c.payer for c in batch.ctxs.values() if c.payer is not None}
+        for pid, pt in parties_of(db, payers.values()).items():
+            memo[("party", pid)] = pt
     since = stage_since(db, ids)
     rows_of: dict = {}
     all_rows = db.query(SalesStageCheck).order_by(SalesStageCheck.id).all()

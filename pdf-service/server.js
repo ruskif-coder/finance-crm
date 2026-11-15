@@ -4,6 +4,8 @@
 // /api, ни токен: доступ уже проверил бэкенд, который единственный ходит в этот сервис.
 const express = require('express');
 const { chromium } = require('playwright');
+const dns = require('dns').promises;
+const { safePath, privateIp } = require('./guards');
 
 const FRONTEND = process.env.FRONTEND_URL || 'http://frontend:3000';
 const PORT = process.env.PORT || 3001;
@@ -31,6 +33,8 @@ app.post('/render', async (req, res) => {
   const data = body.data !== undefined ? body.data : plan;
   if (data === undefined || data === null) return res.status(400).json({ error: 'data required' });
   const path = body.path || '/deals/mp/pdf/render';
+  // Только свой относительный путь: «@хост/…» уводил браузер с нашего фронта на чужой хост (аудит 13.11.2026)
+  if (!safePath(path)) return res.status(400).json({ error: 'path must be a relative path of our frontend' });
   const key = body.key || '__MP_PLAN__';
   const flag = body.flag || '__MP_RENDERED__';
   let ctx;
@@ -67,16 +71,35 @@ app.post('/render', async (req, res) => {
 
 // Проверка доступности сайта настоящим браузером (владелец 30.09.2026): сайты с антиботом
 // режут простой запрос бэкенда 401/403, а браузер проходит. Бэкенд зовёт сюда только
-// адреса из своего списка площадок; принимаем лишь http(s).
+// адреса из своего списка площадок; принимаем лишь http(s). Внутренние адреса запрещены — и исходный, и любой запрос
+// страницы после переадресаций (аудит 13.11.2026): адрес площадки правят люди, а сайдкар живёт в сети контейнеров.
+async function hostIsPrivate(host) {
+  try {
+    const all = await dns.lookup(host, { all: true });
+    return !all.length || all.some((a) => privateIp(a.address));
+  } catch (e) {
+    return true;
+  }
+}
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 app.post('/probe', async (req, res) => {
   const { url, timeout_ms = 30000, wait_until = 'domcontentloaded' } = req.body || {};
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'url http(s) required' });
+  let u;
+  try { u = new URL(url); } catch (e) { return res.status(400).json({ error: 'bad url' }); }
+  if (u.username || u.password || await hostIsPrivate(u.hostname)) return res.status(400).json({ error: 'internal address refused' });
   let ctx;
   try {
     const b = await getBrowser();
     ctx = await b.newContext({ userAgent: UA, locale: 'ru-RU', ignoreHTTPSErrors: false });
     const page = await ctx.newPage();
+    const seen = new Map();
+    await page.route('**/*', async (route) => {
+      let h;
+      try { h = new URL(route.request().url()).hostname; } catch (e) { return route.abort(); }
+      if (!seen.has(h)) seen.set(h, await hostIsPrivate(h));
+      return seen.get(h) ? route.abort('blockedbyclient') : route.continue();
+    });
     const resp = await page.goto(url, { waitUntil: wait_until, timeout: Math.min(Number(timeout_ms) || 30000, 60000) });
     res.json({ status: resp ? resp.status() : null, final_url: page.url(), title: (await page.title()).slice(0, 200) });
   } catch (e) {

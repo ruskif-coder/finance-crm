@@ -24,6 +24,10 @@ def stale():
     annex_id = kits[0].annex_id
     for k in kits:
         db.delete(k)
+    # 15.11.2026: на проде 08.11 бухгалтер уже приложил к пересобранным УПД M-0001 файлы 1С — на 27.10 их не было.
+    # Без этого пакет блокируется «к УПД приложены файлы», и тест проверяет не пересборку, а работу бухгалтера.
+    from sqlalchemy import text
+    db.execute(text("DELETE FROM master_deal_files WHERE master_deal_id = :m AND upd_no IS NOT NULL"), {"m": m.id})
     db.flush()
     db.add(MasterDealUpd(master_deal_id=m.id, upd_no=1, annex_id=annex_id, brand=None, service="еФарм",
                          net=2000000.0, vat=440000.0, gross=2440000.0))        # как записано на проде 27.10

@@ -131,16 +131,6 @@ def test_history_parses_before_after(db):
     assert rows[0]["who"] == "Тест"
 
 
-def test_build_many_matches_build(db):
-    ids = [i for (i,) in db.execute(text("SELECT counterparty_id FROM contracts WHERE counterparty_id IS NOT NULL "
-                                         "GROUP BY counterparty_id ORDER BY count(*) DESC LIMIT 3"))]
-    many = S.build_many(db, ids)
-    for i in ids:
-        one = S.build(db, i, _admin(db))
-        assert many[i] == {"bad": sum(c["sev"] == "bad" for c in one["checks"]),
-                           "warn": sum(c["sev"] == "warn" for c in one["checks"])}
-
-
 class _Role:
     def __init__(self, key):
         self.key, self.id = key, None

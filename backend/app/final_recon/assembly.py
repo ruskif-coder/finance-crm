@@ -42,20 +42,40 @@ def _rows(db):
          ORDER BY ph.sort_order, st.sort_order, c.sort_order, c.id""")).mappings().all()
 
 
+def _active(db) -> list:
+    return [r[0] for r in db.execute(text("SELECT id FROM sales_services WHERE is_active ORDER BY sort_order, id"))]
+
+
+def _scope(aw: dict, is_blocking: bool, active: list) -> tuple:
+    """(услуги, запирающие услуги) пункта — так, как его читает проверка (`stage_checks.scope_matches`).
+
+    Пункт без `service_ids`/`service_id` действует для ВСЕХ услуг (15.11.2026: на копии прода у `final_contract`,
+    `invoice_issued` и др. условие пустое; экран показывал их «не требуется» у каждой услуги, а первое переключение одной
+    услуги превращало «все» в «только эта» — пункт молча снимался с остальных)."""
+    if "service_ids" in aw:
+        ids = list(aw.get("service_ids") or [])
+    elif "service_id" in aw:
+        ids = [aw["service_id"]]
+    else:
+        ids = list(active)
+    blk = aw.get("blocking_service_ids")
+    return ids, (list(blk) if isinstance(blk, list) else (list(ids) if is_blocking else []))
+
+
 def matrix(db) -> dict:
     """Пункты, сгруппированные по смысловым блокам. Один пункт (ключ проверки) может стоять на нескольких стадиях — строка одна,
     а `rows` хранит id каждой стадийной записи: переключение услуги меняет их все разом."""
     by_key: dict = {}
+    active = _active(db)
     for r in _rows(db):
         aw = r["applies_when"] or {}
         it = by_key.setdefault(r["check_key"], {"key": r["check_key"], "stages": [], "rows": [], "service_ids": set(),
                                                  "blocking_ids": set(), "flow": aw.get("closing_flow"), "pixel": bool(aw.get("weborama_pixel"))})
         it["stages"].append(r["stage"])
         it["rows"].append(r["id"])
-        ids = set(aw.get("service_ids") or [])
-        it["service_ids"] |= ids
-        blk = aw.get("blocking_service_ids")
-        it["blocking_ids"] |= set(blk) if isinstance(blk, list) else (ids if r["is_blocking"] else set())
+        ids, blk = _scope(aw, r["is_blocking"], active)
+        it["service_ids"] |= set(ids)
+        it["blocking_ids"] |= set(blk)
     blocks, seen = [], set()
     for title, who, desc, keys in BLOCKS + [("Прочее", "—", "Пункты без смыслового блока.", [k for k in by_key if k not in
                                                                                             {x for b in BLOCKS for x in b[3]}])]:
@@ -83,13 +103,16 @@ def set_state(db, key: str, service_id: int, state: str) -> None:
     """Состояние пункта для услуги на ВСЕХ его стадийных записях: off — не требуется, warn — уведомляет, block — требуется."""
     if state not in STATES:
         raise AssemblyError(400, "Состояние: не требуется / уведомляет / требуется")
-    rows = db.execute(text("SELECT id, applies_when FROM sales_stage_checks WHERE check_key = :k"), {"k": key}).fetchall()
+    rows = db.execute(text("SELECT id, applies_when, is_blocking FROM sales_stage_checks WHERE check_key = :k"), {"k": key}).fetchall()
     if not rows:
         raise AssemblyError(404, "Пункт не найден")
-    for rid, aw in rows:
+    active = _active(db)
+    for rid, aw, is_blocking in rows:
         aw = dict(aw or {})
-        ids = [i for i in (aw.get("service_ids") or []) if i != service_id] + ([service_id] if state != "off" else [])
-        blk = [i for i in (aw.get("blocking_service_ids") or []) if i != service_id] + ([service_id] if state == "block" else [])
+        cur, cur_blk = _scope(aw, bool(is_blocking), active)      # «для всех» раскрывается в список, а не теряется
+        aw.pop("service_id", None)
+        ids = [i for i in cur if i != service_id] + ([service_id] if state != "off" else [])
+        blk = [i for i in cur_blk if i != service_id] + ([service_id] if state == "block" else [])
         aw["service_ids"], aw["blocking_service_ids"] = ids, blk
         db.execute(text("UPDATE sales_stage_checks SET applies_when = CAST(:a AS jsonb) WHERE id = :i"), {"a": json.dumps(aw), "i": rid})
 

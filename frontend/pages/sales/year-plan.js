@@ -240,6 +240,14 @@ export default function YearPlanPage() {
     return r.data
   }, [year, scopeRepId, view, load])
 
+  // «Переписать из плана» для сделки на брони (владелец 14.11.2026): решает запустивший конвейер, в его окне
+  const onConveyorRewrite = useCallback(async (dealId) => {
+    const r = await api.post('/sales/year-plan/create-deals/rewrite', { year, deal_id: dealId }, auth())
+    // Тихо: обычная перезагрузка показывает «Загрузка…» вместо плана, и окно конвейера с остальными бронями закрылось бы
+    if (r.data?.rewritten) load(year, view, { silent: true })
+    return r.data
+  }, [year, view, load])
+
   // Годовой МП в Excel: книга целиком собирается на бэке (сводная + бриф + месяцы).
   // Единица выгрузки — рекламодатель со всеми брендами, как он показан на странице:
   // бренды одного рекламодателя могут лежать в разных планах-пакетах, и выгрузка по
@@ -315,7 +323,7 @@ export default function YearPlanPage() {
               ownRepId={me.own_rep_id} isMaster={me.is_master} vatPct={yearVat}
               mode={allMode ? 'all' : 'edit'} allData={allData}
               onVerifyPassword={onVerifyPassword} onAddTargeting={onAddTargeting}
-              onConveyorPreview={onConveyorPreview} onConveyorApply={onConveyorApply}
+              onConveyorPreview={onConveyorPreview} onConveyorApply={onConveyorApply} onConveyorRewrite={onConveyorRewrite}
               onExport={onExport} exporting={exporting} />}
       </div>
     </>

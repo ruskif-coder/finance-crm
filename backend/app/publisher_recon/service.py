@@ -156,13 +156,16 @@ def reply(db: Session, req: PublisherRequest, user, body: Optional[str], volume=
 def remind(db: Session, req: PublisherRequest, today: Optional[date] = None) -> PublisherRequestMessage:
     """«Напомнить» — строка в переписке, не чаще раза в рабочий день; статус и срок не меняются (предложение
     дизайна 26.10)."""
-    today = today or date.today()
+    # Сутки — московские с обеих сторон (найдено 15.11.2026 в 00:35 МСК проверкой перед пушем): `created_at` лежит по UTC,
+    # и с 00:00 до 03:00 по Москве вчерашнее по UTC напоминание не находилось — площадке можно было напомнить дважды.
+    from app import timez
+    today = today or timez.msk_now().date()
     _lock_open(db, req)
     if _last_side(db, req) == "площадка":
         raise ReconError(409, "Площадка уже ответила — ход за нами")
     sent = db.execute(text("""SELECT 1 FROM publisher_request_message WHERE request_id = :r AND side = 'система'
-                              AND body LIKE 'напомнили%' AND created_at::date = :d"""),
-                      {"r": req.id, "d": today}).first()
+                              AND body LIKE 'напомнили%' AND (created_at + make_interval(hours => :h))::date = :d"""),
+                      {"r": req.id, "d": today, "h": timez.MSK_OFFSET}).first()
     if sent:
         raise ReconError(409, "Сегодня уже напоминали")
     return _msg(db, req, "система", f"напомнили {_dm(today)}")

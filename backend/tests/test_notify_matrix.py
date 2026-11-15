@@ -73,3 +73,14 @@ def test_external_launch_finish_is_a_new_account_event_on_for_all_accounts():
     assert S.finish_due("контур аккаунта", live, today, today) is False          # период ещё идёт сегодня
     assert S.finish_due("полный цикл", live, today - timedelta(days=1), today) is False   # РК завершает трафик
     assert S.finish_due("контур аккаунта", SimpleNamespace(name=SS.RECON), today - timedelta(days=3), today) is False
+
+
+def test_matrix_is_read_once_per_session():
+    """Аудит 13.11.2026: матрица требований читалась на каждое событие и каждую сработку сканера. Сломать: убрать кеш."""
+    from app.database import SessionLocal
+    from app.notify import matrix_gate as G
+    db = SessionLocal()
+    try:
+        assert G._matrix(db) is G._matrix(db)
+    finally:
+        db.close()

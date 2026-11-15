@@ -31,12 +31,17 @@ def s():
 
 
 def _deal_without_campaign(db):
-    row = db.execute(build.text(
-        "SELECT d.id FROM sales_deals d WHERE NOT EXISTS (SELECT 1 FROM ad_campaign c WHERE c.deal_id = d.id) "
-        "AND d.period_from IS NOT NULL ORDER BY d.id DESC LIMIT 1")).first()
-    if row is None:
-        pytest.skip("на стенде нет сделки без РК")
-    return db.get(SalesDeal, row[0])
+    """Сделка, которой сборка РК заводится: без РК, с периодом, полного цикла (контуру аккаунта и приоритезации РК по событию
+    не заводится — `flow.is_account`; 15.11.2026 на копии прода «самой новой сделкой без РК» оказывалась сделка OLV, и
+    четыре теста падали от данных, а не от кода)."""
+    from app.final_recon import flow
+    for (did,) in db.execute(build.text(
+            "SELECT d.id FROM sales_deals d WHERE NOT EXISTS (SELECT 1 FROM ad_campaign c WHERE c.deal_id = d.id) "
+            "AND d.period_from IS NOT NULL ORDER BY d.id DESC LIMIT 200")).all():
+        deal = db.get(SalesDeal, did)
+        if flow.of_deal(db, deal) == flow.FULL:
+            return deal
+    pytest.skip("на стенде нет сделки полного цикла без РК")
 
 
 def _stage(db, key):

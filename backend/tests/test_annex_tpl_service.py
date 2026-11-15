@@ -142,7 +142,7 @@ def test_formats_only_for_base(db):
     c = _contract(db)
     S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
     with pytest.raises(S.AnnexTplError) as e:
-        S.set_formats(db, S.custom_of(db, c.id).id, ["Клиент"])
+        S.set_formats(db, S.main_of(db, c.id).id, ["Клиент"])
     assert e.value.status == 400
 
 
@@ -151,7 +151,7 @@ def test_fork_custom_copies_base_and_remembers_it(db):
     bcur = S.current(db, base.id)
     c = _contract(db)
     v = S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
-    tpl = S.custom_of(db, c.id)
+    tpl = S.main_of(db, c.id)
     assert tpl.scope == "custom" and tpl.base_template_id == base.id and v.version == 1
     assert v.blocks == bcur.blocks and v.base_version == bcur.version
     assert S.base_state(db, tpl)["changed"] is False
@@ -174,7 +174,7 @@ def test_base_changed_then_keep_own_or_adopt(db):
     base = _base(db)
     c = _contract(db)
     S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
-    tpl = S.custom_of(db, c.id)
+    tpl = S.main_of(db, c.id)
     own_before = S.current(db, tpl.id)
 
     S.save_version(db, base.id, _edit(S.current(db, base.id).blocks, "Новая редакция базы для кастомных."), USER)

@@ -402,7 +402,8 @@ def _final_contract(c: Ctx) -> Result:
     if c.deal.ord_final_contract_id:
         return _ok()
     from app.ord.matching import resolve_final
-    fr = c._once("final_resolution", lambda: resolve_final(c.db, c.deal))
+    key = (c.deal.payer_counterparty_id, getattr(c.deal, "payer_name", None))     # результат зависит только от плательщика
+    fr = c._once("final_resolution", lambda: batch_memo(c.db, "final", key, lambda: resolve_final(c.db, c.deal)))
     return _ok() if fr.contract is not None else _not_yet("не выбран")
 
 
@@ -623,7 +624,9 @@ def _signatory_filled(c: Ctx) -> Result:
     from app.signers.service import party_of
     if not (c.deal.payer_counterparty_id or c.deal.counterparty_id):
         return _not_yet("плательщик не определён")
-    miss = party_of(c.db, c.payer).get("missing") or []       # договор сделки здесь не известен — подписант плательщика по умолчанию
+    # договор сделки здесь не известен — подписант плательщика по умолчанию; очередь подкладывает его пачкой (`payer_party`)
+    pid = getattr(c.payer, "id", None)
+    miss = c._once("payer_party", lambda: batch_memo(c.db, "party", pid, lambda: party_of(c.db, c.payer))).get("missing") or []
     return _ok() if not miss else _not_yet(", ".join(miss))
 
 
@@ -709,6 +712,20 @@ def applicable_keys(rows, deal) -> set:
     return {r.check_key for r in rows if scope_matches(r.applies_when, deal)}
 
 
+BATCH_MEMO = "stage_checks.batch_memo"
+
+
+def batch_memo(db, kind: str, key, fn):
+    """Общая памятка на время пакетной сборки (очередь аккаунта ставит `db.info[BATCH_MEMO]`): одинаковый ответ для сделок
+    одного плательщика считается один раз. Вне пакета — просто вызов: карточка сделки всегда считает заново."""
+    memo = db.info.get(BATCH_MEMO) if db is not None else None
+    if memo is None:
+        return fn()
+    if (kind, key) not in memo:
+        memo[(kind, key)] = fn()
+    return memo[(kind, key)]
+
+
 def scope_matches(applies_when: Optional[dict], deal) -> bool:
     """Пусто — применимо всегда. Несколько ключей — И (все должны сойтись).
 
@@ -745,13 +762,6 @@ def scope_matches(applies_when: Optional[dict], deal) -> bool:
             if flow.of_deal(None, deal) not in (want if isinstance(want, list) else [want]):
                 return False
     return True
-
-
-def unknown_scope_keys(applies_when: Optional[dict]) -> list:
-    """Для проверки разметки при сохранении."""
-    if not valid_scope(applies_when):
-        return ["<условие не объект>"]
-    return [k for k in (applies_when or {}) if k not in SCOPE_KEYS]
 
 
 # ── Прогон ───────────────────────────────────────────────────────────────────

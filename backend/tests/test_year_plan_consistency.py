@@ -50,7 +50,9 @@ def test_generated_deal_matches_its_plan_line(db):
                      SalesDeal.brand_id, SalesYearPlanLine.brand_id.label('lb'))
               .join(SalesYearPlanLine, SalesYearPlanLine.id == SalesDeal.year_plan_line_id)
               .all())
-    assert rows, "нет сделок, порождённых конвейером — проверять нечего, но и молчать нельзя"
+    if not rows:
+        # Владелец 15.11.2026: на проде конвейер ещё не порождал сделок — вечное падение приучало не смотреть на красное.
+        pytest.skip("нет сделок, порождённых конвейером — проверять нечего")
 
     bad = [f"{r.code or r.id}: рекламодатель {r.advertiser_id}≠{r.la}, бренд {r.brand_id}≠{r.lb}"
            for r in rows if r.advertiser_id != r.la or r.brand_id != r.lb]
@@ -112,6 +114,18 @@ def test_frozen_reasons_cover_orange_green_and_lost():
     assert _deal_frozen(SimpleNamespace(our_stage_id=None), stages) is None
 
 
+def test_booking_is_frozen_for_the_conveyor():
+    """Владелец 14.11.2026: «бронь не трогаем и дальше». Конвейер года удалял и пересобирал медиаплан сделки на «Брони» — план,
+    уже согласованный с клиентом. Сломать: убрать проверку `stage_key == "booking"` — бронь снова станет перезаписываемой.
+    «МП Подготовка» и «МП Отправлено» конвейер по-прежнему обновляет (правило 23.09.2026)."""
+    from types import SimpleNamespace
+    from app.routers.year_plan import _deal_frozen
+    st = lambda **kw: SimpleNamespace(**{"money_layer": "планируемые", "is_lost": False, "is_terminal": False, **kw})  # noqa: E731
+    stages = {1: st(stage_key="media_plan"), 2: st(stage_key="booking")}
+    assert _deal_frozen(SimpleNamespace(our_stage_id=1), stages) is None
+    assert _deal_frozen(SimpleNamespace(our_stage_id=2), stages) == "бронь"
+
+
 def test_conveyor_checks_the_stage_before_rewriting():
     """Пин на саму проверку: ветка обновления обязана спрашивать заморозку ДО перезаписи.
 
@@ -124,8 +138,12 @@ def test_conveyor_checks_the_stage_before_rewriting():
 
     src = inspect.getsource(year_plan.create_deals)
     assert '_deal_frozen' in src, "конвейер пишет по существующей сделке без проверки стадии"
-    before_delete = src.index('_deal_frozen') < src.index('db.delete(mp)')
-    assert before_delete, "проверка обязана стоять ДО удаления медиапланов"
+    # 14.11.2026: пересборка вынесена в `_rewrite_from_cell` (её же зовёт «Переписать из плана» у брони) — удаление
+    # медиапланов живёт там, а проверка заморозки обязана стоять ДО её вызова и в прогоне, и в кнопке.
+    assert 'db.delete(mp)' in inspect.getsource(year_plan._rewrite_from_cell)
+    assert src.index('_deal_frozen') < src.index('_rewrite_from_cell('), "проверка обязана стоять ДО пересборки"
+    one = inspect.getsource(year_plan.rewrite_booking_deal)
+    assert one.index('_deal_frozen') < one.index('_rewrite_from_cell('), "кнопка обязана спрашивать заморозку ДО пересборки"
 
     preview = inspect.getsource(year_plan.create_deals_preview)
     assert '_deal_frozen' in preview, (

@@ -112,6 +112,10 @@ def issue(crid: str, *, url: Optional[str] = None,
             f"{ENV_ADMIN_URL} не задан — адрес админки DSP неизвестен")
 
     target = base + GENERATOR_PATH
+    if transport is None:
+        from app import external_writes as EW
+        if not EW.allowed():                             # генератор в админке DSP — запись (аудит 13.11.2026)
+            raise TargetingLinkError(f"Выпуск ссылки нацеливания: {EW.REFUSAL}")
     if transport is not None:
         body = transport(target, {"crid": crid})
     else:

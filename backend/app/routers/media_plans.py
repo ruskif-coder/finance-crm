@@ -508,7 +508,9 @@ def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depend
     from app.sales.deal_code import assign_code
     from app.sales.models import SalesDeal, SalesRep
 
-    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    # Замок строки ДО проверки «уже есть сделка» (аудит 13.11.2026): двойной клик давал две сделки на один план, а вторая
+    # привязка навсегда отключала перенос сумм из плана в сделку.
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).with_for_update().first()
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")

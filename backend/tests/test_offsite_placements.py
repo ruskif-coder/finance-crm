@@ -74,25 +74,55 @@ def test_modes_follow_surfaces_not_our_code():
         db.close()
 
 
+_ADFOX_ONLY_PUB = """
+    EXISTS (SELECT 1 FROM sales_publisher_surfaces s WHERE s.publisher_id = {pub}
+              AND s.we_work AND s.placement_channel = 'adfox')
+    AND NOT EXISTS (SELECT 1 FROM sales_publisher_surfaces s WHERE s.publisher_id = {pub}
+              AND s.we_work AND coalesce(s.placement_channel, 'dsp') = 'dsp')"""
+
+
+def _rk_without_assembly(db):
+    """РК с Adfox-площадкой (app «не работаем») без сборки по ней. 15.11.2026: на стенде у всех РК таких площадок сборка
+    есть, и тест пропускался всегда, — поэтому, если живой пары нет, тест строит её сам: РК для сделки без РК и без сборки
+    по этой площадке и строку площадки в ней, в транзакции (откат в `finally`)."""
+    from app.ad.models import AdCampaign, AdCampaignPlacement
+    row = db.execute(text(f"""
+        SELECT c.deal_id, pl.publisher_id FROM ad_campaign_placement pl
+          JOIN ad_campaign c ON c.id = pl.campaign_id
+         WHERE NOT EXISTS (SELECT 1 FROM launch_prep_target t
+                            WHERE t.deal_id = c.deal_id AND t.publisher_id = pl.publisher_id)
+           AND {_ADFOX_ONLY_PUB.format(pub='pl.publisher_id')}
+         ORDER BY c.deal_id, pl.publisher_id LIMIT 1""")).first()
+    if row:
+        return tuple(row)
+    pub = db.execute(text(f"SELECT p.id FROM sales_publishers p WHERE {_ADFOX_ONLY_PUB.format(pub='p.id')} "
+                          "ORDER BY p.id LIMIT 1")).scalar()
+    deal = db.execute(text("""
+        SELECT d.id FROM sales_deals d
+         WHERE NOT EXISTS (SELECT 1 FROM ad_campaign c WHERE c.deal_id = d.id)
+           AND NOT EXISTS (SELECT 1 FROM launch_prep_target t WHERE t.deal_id = d.id AND t.publisher_id = :p)
+         ORDER BY d.id LIMIT 1"""), {"p": pub}).scalar() if pub else None
+    if pub is None or deal is None:
+        import pytest
+        pytest.skip("на стенде нет Adfox-площадки без DSP-поверхности или сделки без РК")
+    camp = AdCampaign(deal_id=deal, status="ожидает сборки")
+    db.add(camp)
+    db.flush()
+    db.add(AdCampaignPlacement(campaign_id=camp.id, publisher_id=pub, status="ждёт сборки"))
+    db.flush()
+    return deal, pub
+
+
 def test_fallback_uses_working_surfaces_only():
     """Нет сборки по площадке в сделке — считаем по поверхностям, с которыми РАБОТАЕМ:
     у Adfox-площадок app «не работаем», и он не должен делать их смешанными (30.09.2026)."""
+    # Упадёт, если запасной вариант `placement_modes` снова возьмёт ВСЕ поверхности площадки (`kinds_of`), а не рабочие
+    # (`working_of`): app «не работаем» через DSP сделал бы площадку смешанной.
     db = SessionLocal()
     try:
-        row = db.execute(text("""
-            SELECT c.deal_id, pl.publisher_id FROM ad_campaign_placement pl
-              JOIN ad_campaign c ON c.id = pl.campaign_id
-             WHERE NOT EXISTS (SELECT 1 FROM launch_prep_target t
-                                WHERE t.deal_id = c.deal_id AND t.publisher_id = pl.publisher_id)
-               AND EXISTS (SELECT 1 FROM sales_publisher_surfaces s WHERE s.publisher_id = pl.publisher_id
-                             AND s.we_work AND s.placement_channel = 'adfox')
-               AND NOT EXISTS (SELECT 1 FROM sales_publisher_surfaces s WHERE s.publisher_id = pl.publisher_id
-                             AND s.we_work AND coalesce(s.placement_channel, 'dsp') = 'dsp')
-             LIMIT 1""")).first()
-        if not row:
-            import pytest
-            pytest.skip("нет РК с Adfox-площадкой без сборки")
-        m = R.placement_modes(db, {tuple(row)})[tuple(row)]
+        key = _rk_without_assembly(db)
+        m = R.placement_modes(db, {key})[key]
         assert m["mode"] == R.MODE_EXTERNAL and m["external"] == ["web"]
     finally:
+        db.rollback()
         db.close()

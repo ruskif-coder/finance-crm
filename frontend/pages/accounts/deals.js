@@ -16,6 +16,7 @@ import { MONO, UI, sel } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import { dm } from '@/lib/salesFormat'
 import { detailText } from '@/lib/loadError'
+import useLatest from '@/lib/useLatest'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import DealNow from '@/components/accounts/deals/DealNow'
 import QueueToolbar, { applyToolbar, pinOptions, emptyFilters } from '@/components/accounts/dashboard/QueueToolbar'
@@ -70,17 +71,20 @@ export default function MyDeals() {
   useEffect(() => { try { const v = localStorage.getItem(VIEW_KEY); if (v === 'cards' || v === 'list') setView(v) } catch { /* нет хранилища */ } }, [])
   const pickView = (v) => { setView(v); setExpandedId(null); try { localStorage.setItem(VIEW_KEY, v) } catch { /* нет хранилища */ } }
 
+  // Отсечка устаревшего ответа (аудит 13.11.2026): быстрое переключение аккаунта показывало строки прошлого выбора под новым
+  const latest = useLatest()
   const load = useCallback(() => {
+    const fresh = latest()
     const who = repId === 'all' ? 'all_reps=true' : (repId ? `rep_id=${repId}` : '')
     api.get(`/sales/account-queue${who ? `?${who}` : ''}`, auth())
-      .then(r => { setData(r.data); setMyRepId(r.data.my_rep_id ?? null); setErr('') })
-      .catch(e => setErr(detailText(e, 'Не удалось загрузить сделки')))
+      .then(r => { if (!fresh()) return; setData(r.data); setMyRepId(r.data.my_rep_id ?? null); setErr('') })
+      .catch(e => { if (fresh()) setErr(detailText(e, 'Не удалось загрузить сделки')) })
     // Пакеты — реестр мастер-сделок, своё право: без него контур «Документы» говорит причину, а не ошибку запроса (14.11.2026)
     if (!can(getPermissions(), 'master_deals', 'view')) { setPacks(null); setPacksErr('Пакеты мастер-сделок недоступны: нет права «Мастер-сделки»'); return }
     // Сбой реестра — причиной на экране, а не «пакетов нет» (гейт check-screens)
-    api.get('/master-deals/registry/list', auth()).then(r => { setPacks(r.data.rows || []); setPacksErr('') })
-      .catch(e => setPacksErr(detailText(e, 'Не удалось загрузить мастер-сделки')))
-  }, [repId])
+    api.get('/master-deals/registry/list', auth()).then(r => { if (!fresh()) return; setPacks(r.data.rows || []); setPacksErr('') })
+      .catch(e => { if (fresh()) setPacksErr(detailText(e, 'Не удалось загрузить мастер-сделки')) })
+  }, [repId, latest])
   useEffect(() => { if (ready) load() }, [ready, load])
   useRefreshOnReturn(load)
   useEffect(() => {

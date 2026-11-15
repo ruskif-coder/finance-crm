@@ -224,6 +224,7 @@ ACTION_LABELS = {
     "year_plan_attach_deal": "Сделка привязана к строке годового плана",
     "year_plan_detach_deal": "Сделка отвязана от строки годового плана",
     "year_plan_create_deals": "Сделки созданы из годового плана",
+    "year_plan_rewrite_booking": "Бронь переписана из годового плана",
     "year_plan_match_deals": "Сверка годового плана со сделками",
     "year_plan_export": "Годовой медиаплан выгружен в Excel",
     "create_creative_set": "Комплект креативов заведён",

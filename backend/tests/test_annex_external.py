@@ -93,12 +93,16 @@ def test_services_and_sum_are_required(ctx):
 
 def test_number_taken_by_another_annex_is_refused(ctx):
     db, a, svc, user, _ = ctx
-    taken = (db.query(SalesAnnex.no).filter(SalesAnnex.contract_id == a.contract_id, SalesAnnex.no.isnot(None),
-                                            SalesAnnex.sub_no.is_(None)).first())
-    if taken is None:
-        pytest.skip("у договора нет подтверждённых ДС")
+    # 15.11.2026: тест строит занятый номер сам — у договора черновика на стенде может не быть подтверждённых ДС, и тогда
+    # тест молча пропускался всегда. Синтетический ДС того же договора живёт в транзакции фикстуры и откатывается.
+    # Упадёт, если из sign_external уберут проверку `busy` (номер договора, занятый другим ДС) или она перестанет
+    # смотреть на ДС того же договора без суффикса.
+    other = SalesAnnex(contract_id=a.contract_id, no=987650, number="[тест] Приложение № 987650", status="подтверждён",
+                       origin="система", currency="RUB")
+    db.add(other)
+    db.flush()
     with pytest.raises(X.ExternalError) as e:
-        _sign(db, a, svc, user, no=taken[0])
+        _sign(db, a, svc, user, no=other.no)
     assert "занят" in e.value.message
 
 

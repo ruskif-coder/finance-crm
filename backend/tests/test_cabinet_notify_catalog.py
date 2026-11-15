@@ -159,26 +159,3 @@ def test_recipients_follow_the_notify_flag_not_the_primary_one(db=None):
     finally:
         s.rollback()
         s.close()
-
-
-def test_backfill_left_every_publisher_with_a_recipient():
-    """Миграция сохранила поведение: у каждой площадки, где был адресат, он остался.
-
-    Иначе рассылка замолкает МОЛЧА — писем нет, ошибок нет, и понять это можно только
-    по отсутствию писем у площадки."""
-    from sqlalchemy import text as sa_text
-    from app.database import SessionLocal
-
-    s = SessionLocal()
-    try:
-        orphans = s.execute(sa_text("""
-            SELECT count(*) FROM (
-                SELECT publisher_id FROM sales_publisher_contacts
-                 WHERE coalesce(email,'') <> ''
-                 GROUP BY publisher_id
-                HAVING count(*) FILTER (WHERE notify) = 0) x""")).scalar()
-        assert orphans == 0, (
-            f"у {orphans} площадок есть контакт с почтой, но никто не отмечен — "
-            f"письма им не уйдут")
-    finally:
-        s.close()

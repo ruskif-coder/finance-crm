@@ -40,7 +40,10 @@ def test_pending_comes_from_the_cabinet_view(db):
         "  FROM launch_prep_review r "
         "  JOIN launch_prep_pair pr ON pr.id = r.pair_id "
         "  JOIN launch_prep_target t ON t.id = pr.target_id "
-        " WHERE r.kind = 'площадка' AND r.verdict IS NULL "
+        "  JOIN sales_publishers pb ON pb.id = t.publisher_id "
+        # отозванное задание площадка не видит (представление, `withdrawn_at`), архивные площадки сводка не считает (В-8) —
+        # без этих двух условий встречный счёт отстал от определения витрины (15.11.2026)
+        " WHERE r.kind = 'площадка' AND r.verdict IS NULL AND pr.withdrawn_at IS NULL AND pb.status <> 'АРХИВ' "
         " GROUP BY t.publisher_id"))}
     assert ours == theirs, 'витрина и встречный счёт разошлись'
 

@@ -68,6 +68,21 @@ class FileStore:
             pass
         return value
 
+    def claim(self, key: str):
+        """Забрать сессию ОДИН раз (аудит 13.11.2026): переименование файла атомарно, и из двух одновременных «Применить»
+        — в разных процессах — сессию получает ровно один, второй — None. `get` + `pop` в конце давали обоим."""
+        src = _path(key)
+        mine = f"{src}.{os.getpid()}.{id(self)}.claim"
+        try:
+            os.rename(src, mine)
+        except FileNotFoundError:
+            return None
+        try:
+            with open(mine, "rb") as f:
+                return pickle.load(f)
+        finally:
+            os.remove(mine)
+
     def keys(self) -> list:
         return [n[:-4] for n in os.listdir(DIR) if n.endswith(".pkl")]
 
