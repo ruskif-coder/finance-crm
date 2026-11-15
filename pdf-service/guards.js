@@ -28,4 +28,29 @@ function privateIp(ip) {
     || v.startsWith('fea') || v.startsWith('feb');
 }
 
-module.exports = { safePath, privateIp };
+// /banner-check (15.11.2026): баннер из DSP рендерится как на площадке, но счётчики не должны сработать — проверочный
+// показ не показ. Пропускаем то, из чего баннер рисуется (скрипты, стили, картинки, шрифты, медиа), и скрипт видимости
+// DSP (он рисует плашку ЕРИД). Режем: сетевые вызовы скриптов (xhr/fetch/beacon/сокеты) — так стучат маяки; любые
+// адреса домена DSP, кроме самого скрипта видимости (маяки и синхронизация живут на его соседних поддоменах); хосты из
+// `block_hosts` (наш счётчик — он открывает скрытые фреймы с чужими рекламными блоками); переход на посадочную.
+// Имён поставщика здесь нет: домен и адреса приходят от бэкенда из настроек.
+const DRAW_TYPES = new Set(['document', 'script', 'stylesheet', 'image', 'font', 'media']);
+
+function bannerRequestVerdict(url, resourceType, opts) {
+  const o = opts || {};
+  let u;
+  try { u = new URL(url); } catch (e) { return 'abort'; }
+  if (u.protocol === 'data:' || u.protocol === 'blob:') return resourceType === 'document' ? 'abort' : 'continue';
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'abort';
+  const host = u.hostname.toLowerCase();
+  if (o.landing_host && host === o.landing_host) return 'abort';
+  if (!DRAW_TYPES.has(resourceType)) return 'abort';
+  if ((o.block_hosts || []).map((h) => String(h).toLowerCase()).includes(host)) return 'abort';
+  const dom = String(o.block_domain || '').toLowerCase();
+  if (dom && (host === dom || host.endsWith('.' + dom)) && !(o.allow_urls || []).some((a) => url.split('?')[0] === String(a).split('?')[0])) {
+    return 'abort';
+  }
+  return 'continue';
+}
+
+module.exports = { safePath, privateIp, bannerRequestVerdict };

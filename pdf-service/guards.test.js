@@ -19,3 +19,22 @@ test('внутренние адреса запрещены', () => {
     assert.equal(privateIp(ip), false, ip);
   }
 });
+
+test('проверка баннера: счётчики и посадочная режутся, отрисовка идёт', () => {
+  const { bannerRequestVerdict: v } = require('./guards');
+  const o = { landing_host: 'landing.invalid', block_hosts: ['counter.example'], block_domain: 'dsp.example',
+    allow_urls: ['https://static.dsp.example/engine/viewability.js'] };
+  assert.equal(v('https://cdn.dsp-cdn.example/b/index.js', 'script', o), 'continue');
+  assert.equal(v('https://cdn.dsp-cdn.example/b/bg.png', 'image', o), 'continue');
+  assert.equal(v('https://static.dsp.example/engine/viewability.js', 'script', o), 'continue');
+  assert.equal(v('https://static.dsp.example/engine/viewability.js?x=1', 'script', o), 'continue');
+  assert.equal(v('https://log.dsp.example/new/vs?cr={CR_ID}', 'image', o), 'abort');      // маяк картинкой
+  assert.equal(v('https://static.dsp.example/stableid/postView.js', 'script', o), 'abort');
+  assert.equal(v('https://counter.example/afcar/qq.js', 'script', o), 'abort');
+  assert.equal(v('https://landing.invalid/x', 'document', o), 'abort');
+  assert.equal(v('https://any.example/api', 'xhr', o), 'abort');
+  assert.equal(v('https://any.example/b', 'ping', o), 'abort');
+  assert.equal(v('blob:https://x/1', 'document', o), 'abort');
+  assert.equal(v('data:image/png;base64,AA', 'image', o), 'continue');
+  assert.equal(v('file:///etc/passwd', 'image', o), 'abort');
+});

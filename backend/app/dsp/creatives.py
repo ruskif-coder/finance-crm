@@ -213,6 +213,32 @@ def _has_counter(html: str, src: str) -> bool:
         html, re.I))
 
 
+_VIEWABILITY_TAG_RE = re.compile(r"[ \t]*<script\b[^>]*\bsrc=[\"'][^\"']*/viewability\.js(?:[?#][^\"']*)?[\"'][^>]*>\s*</script>[ \t]*\n?",
+                                 re.I)
+
+
+def viewability_count(html: str) -> int:
+    """Сколько раз в разметке подключён скрипт видимости. Норма — один (владелец 05.10.2026)."""
+    return len(_VIEWABILITY_TAG_RE.findall(html or ""))
+
+
+def dedupe_viewability(html: str) -> tuple:
+    """Убрать лишние `viewability.js`, оставив последний (15.11.2026). Возвращает (html, изменён ли).
+
+    Дубль получается, когда дизайнер вложил скрипт видимости в архив баннера, а загрузчик DSP добавил свой: скрипт DSP рисует
+    по плашке ЕРИД на каждое подключение, и вторая плашка бывает без стилей — уходит под фон баннера. Последний — тот, что
+    загрузчик ставит после настроек кампании `window.adsn.viewability = {...}`, поэтому оставляем его."""
+    tags = list(_VIEWABILITY_TAG_RE.finditer(html or ""))
+    if len(tags) < 2:
+        return html, False
+    out, pos = [], 0
+    for m in tags[:-1]:
+        out.append(html[pos:m.start()])
+        pos = m.end()
+    out.append(html[pos:])
+    return "".join(out), True
+
+
 # Клик по всей площади (14.10.2026, сделка 9E8Z4U). Загрузчик DSP заменяет ссылку баннера обёрткой `<a href="{LINK_UNESC}">` вокруг
 # всего тела — БЕЗ класса и id. Баннер, где кликабельную площадь задавал класс ссылки (`.banner{display:block;…}` — так верстают под
 # Adfox), а слои отключены от мыши, остаётся с обёрткой нулевого размера: показы идут, клик проходит сквозь слои мимо ссылки.
@@ -253,6 +279,7 @@ def wrap_html(html: str, *, erid: Optional[str] = None,
     # Счётчик видимости — ровно один (владелец 05.10.2026). Загрузчик DSP сам вставляет его
     # с параметрами кампании и креатива; наш второй, без параметров и раньше, — лишний. Если
     # в HTML от загрузчика его нет — ставим свой: так счётчик в креативе есть всегда.
+    html, _ = dedupe_viewability(html)     # 15.11.2026: свой в архиве баннера + свой от загрузчика DSP = две плашки ЕРИД
     if viewability_src and viewability_src.strip() and not _has_counter(html, viewability_src):
         head.append(f'<script src="{viewability_src.strip()}"></script>')
         head.append("<script>window.adsn = window.adsn || {};"

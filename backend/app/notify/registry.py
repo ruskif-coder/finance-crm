@@ -751,6 +751,17 @@ register(Event(
 ))
 
 register(Event(
+    key="dsp_banner_check_failed", direction="traffic", group="Рекламная кампания",
+    title="Баннер в DSP не прошёл проверку",
+    description=("Владелец 15.11.2026. После заливки в DSP креатив проверяется в браузере, как его видят на площадке: "
+                 "плашка «Реклама» видна и раскрывает ЕРИД, клик по баннеру ведёт на посадочную, скрипт видимости один. "
+                 "Уходит, когда проверка не пройдена; запуск не блокируется. Значок ✗ — у креатива на дашборде трафика."),
+    tone="bad", action="Открыть дашборд", widget_group="Сделки", scan=False,
+    recipients=[{"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="traffic_boost_ended", direction="traffic", group="Рекламная кампания",
     title="Темп размещения закончен",
     description=("Буст истёк, снят досрочно или РК окончена: объём возвращён к исходному плану (ночной "

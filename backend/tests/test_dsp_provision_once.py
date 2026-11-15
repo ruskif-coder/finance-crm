@@ -133,6 +133,9 @@ class FakeDb:
     def commit(self):
         self.commits += 1
 
+    def rollback(self):
+        pass
+
 
 def _camp(cid):
     return SimpleNamespace(id=cid, deal_id=1, ms_campaign_xxhash=None, month=date(2026, 10, 1),
@@ -173,6 +176,9 @@ def wired(monkeypatch):
                          "size": "300x250"})
     monkeypatch.setattr(traffic_catalog, "creative_script", lambda db, our: "")
     monkeypatch.setattr(traffic_catalog, "viewability_src", lambda db: "")
+    # Очередь проверки баннера пишет в базу, а она здесь поддельная; саму очередь держит test_dsp_banner_check.py.
+    from app.dsp import banner_check
+    monkeypatch.setattr(banner_check, "enqueue", lambda db, cid: None)
     return state
 
 
@@ -351,3 +357,22 @@ def test_creative_without_publisher_blocks_is_not_provisioned(wired, monkeypatch
     with pytest.raises(prov.DspProvisionError):
         prov.provision(_db(), _camp(990701), client=ms)
     assert "Creative.add" not in ms.calls
+
+
+def test_html_creative_goes_to_the_banner_check_queue(wired, monkeypatch):
+    """15.11.2026: залитый HTML-креатив встаёт в очередь проверки в браузере; заливка её не ждёт."""
+    from app.dsp import banner_check
+    queued = []
+    monkeypatch.setattr(banner_check, "enqueue", lambda db, cid: queued.append(cid))
+    out = prov.provision(_db(), _camp(990499), client=FakeMs())
+    assert out["done"] and queued == [wired["rows"][0]["creative"].id]
+
+
+def test_banner_check_queue_failure_does_not_break_the_upload(wired, monkeypatch):
+    from app.dsp import banner_check
+
+    def boom(db, cid):
+        raise RuntimeError("очередь недоступна")
+    monkeypatch.setattr(banner_check, "enqueue", boom)
+    out = prov.provision(_db(), _camp(990498), client=FakeMs())
+    assert out["done"] and not out["failed"]

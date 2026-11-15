@@ -493,9 +493,13 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
     # TL5A8E, сервер отвечал отказом, а при заблокированном окне он не был виден.
     from app.dsp.targeting_creative import aim_gate
     gate = aim_gate(db, {r["set_id"] for r in rows if r["set_id"]})
+    # Проверка баннера в браузере после заливки в DSP (владелец 15.11.2026) — значок у хеша креатива.
+    from app.dsp.banner_check import state_of
+    checks = state_of(db, [r["id"] for r in rows if r["ms_creative_xxhash"]])
     out: dict = {}
     for r in rows:
-        out.setdefault(r["placement_id"], []).append({**r, "aim_off": gate.get(r["set_id"])})
+        out.setdefault(r["placement_id"], []).append({**r, "aim_off": gate.get(r["set_id"]),
+                                                      "banner_check": checks.get(r["id"])})
     return out
 
 

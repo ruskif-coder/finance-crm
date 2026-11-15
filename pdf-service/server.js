@@ -109,4 +109,6 @@ app.post('/probe', async (req, res) => {
   }
 });
 
+require('./banner_check').mount(app, getBrowser);   // проверка баннера из DSP (15.11.2026)
+
 app.listen(PORT, () => console.log(`pdf-service listening on ${PORT}, frontend=${FRONTEND}`));

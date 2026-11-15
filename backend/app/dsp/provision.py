@@ -348,6 +348,14 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         # потерянный хеш означает дубль в чужом кабинете при повторе.
         cre.ms_creative_xxhash = xxhash
         db.commit()
+        if built.html is not None:
+            # HTML-баннер залит — в очередь проверки в браузере (владелец 15.11.2026); заливка проверку не ждёт.
+            try:
+                from app.dsp import banner_check
+                banner_check.enqueue(db, cre.id)
+            except Exception:  # noqa: BLE001 — очередь проверки не повод ронять выгрузку
+                db.rollback()
+                log.exception("креатив cr%s не поставлен в очередь проверки баннера", cre.id)
         done.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                      "name": name, "xxhash": xxhash})
     return {"campaign_xxhash": camp_hash, "done": done, "failed": failed, "warnings": warnings,

@@ -37,6 +37,7 @@ CRON_MODULES = [
     "app.premod.sync",                  # 07.11.2026: забор очереди премодерации SSP
     "app.ord.erid_snapshot",            # 11.11.2026: снимок разреза по ЕРИД для отчёта ОРД
     "app.adfox.stats",                  # 11.11.2026: показы Adfox через API
+    "app.dsp.banner_check",             # 15.11.2026: проверка баннеров в браузере после заливки в DSP
 ]
 
 PROBE = (
