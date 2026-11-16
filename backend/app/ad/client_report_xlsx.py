@@ -305,6 +305,7 @@ def render(rep: Report, rep_model: Optional[Report] = None, template_path: str =
 WEEKS_SHEET = WEEKS_SHEET_BASE = "По неделям"
 WEEKS_MAX_FONT = 14
 PCT_CTR = '0.00%'
+PER = 4             # колонок у недели и у «ИТОГО»: показы, клики, CTR, охват
 
 
 def weeks_of(d1: date, d2: date, last: date | None) -> list:
@@ -322,7 +323,8 @@ def weeks_of(d1: date, d2: date, last: date | None) -> list:
 
 def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None:
     """Лист «По неделям» (вид — по примеру аккаунтов 05.10.2026): площадки строками, у каждой
-    календарной недели и у «ИТОГО» по три колонки — показы, клики, CTR. Дельты нет. Сначала вся
+    календарной недели и у «ИТОГО» по четыре колонки — показы, клики, CTR, охват (аккаунты 16.11.2026).
+    Охват — уники модели SIMB ID, сложенные по дням, как колонка «Уники» листа «Отчёт». Дельты нет. Сначала вся
     РК, ниже — то же по каждому креативу. В комплекте «модель» клики и CTR — модель SIMB ID."""
     ws = wb.create_sheet(title)
     ws.sheet_view.showGridLines = False
@@ -331,38 +333,40 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
     d2 = h.get("days_to") or h["period_to"]
     weeks = weeks_of(h["period_from"], max(d2, h["period_from"]), h.get("last_data"))
     groups = len(weeks) + 1                         # недели + «ИТОГО»
-    last_col = C + 3 * groups - 1
+    last_col = C + PER * groups - 1
     put = _Painter(ws, s, []).put
-    sub = ("показы", "клики (модель)" if model else "клики", "ctr (модель)" if model else "ctr")
+    sub = ("показы", "клики (модель)" if model else "клики", "ctr (модель)" if model else "ctr", "охват")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     def sums(days: dict, d_from=None, d_to=None):
-        sh = ck = 0
+        sh = ck = un = 0
         for d, v in days.items():
             if d_from is None or d_from <= d <= d_to:
                 sh += v[0]
                 ck += v[1]
-        return sh, ck
+                un += v[2] if len(v) > 2 else 0
+        return sh, ck, un
 
-    def triple(rr, col, sh, ck, num, fmt_num=NUM):
+    def quad(rr, col, sh, ck, un, num, fmt_num=NUM):
         put(rr, col, sh, num, fmt_num)
         put(rr, col + 1, ck, num, fmt_num)
         put(rr, col + 2, (ck / sh) if sh else None, num, PCT_CTR)
+        put(rr, col + 3, round(un) if sh else None, num, fmt_num)
 
     def row_of(rr, label, days, text, num, total_style):
         cell = put(rr, B, label, text)
         if text is s.text:                      # названия площадок — по центру, как в примере
             cell.alignment = center
         for i, w in enumerate(weeks):
-            col = C + 3 * i
+            col = C + PER * i
             if w["future"]:
-                for k in range(3):
+                for k in range(PER):
                     put(rr, col + k, None, num)
                 continue
-            triple(rr, col, *sums(days, w["from"], w["to"]), num)
-        tc = C + 3 * len(weeks)
-        triple(rr, tc, *sums(days), total_style)
-        for k in range(3):
+            quad(rr, col, *sums(days, w["from"], w["to"]), num)
+        tc = C + PER * len(weeks)
+        quad(rr, tc, *sums(days), total_style)
+        for k in range(PER):
             c = ws.cell(rr, tc + k)
             if c.font.sz and c.font.sz > WEEKS_MAX_FONT:
                 c.font = Font(**{**{a: getattr(c.font, a) for a in ("name", "b", "i", "color")},
@@ -374,13 +378,13 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         ws.merge_cells(start_row=r, end_row=r, start_column=B, end_column=last_col)
         ws.row_dimensions[r].height = s.h.get("title")
         r += 1
-        # две строки шапки: группы недель (объединены на 3 колонки) и подписи метрик
+        # две строки шапки: группы недель (объединены на PER колонок) и подписи метрик
         put(r, B, None, s.head)
         put(r + 1, B, "Площадка", s.head)
         ws.merge_cells(start_row=r, end_row=r + 1, start_column=B, end_column=B)
         ws.cell(r, B).value = "Площадка"
         for g in range(groups):
-            col = C + 3 * g
+            col = C + PER * g
             if g < len(weeks):
                 w = weeks[g]
                 label = f"Нед. {g + 1}\n{_ddmm(w['from'], False)}–{_ddmm(w['to'], False)}"
@@ -388,12 +392,12 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
                 style = s.head_day
             else:
                 label, style = "ИТОГО", s.head_total
-            for k in range(3):
+            for k in range(PER):
                 put(r, col + k, None, style)
                 put(r + 1, col + k, sub[k], style).alignment = center
             ws.cell(r, col).value = label
             ws.cell(r, col).alignment = center
-            ws.merge_cells(start_row=r, end_row=r, start_column=col, end_column=col + 2)
+            ws.merge_cells(start_row=r, end_row=r, start_column=col, end_column=col + PER - 1)
         ws.row_dimensions[r].height = 48
         ws.row_dimensions[r + 1].height = s.h.get("head")
         r += 2
@@ -401,9 +405,10 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         for site in sorted(site_days, key=lambda k: -sum(v[0] for v in site_days[k].values())):
             row_of(r, site, site_days[site], s.text, s.day_num, s.day_total)
             for d, v in site_days[site].items():
-                acc = all_days.setdefault(d, [0, 0])
+                acc = all_days.setdefault(d, [0, 0, 0])
                 acc[0] += v[0]
                 acc[1] += v[1]
+                acc[2] += v[2] if len(v) > 2 else 0
             r += 1
         row_of(r, "ИТОГО:", all_days, s.total_text, s.total_num, s.total_num)
         ws.row_dimensions[r].height = s.h.get("total")
@@ -416,8 +421,8 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 26
     for g in range(groups):
-        for k, wdt in enumerate((13, 11, 11)):
-            ws.column_dimensions[get_column_letter(C + 3 * g + k)].width = wdt
+        for k, wdt in enumerate((13, 11, 11, 12)):
+            ws.column_dimensions[get_column_letter(C + PER * g + k)].width = wdt
     bg = copy(s.background.fill)
     for row in ws.iter_rows(min_row=1, max_row=r, max_col=last_col + 1):
         for cell in row:

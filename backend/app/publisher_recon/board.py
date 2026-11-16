@@ -47,20 +47,31 @@ def status_of(total: int, done: int, req: Optional[dict], today: date) -> tuple:
     return OUT, bool(due and due < today)
 
 
+# Строка сверки — размещение РК (`launch_prep_target`) или площадка приоритезации (`prio_placements`, 16.11.2026): номера из
+# разных последовательностей, поэтому ключ строки — с видом: «t<id>» / «p<id>». Его же получает экран как `placement_id`.
+_MONTH_SQL = """
+    SELECT 't' || v.placement_id AS key, 'рк' AS kind, v.placement_id AS id, t.deal_id, v.publisher_id, v.site, v.brand,
+           v.service, v.surface, v.date_from, v.date_to, v.plan, v.fact, v.cpm, v.erid, v.status
+      FROM publisher_placement_v v JOIN launch_prep_target t ON t.id = v.placement_id
+     WHERE to_char(v.date_from, 'YYYY-MM') = :p
+       -- архивное = снятое нами (правило 16.09.2026) — в сверку не идёт; витрина отдаёт его с отметкой (29.10.2026)
+       AND v.archived_at IS NULL
+       -- «отказ» без показов — не размещение; с показами (успела открутить до отказа) — оплачивается, в сверке
+       AND (v.status <> :refused OR v.fact > 0)
+       AND (CAST(:pub AS integer) IS NULL OR v.publisher_id = :pub)
+    UNION ALL
+    SELECT 'p' || v.placement_id, 'приоритезация', v.placement_id, v.deal_id, v.publisher_id, v.site, v.brand,
+           v.service, v.surface, v.date_from, v.date_to, v.plan, v.fact, v.cpm, v.erid, v.status
+      FROM publisher_prio_placement_v v
+     WHERE to_char(v.date_from, 'YYYY-MM') = :p
+       AND (v.status <> :refused OR v.fact > 0)
+       AND (CAST(:pub AS integer) IS NULL OR v.publisher_id = :pub)
+     ORDER BY fact DESC, key"""
+
+
 def _placements(db: Session, period: str, publisher_id: Optional[int] = None) -> List[dict]:
-    rows = db.execute(text("""
-        SELECT v.placement_id, v.publisher_id, v.site, v.brand, v.service, v.surface, v.date_from, v.date_to,
-               v.plan, v.fact, v.cpm, v.erid, v.status
-          FROM publisher_placement_v v
-         WHERE to_char(v.date_from, 'YYYY-MM') = :p
-           -- архивное = снятое нами (правило 16.09.2026) — в сверку не идёт; витрина отдаёт его с отметкой (29.10.2026)
-           AND v.archived_at IS NULL
-           -- «отказ» без показов — не размещение; с показами (успела открутить до отказа) — оплачивается, в сверке
-           AND (v.status <> :refused OR v.fact > 0)
-           AND (CAST(:pub AS integer) IS NULL OR v.publisher_id = :pub)
-         ORDER BY v.fact DESC, v.placement_id"""),
-        {"p": period, "refused": REFUSED, "pub": publisher_id}).mappings().all()
-    return [dict(r) for r in rows]
+    rows = db.execute(text(_MONTH_SQL), {"p": period, "refused": REFUSED, "pub": publisher_id}).mappings().all()
+    return [{**dict(r), "placement_id": r["key"]} for r in rows]
 
 
 def _requests(db: Session, period: str) -> Dict[int, dict]:
@@ -73,8 +84,9 @@ def _requests(db: Session, period: str) -> Dict[int, dict]:
                  WHERE m.request_id = r.id AND m.side <> 'система') AS messages,
                (SELECT count(*) FROM publisher_request_message m WHERE m.request_id = r.id AND m.side = 'площадка'
                    AND m.created_at > COALESCE(r.our_seen_at, '-infinity'::timestamp)) AS unread,
-               (SELECT array_agg(l.target_id ORDER BY l.target_id) FROM publisher_recon_line l
-                 WHERE l.request_id = r.id) AS line_targets,
+               ARRAY(SELECT 't' || l.target_id FROM publisher_recon_line l WHERE l.request_id = r.id
+                     UNION ALL
+                     SELECT 'p' || l.prio_placement_id FROM publisher_recon_prio_line l WHERE l.request_id = r.id) AS line_targets,
                pb.domain AS site, pb.cpm_contract AS cpm
           FROM publisher_request r LEFT JOIN publisher_recon rc ON rc.request_id = r.id
           JOIN sales_publishers pb ON pb.id = r.publisher_id
@@ -186,22 +198,24 @@ def detail(db: Session, publisher_id: int, period: str, today: Optional[date] = 
 
 def campaigns(db: Session, places: List[dict]) -> List[dict]:
     """Кампании месяца для модалки и выгрузки — одна сборка на оба места."""
-    colors = _service_colors(db, [p["placement_id"] for p in places])
-    return [{**{k: p[k] for k in ("placement_id", "brand", "service", "surface", "erid", "status")},
-             "service_color": colors.get(p["placement_id"]),
+    colors = _service_colors(db, [p["deal_id"] for p in places if p.get("deal_id")])
+    return [{**{k: p[k] for k in ("placement_id", "kind", "brand", "service", "surface", "erid", "status")},
+             "service_color": colors.get(p.get("deal_id")),
              "date_from": p["date_from"].isoformat() if p["date_from"] else None,
              "date_to": p["date_to"].isoformat() if p["date_to"] else None,
              "plan": int(p["plan"] or 0), "fact": int(p["fact"] or 0), "amount": _amount(int(p["fact"] or 0), p["cpm"])}
             for p in places]
 
 
-def _service_colors(db: Session, target_ids: List[int]) -> Dict[int, Optional[str]]:
-    """Цвет услуги сделки из справочника услуг — маркер в таблице кампаний (дизайн 26.10)."""
-    if not target_ids:
+def _service_colors(db: Session, deal_ids: List[int]) -> Dict[int, Optional[str]]:
+    """Цвет услуги сделки из справочника услуг — маркер в таблице кампаний (дизайн 26.10); по сделке — и для РК,
+    и для приоритезации."""
+    if not deal_ids:
         return {}
     return {r[0]: r[1] for r in db.execute(text("""
-        SELECT t.id, s.color FROM launch_prep_target t JOIN sales_deals d ON d.id = t.deal_id
-          LEFT JOIN sales_services s ON s.id = COALESCE(d.service_id, (SELECT x.id FROM sales_services x WHERE x.name = d.product)) WHERE t.id = ANY(:ids)"""), {"ids": target_ids})}
+        SELECT d.id, s.color FROM sales_deals d
+          LEFT JOIN sales_services s ON s.id = COALESCE(d.service_id, (SELECT x.id FROM sales_services x WHERE x.name = d.product))
+         WHERE d.id = ANY(:ids)"""), {"ids": list(set(deal_ids))})}
 
 
 def thread(db: Session, request_id: int) -> List[dict]:
@@ -254,6 +268,6 @@ def _plain_month(db: Session, period: str) -> Dict[int, dict]:
     return out
 
 
-def target_facts(db: Session, publisher_id: int, period: str) -> Dict[int, int]:
-    """Наш факт по размещениям площадки за месяц — основа разнесения итога."""
+def target_facts(db: Session, publisher_id: int, period: str) -> Dict[str, int]:
+    """Наш факт по строкам площадки за месяц (ключ «t<id>» / «p<id>») — основа разнесения итога."""
     return {p["placement_id"]: int(p["fact"] or 0) for p in _placements(db, period, publisher_id)}

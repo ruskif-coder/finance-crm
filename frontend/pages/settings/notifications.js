@@ -167,7 +167,7 @@ export default function NotificationSettings() {
           случай»: у правил четыре канала плюс пороги, у журнала шесть колонок, у
           шаблонов три полосы сразу — список карточек, редактор и письмо. На 1320 всё
           это жило в горизонтальной прокрутке, то есть половина экрана была не видна. */}
-      <div style={{ maxWidth: 2500, padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
+      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="notifications" />
 
         {isAdmin && (

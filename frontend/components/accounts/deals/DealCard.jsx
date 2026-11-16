@@ -9,6 +9,7 @@ import api, { auth } from '@/lib/api'
 import { MONO } from '@/components/salesTableKit'
 import { CopyIcon } from '@/components/CopyCode'
 import { dm } from '@/lib/salesFormat'
+import { periodEnd } from '@/lib/dates'
 import { mln } from '@/components/accounts/dashboard/ladder'
 import { CAP, ini } from '@/components/accounts/deals/nowWidgets'
 
@@ -104,7 +105,7 @@ export default function DealCard({ row: r, canEdit, onOpen, onAction, onSnooze }
         {/* Период РК — как в колонке «Период» списка: месяц, под ним даты (владелец 14.11.2026) */}
         <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontFamily: MONO, whiteSpace: 'nowrap' }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: r.period_from ? 'var(--text-primary)' : 'var(--text-faint)' }}>{r.period_from ? r.period_from.slice(0, 7) : '—'}</span>
-          {!!r.period_from && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{dm(r.period_from)}–{dm(r.period_to)}</span>}
+          {!!r.period_from && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{dm(r.period_from)}–{dm(periodEnd(r.period_from, r.period_to))}</span>}
         </span>
       </div>
       <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)', borderRadius: 10, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>

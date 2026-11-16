@@ -88,6 +88,7 @@ export default function TrafficCatalog() {
   const [detail, setDetail] = useState(null)
   const [tab, setTab] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [surfaceErr, setSurfaceErr] = useState('')
   const [editCode, setEditCode] = useState(false)
   const [codeVal, setCodeVal] = useState('')
   const [codeErr, setCodeErr] = useState('')   // отказ по коду — строкой рядом с полем
@@ -212,13 +213,20 @@ export default function TrafficCatalog() {
   }))
 
   const saveSurface = async () => {
-    setSaving(true)
+    setSaving(true); setSurfaceErr('')
     try {
+      // Базовая ставка (16.11.2026): пусто — сервер ставит 100; запятая принимается как точка.
+      const bid = String(surface.base_bid ?? '').trim().replace(',', '.')
+      // Опечатка («1.6x») уходила бы NaN → null → сервер ставил 100 и молча сбрасывал коэффициент площадки (ревью 16.11.2026)
+      if (bid !== '' && !(Number(bid) > 0)) { setSurfaceErr('Базовая ставка — число больше 0, например 100 или 161'); return }
       await api.put(`/traffic-catalog/surface/${surface.id}`, {
         ms_publisher_id: surface.ms_publisher_id || null,
         default_ms_block_id: surface.default_ms_block_id || null,
+        base_bid: bid === '' ? null : Number(bid),
       }, auth())
       await reloadDetail()
+    } catch (e) {
+      setSurfaceErr(detailText(e, 'Не удалось сохранить'))
     } finally { setSaving(false) }
   }
 
@@ -459,7 +467,7 @@ export default function TrafficCatalog() {
 
                 {surface && (
                   <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderTop: 'none', padding: '14px 18px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 160px auto', gap: 16, alignItems: 'end' }}>
                       <label style={{ fontSize: 12 }}>
                         <div style={{ ...CAP, marginBottom: 4 }}>ID паблишера в МС</div>
                         <input style={{ ...inp, width: '100%', fontFamily: MONO }} disabled={!mayEdit}
@@ -470,11 +478,18 @@ export default function TrafficCatalog() {
                         <input style={{ ...inp, width: '100%', fontFamily: MONO }} disabled={!mayEdit}
                           value={surface.default_ms_block_id || ''} onChange={(e) => patchSurface({ default_ms_block_id: e.target.value })} />
                       </label>
+                      <label style={{ fontSize: 12 }}>
+                        <div style={{ ...CAP, marginBottom: 4 }}>Базовая ставка</div>
+                        <input style={{ ...inp, width: '100%', fontFamily: MONO, textAlign: 'right' }} disabled={!mayEdit} inputMode="decimal"
+                          value={surface.base_bid ?? ''} onChange={(e) => patchSurface({ base_bid: e.target.value })} placeholder="100" />
+                      </label>
                       {mayEdit && <button style={btn(true)} disabled={saving} onClick={saveSurface}>Сохранить</button>}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>
                       Блок по умолчанию авто-цепляется к креативу, но статистика по нему в кабинете площадки не показывается.
+                      {' '}Базовая ставка уходит в DSP коэффициентом на блоках площадки: ставка ÷ ставка источника (100). Обычно 100.
                     </div>
+                    {!!surfaceErr && <div style={{ fontSize: 12, color: 'var(--danger-fg)', marginTop: 6 }}>{surfaceErr}</div>}
                   </div>
                 )}
 

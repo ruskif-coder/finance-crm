@@ -32,6 +32,8 @@ export default function TurnGroups({ rows, allOpen, sortKey, sortDir, onSort, re
           <div key={g.key} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)' }}>
             <div onClick={() => setOpen(o => ({ ...o, [g.key]: !isOpen }))}
               style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', cursor: 'pointer', borderRadius: isOpen ? '16px 16px 0 0' : 16,
+                // раскрытая группа: заголовок отделён от шапки колонок чертой и зазором (владелец 16.11.2026: «плохо разведены»)
+                borderBottom: isOpen ? '1px solid var(--border-card)' : 'none',
                 background: g.tone === 'mine' ? 'var(--bg-card)' : 'var(--bg-subtle)' }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: DOT[g.tone] }} />
               <span style={{ fontSize: 14, fontWeight: 800 }}>{g.title}</span>
@@ -43,7 +45,8 @@ export default function TurnGroups({ rows, allOpen, sortKey, sortDir, onSort, re
             </div>
             {isOpen && (
               <div style={{ padding: '0 8px 6px' }}>
-                <div style={{ position: 'sticky', top: STICKY_TOP, zIndex: 4, background: 'var(--bg-card)' }}>
+                {/* сверху 12 px — по замеру равно нижнему отступу подписей (SortHead: 0 8px 10px + межстрочное), чтобы шапка стояла посередине (16.11.2026) */}
+                <div style={{ position: 'sticky', top: STICKY_TOP, zIndex: 4, background: 'var(--bg-card)', paddingTop: 12 }}>
                   <QueueHead sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 </div>
                 {sorted.map(r => (

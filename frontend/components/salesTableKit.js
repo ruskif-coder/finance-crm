@@ -8,6 +8,9 @@ import { overlayClose } from '@/lib/overlay'
 
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 export const UI = "'Manrope', system-ui, sans-serif"
+// Линейка ширин экранов (владелец 13.11.2026): базово десктопные экраны верстаются под 1600 · 1920 · 2560 —
+// ширина контейнера берётся отсюда, промежуточных значений новым экранам не заводить.
+export const PAGE_W = { base: 1600, wide: 1920, xl: 2560 }
 
 // ─── Единая шкала z-index ──────────────────────────────────────────────
 // ЕДИНЫЙ источник правды для наложений. Не хардкодить zIndex по месту — брать отсюда,

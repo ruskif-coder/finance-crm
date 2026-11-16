@@ -542,11 +542,19 @@ def deal_publishers(db: Session, deal_id: int) -> set:
     """Площадки РК — те, кого аккаунт завёл получателями в сделке (владелец 30.09.2026),
     без архивных. Раньше РК наполнялась всеми площадками услуги из справочника, и в ней
     стояли площадки, которых аккаунт в сделку не брал (в т.ч. ушедший в архив dialog.ru):
-    доли и индекс делились на площадки, которые крутить не будут."""
+    доли и индекс делились на площадки, которые крутить не будут.
+
+    Площадки приоритезации (кроме отказавших) — тоже площадки РК (16.11.2026): по строке РК ночной сбор и итог файлом
+    пишут показы площадки, а сверка с площадкой и итоговая сверка сделки видят их по площадкам, а не «РК целиком»."""
     return {r[0] for r in db.execute(text("""
-        SELECT DISTINCT t.publisher_id FROM launch_prep_target t
+        SELECT t.publisher_id FROM launch_prep_target t
           JOIN sales_publishers p ON p.id = t.publisher_id
          WHERE t.deal_id = :d AND p.status <> :arch
+        UNION
+        SELECT pp.publisher_id FROM prio_placements pp
+          JOIN prio_requests r ON r.id = pp.request_id
+          JOIN sales_publishers p ON p.id = pp.publisher_id
+         WHERE r.deal_id = :d AND pp.status <> 'отказ' AND p.status <> :arch
     """), {"d": deal_id, "arch": PUBLISHER_ARCHIVE_STATUS})}
 
 

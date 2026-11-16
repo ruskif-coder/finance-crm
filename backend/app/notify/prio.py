@@ -45,6 +45,13 @@ def goal_reached(db: Session, deal, item: dict) -> None:
                  "РК в системе приоритезации остановлена. Докрутить — «Старт» в карточке сделки.")
 
 
+def auto_launched(db: Session, deal, p) -> None:
+    """Автодозапуск (16.11.2026): площадка согласовала и получила ЕРИД, когда РК уже шла, — система запустила её сама."""
+    _inward(db, "prio_auto_launched", deal, title="площадка дозапущена",
+            body=f"{_pub_name(db, p.publisher_id)} согласовала и получила ЕРИД — РК в системе приоритезации запущена "
+                 "автоматически. Выключить дозапуск — переключатель в расхлопе сделки.", tone="ok")
+
+
 def stop_failed(db: Session, deal, item: dict) -> None:
     _inward(db, "prio_stop_failed", deal, title="план выполнен, а остановить не удалось",
             body=f"{_pub_name(db, item['publisher_id'])}: {item['fact']} из {item['limit']}, система не приняла стоп — "

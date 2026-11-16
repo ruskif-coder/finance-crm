@@ -1208,6 +1208,9 @@ class SalesPublisherSurface(Base):
     # статистики кабинета). На каждую web/app — свои; ios/android (платформы) — на будущее.
     ms_publisher_id = Column(String)
     default_ms_block_id = Column(String)
+    # Базовая ставка площадки в DSP (миграция 2026-11-16_surface_base_bid.sql, владелец 16.11.2026: всем 100, Куперу 161).
+    # Уходит коэффициентом на блоках площадки в таргетинге креатива — app/dsp/targeting.py, `bid_rate_for`.
+    base_bid = Column(Numeric(10, 2), nullable=False, default=100, server_default="100")
     integration_status = Column(String, nullable=False, default="НЕТ")
     # Наличие строки отвечает «поверхность у площадки есть», флаг — «мы с ней работаем».
     # Раньше это было склеено в статусе, и «приложения нет» не отличалось от

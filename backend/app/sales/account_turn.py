@@ -43,6 +43,9 @@ def _sandbox(b) -> dict:
 
 
 def _prep(b) -> dict:
+    if b.flow == FLOW.PRIO:
+        ready_n, total, _live, draft = getattr(b, "prio", (0, 0, 0, 0))
+        return _t(True) if ready_n or draft or not total else _t(False, "площадки")   # ждём согласования и ЕРИД — не наш ход
     if b.flow in ACCOUNT_LAUNCH:
         return _t(True)                                  # собирает и запускает сам
     done, total = b.creatives or (0, 0)
@@ -63,6 +66,8 @@ def _live(b) -> dict:
     if lagging(dl):
         # Полный цикл: темп ведёт трафик — ход его, строка красная тревогой (владелец 14.11.2026); свой запуск — у аккаунта.
         return _t(True) if own else _t(False, "трафик — отставание")
+    if b.flow == FLOW.PRIO and getattr(b, "prio", (0,))[0]:
+        return _t(True)                                  # есть незапущенные готовые площадки — «Дозапустить» (16.11.2026)
     # Внешний запуск (контур аккаунта) — наших площадок нет, крутит внешняя система (владелец 14.11.2026)
     who = {FLOW.ACCOUNT: "внешняя система", FLOW.PRIO: "площадки"}.get(b.flow, "трафик")
     return _t(False, who, good=True)

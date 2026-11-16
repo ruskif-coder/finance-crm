@@ -7,9 +7,10 @@ from app.audit import log_action, require_admin
 from app.permissions import require_permission
 from app.routers.auth import get_password_hash
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import date, datetime, timedelta, time as dt_time
 from app.timez import MSK_OFFSET
+from app import users_events
 
 router = APIRouter()
 
@@ -127,20 +128,34 @@ def access_overview(db: Session = Depends(get_db),
 @router.get("/notification-profiles")
 def notification_profiles(db: Session = Depends(get_db),
                           current_user: User = Depends(require_admin)):
-    """Профили уведомлений для селектора в карточке пользователя. Отдельный лёгкий
-    список, чтобы страница пользователей не тянула настройки уведомлений целиком."""
+    """Профили уведомлений для экрана пользователей. Отдельный лёгкий список, чтобы страница пользователей не тянула
+    настройки уведомлений целиком. `by_role` — с какого профиля начинает новый сотрудник роли (16.11.2026: новая строка
+    на экране показывает его сразу, а не после сохранения)."""
     from app.notify.models import NotificationProfile
     rows = db.query(NotificationProfile).order_by(NotificationProfile.id).all()
-    return [{"id": p.id, "label": p.label, "is_default": p.is_default} for p in rows]
+    starts = {r.key: _start_profile_id(db, r) for r in db.query(Role).all()}
+    return {"profiles": [{"id": p.id, "label": p.label, "is_default": p.is_default} for p in rows],
+            "by_role": {k: v for k, v in starts.items() if v}}
 
 
-@router.post("/")
-def create_user(
-    data: UserCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
-):
-    existing = db.query(User).filter(User.email == data.email).first()
+def _start_profile_id(db: Session, role: Role) -> Optional[int]:
+    from app.notify.models import NotificationProfile
+    from app.notify.seed_profiles import start_profile_key
+    key = start_profile_key(role.key, role.staff_group)
+    if not key:
+        return None
+    prof = db.query(NotificationProfile).filter(NotificationProfile.key == key).first()
+    return prof.id if prof else None
+
+
+def _create(db: Session, current_user, data: UserCreate) -> tuple:
+    """Создать пользователя без коммита: (пользователь, строка журнала). Общая для ручки и пакета."""
+    if not (data.name or "").strip():
+        raise HTTPException(status_code=400, detail="Укажите имя")
+    email = (data.email or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Некорректный email")
+    existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     if len(data.password) < 8:
@@ -153,42 +168,37 @@ def create_user(
     # раскладке. Без этого новый сотрудник заводился с NULL и не попадал ни в один
     # профиль — а в настройках уведомлений все профили показывали «0 человек»,
     # хотя людей в системе полтора десятка.
-    profile_id = data.notification_profile_id or None
-    if not profile_id:
-        from app.notify.seed_profiles import ROLE_TO_PROFILE
-        from app.notify.models import NotificationProfile
-        key = ROLE_TO_PROFILE.get(role.key)
-        if key:
-            prof = db.query(NotificationProfile).filter(NotificationProfile.key == key).first()
-            profile_id = prof.id if prof else None
+    profile_id = data.notification_profile_id or _start_profile_id(db, role)
 
     user = User(
-        name=data.name,
-        email=data.email,
+        name=data.name.strip(),
+        email=email,
         hashed_password=get_password_hash(data.password),
         role_id=role.id,
         notification_profile_id=profile_id,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    log_action(db, current_user, "create_user", entity_type="user", entity_id=user.id,
-               details=f"Создан пользователь {user.name} ({user.email}), роль {role.label}")
-    return {"id": user.id, "message": "Пользователь создан"}
+    db.flush()
+    return user, f"Создан пользователь {user.name} ({user.email}), роль {role.label}"
 
 
-@router.put("/{user_id}")
-def update_user(
-    user_id: int,
-    data: UserUpdate,
+@router.post("/")
+def create_user(
+    data: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    user, details = _create(db, current_user, data)
+    db.commit()
+    db.refresh(user)
+    log_action(db, current_user, "create_user", entity_type="user", entity_id=user.id, details=details)
+    users_events.created(db, current_user, user)
+    return {"id": user.id, "message": "Пользователь создан"}
 
+
+def _update(db: Session, current_user, user: User, data: UserUpdate) -> list:
+    """Применить правку без коммита; вернуть список изменений для журнала. Общая для ручки и пакета."""
+    user_id = user.id
     changes = []
 
     if data.name is not None and data.name != user.name:
@@ -244,20 +254,71 @@ def update_user(
                            f"{labels.get(new_pid, '— по умолчанию')}")
             user.notification_profile_id = new_pid
 
-    db.commit()
+    return changes
 
-    # Смена email/пароля админом снимает лок­аут по НОВОМУ email: иначе пользователь мог
+
+def _after_update(db: Session, current_user, user: User, changes: list) -> None:
+    # Смена email/пароля админом снимает локаут по НОВОМУ email: иначе пользователь мог
     # остаться заблокированным на свежих учётных данных из-за прежних неудачных попыток
     # (например, этот email вводили с неверным паролем ещё до его назначения).
     if any(c.startswith("email:") or c == "пароль изменён" for c in changes):
         from app.routers.auth import _clear_login_attempts, _norm_email
         _clear_login_attempts(db, _norm_email(user.email))
-
     if changes:
         log_action(db, current_user, "update_user", entity_type="user", entity_id=user.id,
                    details=f"{user.name} ({user.email}): " + "; ".join(changes))
 
+
+@router.put("/batch")
+def save_users_batch(data: "UsersBatch", db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    """Все правки экрана «Пользователи» одним запросом (макет 16.11.2026). Объявлена ДО `/{user_id}`: иначе «batch»
+    разбирался бы как номер пользователя и отвечал 422."""
+    return _save_batch(db, current_user, data)
+
+
+@router.put("/{user_id}")
+def update_user(
+    user_id: int,
+    data: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    before = users_events.before_of(db, user)
+    changes = _update(db, current_user, user, data)
+    db.commit()
+    _after_update(db, current_user, user, changes)
+    users_events.updated(db, current_user, user, before, changes)
     return {"message": "Пользователь обновлён"}
+
+
+def _delete(db: Session, current_user, user: User) -> str:
+    """Удаление пользователя (2026-07-16). Только деактивированных — как страховка от
+    случайного удаления рабочей учётки. Пользователь с созданными операциями не удаляется
+    (created_by — авторство должно сохраниться), его оставляем деактивированным.
+    Записи аудита сохраняются: user_id обнуляется, user_name денормализован и остаётся."""
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
+    if user.is_active:
+        raise HTTPException(status_code=400, detail="Сначала деактивируйте пользователя")
+
+    from app.models import Operation
+    op_count = db.query(Operation).filter(Operation.created_by == user.id).count()
+    if op_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"У пользователя {op_count} созданных операций — удалить нельзя, оставьте деактивированным"
+        )
+
+    # Журнал действий не трогаем: отвязываем user_id, имя остаётся в денормализованном user_name
+    db.query(AuditLog).filter(AuditLog.user_id == user.id).update({"user_id": None})
+
+    details = f"Удалён пользователь {user.name} ({user.email})"
+    db.delete(user)
+    db.flush()
+    return details
 
 
 @router.delete("/{user_id}")
@@ -266,36 +327,92 @@ def delete_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
-    """Удаление пользователя (2026-07-16). Только деактивированных — как страховка от
-    случайного удаления рабочей учётки. Пользователь с созданными операциями не удаляется
-    (created_by — авторство должно сохраниться), его оставляем деактивированным.
-    Записи аудита сохраняются: user_id обнуляется, user_name денормализован и остаётся."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
-    if user.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
-    if user.is_active:
-        raise HTTPException(status_code=400, detail="Сначала деактивируйте пользователя")
-
-    from app.models import Operation
-    op_count = db.query(Operation).filter(Operation.created_by == user_id).count()
-    if op_count:
-        raise HTTPException(
-            status_code=400,
-            detail=f"У пользователя {op_count} созданных операций — удалить нельзя, оставьте деактивированным"
-        )
-
-    # Журнал действий не трогаем: отвязываем user_id, имя остаётся в денормализованном user_name
-    db.query(AuditLog).filter(AuditLog.user_id == user_id).update({"user_id": None})
-
-    name, email = user.name, user.email
-    db.delete(user)
+    who = f"{user.name} ({user.email})"
+    details = _delete(db, current_user, user)
     db.commit()
-
-    log_action(db, current_user, "delete_user", entity_type="user", entity_id=user_id,
-               details=f"Удалён пользователь {name} ({email})")
+    log_action(db, current_user, "delete_user", entity_type="user", entity_id=user_id, details=details)
+    users_events.deleted(db, current_user, user_id, who)
     return {"message": "Пользователь удалён"}
+
+
+# ── Пакетное сохранение (экран «Пользователи» по макету 16.11.2026) ──────────────────────────────────────────────────
+class UserPatch(BaseModel):
+    """Правка одной строки экрана: новая (`new`), удаление (`delete`) или изменение полей существующей."""
+    id: Optional[int] = None
+    new: bool = False
+    delete: bool = False
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    notification_profile_id: Optional[int] = None
+    password: Optional[str] = None
+
+
+class UsersBatch(BaseModel):
+    changes: List[UserPatch]
+
+
+def _row_label(p: UserPatch, user: Optional[User]) -> str:
+    return (p.name or "").strip() or (user.name if user else "") or (p.email or "").strip() or "новая строка"
+
+
+def _apply_patch(db: Session, current_user, p: UserPatch, journal: list, created: list) -> None:
+    if p.new:
+        user, details = _create(db, current_user, UserCreate(
+            name=p.name or "", email=p.email or "", password=p.password or "", role=p.role or "viewer",
+            notification_profile_id=p.notification_profile_id))
+        if p.is_active is False:
+            user.is_active = 0
+            details += ", деактивирован"
+        created.append(user.id)
+        journal.append(("create", user, details, None))
+        return
+    user = db.query(User).filter(User.id == p.id).first() if p.id else None
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if p.delete:
+        uid, who = user.id, f"{user.name} ({user.email})"
+        journal.append(("delete", uid, _delete(db, current_user, user), who))
+        return
+    before = users_events.before_of(db, user)
+    journal.append(("update", user, _update(db, current_user, user, UserUpdate(
+        name=p.name, email=p.email, role=p.role, is_active=p.is_active, password=p.password,
+        notification_profile_id=p.notification_profile_id)), before))
+
+
+def _save_batch(db: Session, current_user, data: UsersBatch) -> dict:
+    """Все правки экрана — одной транзакцией. Не прошла одна — не применяется ничего, ответ называет строку.
+    Проверки — те же функции, что у ручек «по одному» (`_create`/`_update`/`_delete`)."""
+    if not data.changes:
+        raise HTTPException(status_code=400, detail="Нечего сохранять")
+    journal, created = [], []     # журнал — в порядке строк запроса
+    try:
+        for p in data.changes:
+            try:
+                _apply_patch(db, current_user, p, journal, created)
+            except HTTPException as e:
+                user = db.query(User).filter(User.id == p.id).first() if p.id and not p.new else None
+                raise HTTPException(status_code=e.status_code, detail=f"{_row_label(p, user)}: {e.detail}") from e
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    # Журнал и уведомления — после коммита и в порядке строк запроса: не сохранилось — не о чем сообщать.
+    for kind, a, b, c in journal:
+        if kind == "create":
+            log_action(db, current_user, "create_user", entity_type="user", entity_id=a.id, details=b)
+            users_events.created(db, current_user, a)
+        elif kind == "update":
+            _after_update(db, current_user, a, b)
+            users_events.updated(db, current_user, a, c, b)
+        else:
+            log_action(db, current_user, "delete_user", entity_type="user", entity_id=a, details=b)
+            users_events.deleted(db, current_user, a, c)
+    return {"saved": len(data.changes), "created": created}
 
 
 # Подписи действий — в `app/audit_labels.py` (одна точка на журнал).

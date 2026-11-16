@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { MONO } from '@/components/salesTableKit'
+import BusyAct from '@/components/BusyAct'
 import { downloadMp } from '@/lib/mpDownload'
 import { downloadBlob, downloadDealCreatives } from '@/lib/dealDocs'
 import { fmtDateTimeShort } from '@/lib/dates'
@@ -15,6 +16,7 @@ import MasterDocs from '@/components/deal/MasterDocs'
 import ClosingCompact from '@/components/closing/ClosingCompact'
 import PrioFactCard from '@/components/prio/PrioFactCard'
 import AssemblyNow from '@/components/accounts/deals/AssemblyNow'
+import PrioLaunch from '@/components/accounts/deals/PrioLaunch'
 import { mln } from '@/components/accounts/dashboard/ladder'
 import { ACT, BOX, CAP, Campaign, ICON, NEXT, OwnRun, Steps, Tile, headline, ini, tilesOf } from '@/components/accounts/deals/nowWidgets'
 
@@ -82,8 +84,8 @@ function Docs({ d, now, links }) {
       <div style={ROW_BOX}>
         <span style={{ fontSize: 12.5, fontWeight: 700, flex: 1 }}>МП наш</span>
         {mp ? <>
-          <span onClick={() => downloadMp(mp, 'pdf')} style={ACT}>PDF</span>
-          <span onClick={() => downloadMp(mp, 'xlsx')} style={ACT}>XLS</span>
+          <BusyAct run={() => downloadMp(mp, 'pdf')} label="PDF" style={ACT} />
+          <BusyAct run={() => downloadMp(mp, 'xlsx')} label="XLS" style={ACT} />
           <a href={`/accounts/mp/${mp.id}`} style={{ ...ACT, textDecoration: 'none' }} title="Открыть конструктор">✎</a>
         </> : <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>не создан</span>}
       </div>
@@ -95,7 +97,8 @@ function Docs({ d, now, links }) {
       {(now?.slot === 'live' || now?.slot === 'recon') && (
         <div style={ROW_BOX}>
           <span style={{ fontSize: 12.5, fontWeight: 700, flex: 1, color: d.report_ready ? 'var(--text-primary)' : 'var(--text-muted)' }}>Отчёт по РК</span>
-          {d.report_ready ? <span onClick={() => downloadBlob(`/client-report/deal/${d.id}.xlsx`, `Отчёт_РК_${d.code || d.id}.xlsx`)} style={ACT}>XLS</span>
+          {d.report_ready ? <BusyAct label="XLS" title="Отчёт клиенту в Excel" style={ACT}
+            run={() => downloadBlob(`/client-report/deal/${d.id}.xlsx`)} />   /* имя — с сервера: «…_по_<последний день данных>» */
             : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>после первого дня показов</span>}
         </div>)}
       {(now?.slot === 'recon' || d.master_docs?.master) && (
@@ -139,12 +142,15 @@ function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide
   const a = row.action
   const hh = now?.head?.href || '#creatives'
   // Контур аккаунта: вместо «Продолжить сборку» — «Подтвердить запуск» в блоке сборки.
+  const prio = now?.flow === 'приоритезация'
   const goOn = now?.slot === 'prep' && !now.external_launch ? (hh.startsWith('#') ? `/sales/deals/${code}${hh}` : hh) : null
   return (
     <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12, flex: tight ? 'none' : 1 }}>
       {now ? <Steps steps={now.steps} at={now.at} /> : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{err || 'Загрузка…'}</span>}
       {/* Сборка — в виде блока ОРД; итоговая сверка — компактный блок по хендоффу design_handoff_final_recon (14.11.2026) */}
       {now?.slot === 'prep' && <AssemblyNow now={now} code={code} hot={hot} cols={tight ? 2 : 4} dealId={row.id} canEdit={canEdit} onDone={onReload} />}
+      {/* Приоритезация до старта: чек-лист площадок и «Запустить» (16.11.2026) */}
+      {now?.slot === 'prep' && prio && <PrioLaunch dealId={row.id} canEdit={canEdit} onDone={onReload} />}
       {/* Приоритезация на закрытии: только факт по площадкам (файл / сервис площадки), без настройки запроса */}
       {now?.slot === 'recon' && now.flow === 'приоритезация' && <PrioFactCard dealId={row.id} canEdit={canEdit}
         cardStyle={{ border: '1px solid var(--border-card)', borderRadius: 12, padding: '0 16px 14px' }} />}
@@ -161,6 +167,8 @@ function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide
           </div>
           {now.campaign && <Campaign c={now.campaign} wide={wide} endIn={now.end_in} now={headline(now, row)} />}
           {now.slot === 'live' && !now.campaign && now.own && <OwnRun o={now.own} flow={now.flow} />}
+          {/* Приоритезация в размещении: площадка / план / факт, дозапуск (16.11.2026) */}
+          {now.slot === 'live' && prio && <PrioLaunch dealId={row.id} live canEdit={canEdit} onDone={onReload} />}
           {(now.slot === 'booking' || now.slot === 'mp_prep' || now.slot === 'mp_sent') && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8 }}>
               {tilesOf(now, row, d).map(([l, v, s, fg]) => <Tile key={l} l={l} v={v} s={s} fg={fg} />)}</div>)}
@@ -176,7 +184,8 @@ function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: tight ? 0 : 'auto' }}>
         {goOn && <a href={goOn} target="_blank" rel="noopener noreferrer" style={{ height: 32, padding: '0 16px', borderRadius: 9, background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700,
           display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Продолжить сборку →</a>}
-        {a && !goOn && now?.slot !== 'recon' && !now?.external_launch && <button type="button" onClick={() => onAction(row, a)} disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
+        {/* у приоритезации «Запустить / Дозапустить» — в блоке площадок; кнопка строки «раскрыть» здесь свернула бы расхлоп */}
+        {a && !goOn && now?.slot !== 'recon' && !now?.external_launch && !(prio && a.do === 'expand') && <button type="button" onClick={() => onAction(row, a)} disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
           style={{ height: 32, padding: '0 16px', borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>}
         <button type="button" onClick={() => onSnooze(row)} style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border-card)',
           background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>⏱ Отложить</button>

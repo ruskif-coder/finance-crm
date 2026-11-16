@@ -56,8 +56,20 @@ def geo_items(regions=GEO_DEFAULT) -> dict:
     return {gid: _checked(name=name) for gid, name in regions}
 
 
-def placement_items(block_ids: Iterable[str]) -> dict:
-    return {str(b).strip(): _checked() for b in block_ids if str(b or "").strip()}
+def placement_items(block_ids: Iterable[str], rate=1) -> dict:
+    return {str(b).strip(): _checked(bid=rate) for b in block_ids if str(b or "").strip()}
+
+
+def bid_rate_for(publisher_bid, source_bid) -> float:
+    """Коэффициент на блоках площадки: её базовая ставка / ставка источника (владелец 16.11.2026: Купер 161 при 100 →
+    1.61). Ставка источника общая на кампанию, а приложения одной РК делят источник app — поднять её значило бы поднять
+    всем; поэтому ставка площадки уходит коэффициентом в таргетинге её блоков. Нет ставки или она равна источнику — 1."""
+    try:
+        from app.final_recon.money import r2
+        r = r2(float(publisher_bid) / float(source_bid)) if publisher_bid and source_bid else 1
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 1
+    return 1 if r == 1 else r
 
 
 def frequency_keys(freq) -> List[str]:
@@ -167,26 +179,28 @@ def _media_plan(db: Session, deal_id: int) -> tuple:
     return row[0], (aud if isinstance(aud, list) else ([aud] if aud else None))
 
 
-def _blocks(db: Session, publisher_ids) -> Dict[tuple, list]:
-    """(площадка, поверхность) → id блоков DSP: активные блоки реестра и блок по умолчанию
-    поверхности («Block SIMB» — DSP цепляет его к креативу сам; выпади он из белого списка,
-    креатив перестал бы показываться и там)."""
+def _blocks(db: Session, publisher_ids) -> Dict[tuple, tuple]:
+    """(площадка, поверхность) → (id блоков DSP, базовая ставка поверхности): активные блоки реестра и блок по умолчанию
+    поверхности («Block SIMB» — DSP цепляет его к креативу сам; выпади он из белого списка, креатив перестал бы
+    показываться и там)."""
     ids = list(publisher_ids)
     if not ids:
         return {}
     out: Dict[tuple, list] = {}
-    for pid, kind, bid in db.execute(text("""
-        SELECT s.publisher_id, s.kind, b.ms_block_id
+    bids: Dict[tuple, float] = {}
+    for pid, kind, bid, base in db.execute(text("""
+        SELECT s.publisher_id, s.kind, b.ms_block_id, s.base_bid
           FROM sales_publisher_surfaces s
           JOIN publisher_block b ON b.surface_id = s.id
          WHERE s.publisher_id = ANY(:p) AND b.is_active AND coalesce(b.ms_block_id, '') <> ''
          UNION
-        SELECT s.publisher_id, s.kind, s.default_ms_block_id
+        SELECT s.publisher_id, s.kind, s.default_ms_block_id, s.base_bid
           FROM sales_publisher_surfaces s
          WHERE s.publisher_id = ANY(:p) AND coalesce(s.default_ms_block_id, '') <> ''
     """), {"p": ids}).all():
         out.setdefault((pid, kind), []).append(str(bid))
-    return {k: sorted(set(v), key=lambda x: (len(x), x)) for k, v in out.items()}
+        bids[(pid, kind)] = float(base) if base is not None else None
+    return {k: (sorted(set(v), key=lambda x: (len(x), x)), bids.get(k)) for k, v in out.items()}
 
 
 def plan_for(db: Session, camp, rows: list) -> dict:
@@ -204,22 +218,25 @@ def plan_for(db: Session, camp, rows: list) -> dict:
             surf_of_pair[pid] = (kind or "web").lower()
     blocks = _blocks(db, {r["placement"].publisher_id for r in rows})
 
-    surfaces = set()
-    creatives, no_blocks = {}, []
-    for r in rows:
-        cre, pl = r["creative"], r["placement"]
-        kind = surf_of_pair.get(cre.pair_id, "web")
-        surfaces.add(kind)
-        ids = blocks.get((pl.publisher_id, kind), [])
-        if not ids:
-            no_blocks.append(cre.id)
-            continue
-        creatives[cre.id] = {"placement": data(placement_items(ids))}
-
     try:
         bid = int(_setting(db, BID_SETTING) or DEFAULT_SOURCE_BID)
     except ValueError:
         bid = DEFAULT_SOURCE_BID
+
+    surfaces = set()
+    creatives, no_blocks, publisher_bids = {}, [], {}
+    for r in rows:
+        cre, pl = r["creative"], r["placement"]
+        kind = surf_of_pair.get(cre.pair_id, "web")
+        surfaces.add(kind)
+        ids, base = blocks.get((pl.publisher_id, kind), ([], None))
+        if not ids:
+            no_blocks.append(cre.id)
+            continue
+        rate = bid_rate_for(base, bid)
+        if rate != 1:
+            publisher_bids[cre.id] = base
+        creatives[cre.id] = {"placement": data(placement_items(ids, rate))}
     freq, audience = _media_plan(db, camp.deal_id)
     parsed = parse_audience(audience)
     socdem = parsed or dict(SOCDEM_DEFAULT)
@@ -245,6 +262,8 @@ def plan_for(db: Session, camp, rows: list) -> dict:
             "creatives_with_blocks": len(creatives),
             "blocks": sum(len(v["placement"]["items"]) for v in creatives.values()),
             "creatives_without_blocks": no_blocks,
+            # Креативы со своей ставкой площадки (не равной ставке источника): {креатив: ставка}.
+            "publisher_bids": publisher_bids,
         },
     }
 

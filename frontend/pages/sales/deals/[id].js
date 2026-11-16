@@ -10,11 +10,13 @@ import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import BriefFiles from '@/components/deal/BriefFiles'
 import MasterDocs, { masterDocsCount } from '@/components/deal/MasterDocs'
 import { dm, grp0 } from '@/lib/salesFormat'
+import { periodEnd } from '@/lib/dates'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import StageRequirements from '@/components/sales/StageRequirements'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '@/lib/dealDocs'
+import BusyAct from '@/components/BusyAct'
 import { downloadMp } from '@/lib/mpDownload'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -349,7 +351,7 @@ function mpSummary(rowCount, net, mp) {
 /** Ключевые значения МП для свёрнутого вида. Нейтральные: это цифры, а не состояния. */
 function mpFacts({ d, lines, net, gross, tImp, mp }) {
   const svc = [...new Set(lines.map(l => l.position).filter(Boolean))]
-  const period = d.period_from ? `${dm(d.period_from, '')} — ${dm(d.period_to, '')}` : (d.period || '—')
+  const period = d.period_from ? `${dm(d.period_from, '')} — ${dm(periodEnd(d.period_from, d.period_to), '')}` : (d.period || '—')
   return [
     { label: 'Услуга',
       value: svc.length === 1 ? svc[0] : svc.length ? `${svc.length} услуги` : '—',
@@ -962,7 +964,7 @@ export default function DealCard() {
               <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <span style={MONEY_LBL}>Период размещения</span>
                 <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                  {d.period || (d.period_from ? `${ru(d.period_from)} — ${ru(d.period_to)}` : '—')}
+                  {d.period || (d.period_from ? `${ru(d.period_from)} — ${ru(periodEnd(d.period_from, d.period_to))}` : '—')}
                 </span>
               </span>
             </div>
@@ -1464,8 +1466,8 @@ export default function DealCard() {
                   meta={mp ? `v${mp.version}${mp.updated_at ? ' · ' + dm(mp.updated_at, '') : ''}` : 'не создан'}
                   right={mp ? (
                     <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-                      <span onClick={() => downloadMp(mp, 'pdf')} style={DOC_ACT}>PDF</span>
-                      <span onClick={() => downloadMp(mp, 'xlsx')} style={DOC_ACT}>XLS</span>
+                      <BusyAct run={() => downloadMp(mp, 'pdf')} label="PDF" style={DOC_ACT} />
+                      <BusyAct run={() => downloadMp(mp, 'xlsx')} label="XLS" style={DOC_ACT} />
                       <a href={`/accounts/mp/${mp.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>↗</a>
                     </span>
                   ) : (canEdit ? <a href={`/accounts/mp/new?deal=${d.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>Создать</a> : null)} />

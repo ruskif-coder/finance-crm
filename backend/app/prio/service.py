@@ -232,7 +232,9 @@ def view(db: Session, deal) -> dict:
             "plan_volume": plan_volume(db, deal), "no_index": bool(idx) and not tot,
             "pipeline": [{"status": s, "count": counts[s]} for s in PIPELINE],
             "ready_to_send": sum(1 for x in rows if x["status"] == M.DRAFT and not x["missing"]),
-            "ready_to_launch": sum(1 for x in rows if x["status"] == M.APPROVED and x["erid_ready"])}
+            "ready_to_launch": sum(1 for x in rows if x["status"] == M.APPROVED and x["erid_ready"]),
+            "auto_launch_more": bool(r.auto_launch_more) if r else True,
+            "launched": any(x["status"] in (M.LIVE, M.STOPPED) for x in rows)}
 
 
 # ── правки аккаунта ───────────────────────────────────────────────────────────────────────────────

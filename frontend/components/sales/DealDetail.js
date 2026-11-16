@@ -4,8 +4,10 @@ import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar, PortalPopover, Z } from '../salesTableKit'
 import MasterDocs from '@/components/deal/MasterDocs'
+import { Cube } from '@/components/LogoLoader'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
+import BusyAct from '@/components/BusyAct'
 import { downloadMp } from '../../lib/mpDownload'
 import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
@@ -98,7 +100,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const getReport = async (group) => {
     setReportPick(false); setReportBusy(true)
     const q = group ? `?group=${encodeURIComponent(group)}` : ''
-    await blobGet(`/client-report/deal/${d.id}.xlsx${q}`, `Отчёт_РК_${d.code || d.id}${group ? '_' + group : ''}.xlsx`)
+    await blobGet(`/client-report/deal/${d.id}.xlsx${q}`)   // имя — с сервера: «…_по_<последний день данных>»
     setReportBusy(false)
   }
   const groups = d.report_groups || []
@@ -185,8 +187,8 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         onAdd={canEdit ? addMp : undefined}
         right={mpOur ? (
           <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-            <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => downloadMp(mpOur, 'pdf')}>PDF</button>
-            <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => downloadMp(mpOur, 'xlsx')}>XLS</button>
+            <BusyAct as="button" style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" label="PDF" run={() => downloadMp(mpOur, 'pdf')} />
+            <BusyAct as="button" style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" label="XLS" run={() => downloadMp(mpOur, 'xlsx')} />
             <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/accounts/mp/${mpOur.id}`)}><EditIcon /></button>
           </span>
         ) : undefined} />
@@ -309,7 +311,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
           disabled={reportBusy || !d.report_ready}
           title={d.report_ready ? 'Скачать отчёт клиенту по РК (Excel)' : 'Статистики по РК ещё нет — отчёт появится после первого дня с показами'}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, cursor: reportBusy ? 'wait' : (d.report_ready ? 'pointer' : 'not-allowed'), opacity: d.report_ready ? 1 : 0.5, fontFamily: UI }}>
-          <DownloadIcon /> {reportBusy ? 'Собираю…' : 'Отчёт'}{groups.length ? ' ▾' : ''}
+          {reportBusy ? <Cube variant="spinner" size={14} /> : <DownloadIcon />} {reportBusy ? 'Собираю…' : 'Отчёт'}{groups.length ? ' ▾' : ''}
         </button>
         <PortalPopover open={reportPick} minWidth={220} align="right" style={{ padding: 6, zIndex: Z.dropdown }}>
           {[[null, 'Вся РК'], ...groups.map(g => [g, `Группа «${g}»`])].map(([g, label]) => (

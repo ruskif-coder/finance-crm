@@ -1,400 +1,294 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import { isAdmin } from '../../lib/auth'
 import SettingsTabs from '../../components/SettingsTabs'
-import { MONO, UI, card, inp, sel, th, td, primaryBtn } from '../../components/salesTableKit'
+import { MONO, UI, Modal, Z, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import UserRow, { COLS } from '@/components/settings/users/UserRow'
+import AccessOverview from '@/components/settings/users/AccessOverview'
+import {
+  GROUPS, groupOfRole, rolesOrdered, isMasterRole, genPassword, plural, draftOf, dirtyKeys, invalidRows, batchOf, sectionsOf,
+} from '@/components/settings/users/usersModel'
 
-// ── Пользователи — отдельная страница раздела «Настройки» ──
-// Создание/редактирование/удаление пользователей. Привязки к сотруднику Битрикс24 нет
-// с 03.10.2026 — Битрикс больше не источник.
-// Логика перенесена 1:1 из pages/settings.js (вкладка «Пользователи»); изменён
-// только HTTP-слой (синглтон api + auth()) и оформление (дизайн-токены).
+// ── Пользователи — раздел «Настройки» (макет design_handoff_users, 16.11.2026) ──
+// Как «Роли и доступы»: без нативных <select>, правки кликом по плашкам, одно «Сохранить N» на всю страницу —
+// все правки уходят одним запросом `PUT /users/batch` и применяются одной транзакцией. Секции — по рабочей группе роли.
+// Право — по-прежнему только администратор (`require_admin` на сервере).
+
+const cap = { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
+const plain = { background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textAlign: 'left' }
+const pinStyle = (on) => ({ ...plain, display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 11px', borderRadius: 9,
+  background: on ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
+  color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontSize: 12, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap' })
+const Num = ({ n }) => <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{n}</span>
 
 export default function SettingsUsers() {
   const router = useRouter()
+  const [roles, setRoles] = useState([])
+  const [profiles, setProfiles] = useState([])
+  const [byRole, setByRole] = useState({})
+  const [drafts, setDrafts] = useState([])
+  const [origs, setOrigs] = useState({})
+  const [pw, setPw] = useState({})
+  const [removed, setRemoved] = useState([])
   const [selfId, setSelfId] = useState(null)
-  const [allRoles, setAllRoles] = useState([])
-
-  // Пользователи
-  const [users, setUsers] = useState([])
-  const [loadingUsers, setLoadingUsers] = useState(true)
-  const [editingUsers, setEditingUsers] = useState({})
-  const [profiles, setProfiles] = useState([])   // профили уведомлений (app/notify)
-  const [savingUsers, setSavingUsers] = useState({})
-  const [savingAllUsers, setSavingAllUsers] = useState(false)
-  const [hideInactive, setHideInactive] = useState(false)
-  const [access, setAccess] = useState(null)     // сводка доступа по обоим контурам
+  const [f, setF] = useState({ q: '', status: 'all', group: '', role: '' })
+  const [open, setOpen] = useState(null)          // { id, kind } — открытый список роли/профиля
+  const [copied, setCopied] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [toast, setToast] = useState('')
+  const [toDelete, setToDelete] = useState(null)
   const [accessOpen, setAccessOpen] = useState(false)
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'viewer' })
-  const [creatingUser, setCreatingUser] = useState(false)
-  const [showNewPw, setShowNewPw] = useState(false)
-  const [userError, setUserError] = useState('')
+  const seq = useRef(0)
+  const dirtyRef = useRef(false)
+  const timers = useRef({})
 
-  // Под защитой: строка, которую сейчас правят, не должна перезаписаться
-  // ответом сервера прямо под руками.
-  // «Правят» — это ОТЛИЧИЕ формы от данных сервера. `editingUsers` заполняется копией для
-  // всех строк сразу, и проверка на непустоту была истинной всегда: перечитка при возврате
-  // не срабатывала никогда (аудит 23.09.2026, 6.L3).
-  const usersDirty = users.some(u => {
-    const ed = editingUsers[u.id]
-    return !!ed && (ed.password || ed.name !== u.name || ed.email !== u.email
-      || ed.role !== u.role || ed.is_active !== u.is_active
-      || Number(ed.notification_profile_id || 0) !== Number(u.notification_profile_id || 0))
-  })
-  useRefreshOnReturn(() => loadUsers(), { enabled: !usersDirty })
+  const rolesByKey = useMemo(() => Object.fromEntries(roles.map(r => [r.key, r])), [roles])
+  const rolesList = useMemo(() => GROUPS.flatMap(g => rolesOrdered(roles.filter(r => groupOfRole(r) === g.id))), [roles])
+  const counts = useMemo(() => drafts.reduce((m, d) => ({ ...m, [d.role]: (m[d.role] || 0) + 1 }), {}), [drafts])
+  const keys = dirtyKeys(drafts, origs, pw, removed)
+  const invalid = invalidRows(drafts)
+  const canSave = keys.length > 0 && invalid.length === 0 && !saving
+  dirtyRef.current = keys.length > 0
+
+  const load = async () => {
+    try {
+      const [u, r, p, me] = await Promise.all([api.get('/users/', auth()), api.get('/roles/', auth()),
+        api.get('/users/notification-profiles', auth()).catch(() => ({ data: { profiles: [], by_role: {} } })), api.get('/auth/me', auth())])
+      const list = u.data.map(draftOf)
+      setRoles(r.data.roles); setProfiles(p.data.profiles || []); setByRole(p.data.by_role || {}); setSelfId(me.data.id)
+      setDrafts(list); setOrigs(Object.fromEntries(list.map(d => [d.id, d]))); setPw({}); setRemoved([])
+    } catch (e) {
+      if (e.response?.status === 401) router.push('/login')
+      else setError(detailText(e, 'Не удалось загрузить пользователей'))
+    } finally { setLoading(false) }
+  }
+
+  // Несохранённое не теряем: ни возвратом на вкладку (перечитывание), ни закрытием, ни уходом — как в «Ролях».
+  useRefreshOnReturn(() => { if (!dirtyRef.current) load() })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     if (!isAdmin()) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
-    loadRoles()
-    loadUsers()
-    api.get('/auth/me', auth()).then(res => setSelfId(res.data.id)).catch(() => {})
+    load()
+    const beforeUnload = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = '' } }
+    const beforeRoute = () => {
+      if (dirtyRef.current && !window.confirm('Есть несохранённые изменения пользователей. Уйти без сохранения?')) {
+        router.events.emit('routeChangeError'); throw 'пользователи: уход отменён'
+      }
+    }
+    const outside = (e) => { if (!e.target.closest?.('[data-pop-root]')) setOpen(null) }
+    window.addEventListener('beforeunload', beforeUnload)
+    router.events.on('routeChangeStart', beforeRoute)
+    document.addEventListener('mousedown', outside)
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload); router.events.off('routeChangeStart', beforeRoute)
+      document.removeEventListener('mousedown', outside)
+    }
   }, [])
 
-  // Роли нужны для выпадающих списков «Роль» (создание + строки таблицы).
-  const loadRoles = async () => {
-    try {
-      const res = await api.get('/roles/', auth())
-      setAllRoles(res.data.roles)
-      loadProfiles()
-    } catch (e) { if (e.response?.status === 401) router.push('/login') }
+  const say = (t) => { setToast(t); clearTimeout(timers.current.toast); timers.current.toast = setTimeout(() => setToast(''), 2200) }
+
+  // У новой строки профиль идёт за ролью, пока его не выбрали руками; у существующих — нет (роль — доступ, профиль — рассылка).
+  const patch = (id, field, value) => setDrafts(prev => prev.map(d => {
+    if (d.id !== id) return d
+    const next = { ...d, [field]: value }
+    if (field === 'role' && d.isNew && (d.pid || null) === (byRole[d.role] || null)) next.pid = byRole[value] || null
+    return next
+  }))
+
+  const addUser = () => {
+    seq.current += 1
+    const id = `n${seq.current}`
+    // Роль новой строки — самая людная рядовая роль продавцов (по макету — «Сейлз»), а не первая по алфавиту.
+    const seller = [...roles.filter(r => groupOfRole(r) === 'seller' && !r.is_master)].sort((a, b) => (counts[b.key] || 0) - (counts[a.key] || 0))[0]
+      || rolesList[0]
+    const role = seller ? seller.key : 'viewer'
+    setDrafts(prev => [{ id, name: '', email: '', role, active: true, pid: byRole[role] || null, isNew: true }, ...prev])
+    setPw(prev => ({ ...prev, [id]: genPassword() }))
   }
 
-  // Профили уведомлений — для селектора в строке. Отдельный лёгкий список, чтобы
-  // страница не тянула настройки уведомлений целиком.
-  const loadProfiles = async () => {
-    try {
-      const res = await api.get('/users/notification-profiles', auth())
-      setProfiles(res.data)
-    } catch (e) { /* профилей может не быть на старой базе — селектор просто пустой */ }
+  const dropRow = (id) => {
+    setDrafts(prev => prev.filter(d => d.id !== id))
+    setPw(prev => { const p = { ...prev }; delete p[id]; return p })
+  }
+  const remove = (d) => { if (d.isNew) dropRow(d.id); else if (!d.active && origs[d.id] && !origs[d.id].active) setToDelete(d) }   // только сохранённый деактивированный
+  const confirmDelete = () => { setRemoved(prev => [...prev, toDelete.id]); dropRow(toDelete.id); setToDelete(null) }
+
+  const copy = (id) => {
+    try { const pr = navigator.clipboard && navigator.clipboard.writeText(pw[id]); pr && pr.catch(() => {}) } catch (e) { /* без буфера — пароль виден на экране */ }
+    setCopied(id); clearTimeout(timers.current.copy); timers.current.copy = setTimeout(() => setCopied(null), 2000)
   }
 
-  const loadUsers = async () => {
-    setLoadingUsers(true)
+  const save = async () => {
+    if (!canSave) return
+    setSaving(true); setError('')
     try {
-      const res = await api.get('/users/', auth())
-      setUsers(res.data)
-      const ed = {}
-      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', notification_profile_id: u.notification_profile_id || 0 } })
-      setEditingUsers(ed)
+      await api.put('/users/batch', { changes: batchOf(drafts, origs, pw, removed) }, auth())
+      const n = keys.length
+      await load()
+      say(`Сохранено: ${plural(n, 'изменение', 'изменения', 'изменений')}`)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
-    } finally {
-      setLoadingUsers(false)
-    }
+      setError(detailText(e, 'Ошибка при сохранении — ничего не сохранено'))
+    } finally { setSaving(false) }
   }
 
-  const handleCreateUser = async () => {
-    setUserError('')
-    if (!newUser.name || !newUser.email || !newUser.password) {
-      setUserError('Заполните имя, email и пароль'); return
-    }
-    setCreatingUser(true)
-    try {
-      await api.post('/users/', newUser, auth())
-      setNewUser({ name: '', email: '', password: '', role: 'viewer' })
-      setShowNewPw(false)
-      await loadUsers()
-    } catch (e) {
-      setUserError(detailText(e, 'Ошибка при создании'))
-    } finally {
-      setCreatingUser(false)
-    }
-  }
-
-  const handleSaveUser = async (id) => {
-    const ed = editingUsers[id]
-    setSavingUsers(prev => ({ ...prev, [id]: true }))
-    try {
-      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, notification_profile_id: ed.notification_profile_id || 0 }
-      if (ed.password) payload.password = ed.password
-      await api.put(`/users/${id}`, payload, auth())
-      await loadUsers()
-    } catch (e) {
-      alert(detailText(e, 'Ошибка при сохранении'))
-    } finally {
-      setSavingUsers(prev => ({ ...prev, [id]: false }))
-    }
-  }
-
-  const handleSaveAllUsers = async () => {
-    setSavingAllUsers(true)
-    let ok = 0; const errs = []
-    for (const u of users) {
-      const ed = editingUsers[u.id]
-      if (!ed) continue
-      try {
-        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, notification_profile_id: ed.notification_profile_id || 0 }
-        if (ed.password) payload.password = ed.password
-        await api.put(`/users/${u.id}`, payload, auth())
-        ok++
-      } catch (e) { errs.push(`${u.name}: ${detailText(e, 'ошибка')}`) }
-    }
-    await loadUsers()
-    setSavingAllUsers(false)
-    alert(`Сохранено: ${ok}` + (errs.length ? `\nОшибки (${errs.length}):\n` + errs.join('\n') : ''))
-  }
-
-  // Генератор пароля через Web Crypto (готовое безопасное решение). Без похожих символов (0/O/1/l/I).
-  const genPassword = (len = 16) => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+'
-    const arr = new Uint32Array(len)
-    window.crypto.getRandomValues(arr)
-    return Array.from(arr, x => chars[x % chars.length]).join('')
-  }
-  const copyText = async (t) => {
-    try { await navigator.clipboard.writeText(t) } catch (e) {
-      const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select()
-      try { document.execCommand('copy') } catch (_) {} document.body.removeChild(ta)
-    }
-  }
-
-  // Удаление — только деактивированных; backend дополнительно блокирует, если есть операции
-  const handleDeleteUser = async (id, name) => {
-    if (!confirm(`Удалить пользователя «${name}»? Действие необратимо.`)) return
-    try {
-      await api.delete(`/users/${id}`, auth())
-      await loadUsers()
-    } catch (e) {
-      alert(detailText(e, 'Ошибка при удалении'))
-    }
-  }
-
-  // стили — общий модуль components/salesTableKit
-  const rowBtn = { padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: 'var(--accent)', color: '#fff', fontFamily: UI }
-  const iconBtn = { padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)' }
-
-  /* Грузится по раскрытию, а не при входе: сводка нужна изредка — когда отвечают на
-     вопрос «у кого вообще есть доступ», — и тянуть её каждому админу при каждом заходе
-     значило бы платить за неё всегда. */
-  useEffect(() => {
-    if (!accessOpen || access) return
-    api.get('/users/access-overview', auth())
-      .then(r => setAccess(r.data)).catch(() => setAccess({ rows: [], error: true }))
-  }, [accessOpen, access])
+  const sections = sectionsOf(drafts, rolesByKey, f)
+  const rowsShown = sections.reduce((n, s) => n + s.rows.length, 0)
+  const active = drafts.filter(d => d.active).length
+  const inGroup = (g) => drafts.filter(d => groupOfRole(rolesByKey[d.role]) === g).length
+  let ord = 0
 
   return (
     <>
       <Head><title>Пользователи · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
+      <div style={{ padding: '20px 26px 22px', background: 'var(--bg-canvas)', height: '100vh', boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI }}>
         <SettingsTabs active="users" />
 
-        {/* Форма создания */}
-        {/* Кто имеет доступ — ОБА контура одним списком.
-            Учётки паблишеров хранятся отдельно и объединены быть не могут: сервис
-            кабинета работает под ролью БД без прав на `public`, и перенос его учёток в
-            `users` означал бы выдать этой роли доступ к таблице ядра — распустить ту
-            самую изоляцию, ради которой контур и делался. Здесь сведена ВИДИМОСТЬ, а не
-            хранение: правки идут каждая в свой раздел, этот блок только читает. */}
-        <div style={{ ...card, padding: '14px 18px', marginBottom: 16 }}>
-          <div onClick={() => setAccessOpen(o => !o)}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-              Кто имеет доступ
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.025em', color: 'var(--text-primary)' }}>Пользователи</span>
+            <span style={{ ...cap, fontSize: 10 }}>
+              {plural(drafts.length, 'пользователь', 'пользователя', 'пользователей')} · активных {active} · деактивировано {drafts.length - active}
             </span>
-            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>
-              ядро и внешний контур · только чтение
-            </span>
-            <span style={{ flex: 1 }} />
-            {!!access && (
-              <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>
-                {access.core} + {access.outer}
-              </span>
-            )}
-            <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-              {accessOpen ? '▾' : '▸'}
-            </span>
-          </div>
+          </span>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {keys.length > 0 && invalid.length > 0 && <span style={{ fontSize: 11.5, color: 'var(--warning-fg)' }}>заполните имя и email: {invalid.length}</span>}
+            <button type="button" onClick={() => setAccessOpen(true)} className="u-add"
+              title="Оба контура одним списком: ядро и кабинеты паблишеров — только чтение"
+              style={{ ...plain, display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 14px', background: 'var(--bg-card)',
+                border: '1px solid var(--border-card)', borderRadius: 12, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              Кто имеет доступ</button>
+            <button type="button" onClick={addUser} className="u-add"
+              style={{ ...plain, display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 14px', background: 'var(--bg-card)',
+                border: '1px solid var(--border-card)', borderRadius: 12, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              + Пользователь</button>
+            <button type="button" onClick={save} disabled={!canSave}
+              title={canSave ? 'Сохранить все изменения одним запросом' : keys.length ? 'Есть строки без имени или с неверным email' : 'Изменений нет'}
+              style={{ ...primaryBtn, display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, padding: '0 16px', borderRadius: 12, fontSize: 13,
+                fontWeight: 700, background: canSave ? 'var(--accent)' : 'var(--text-disabled)', cursor: canSave ? 'pointer' : 'not-allowed' }}>
+              {saving ? 'Сохранение…' : 'Сохранить'}
+              {keys.length > 0 && !saving && (
+                <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 6, background: 'rgba(255,255,255,.22)', fontFamily: MONO,
+                  fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{keys.length}</span>
+              )}
+            </button>
+          </span>
+        </div>
 
-          {accessOpen && (
-            <div style={{ marginTop: 12 }}>
-              {!access && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>загрузка…</div>}
-              {!!access?.shared_emails?.length && (
-                <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 9,
-                  background: 'var(--danger-tint)', border: '1px solid var(--danger-border)',
-                  fontSize: 12.5, color: 'var(--danger-fg)' }}>
-                  Одна и та же почта заведена в обоих контурах:
-                  {' '}{access.shared_emails.join(', ')}. Это либо ошибка, либо решение,
-                  которое принимают осознанно.
-                </div>
-              )}
-              {!!access?.rows?.length && (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 700 }}>
-                    <thead><tr>
-                      <th style={th}>Контур</th><th style={th}>Имя</th><th style={th}>Почта</th>
-                      <th style={th}>Доступ</th><th style={th}>Объём</th><th style={th}>Вход</th>
-                    </tr></thead>
-                    <tbody>
-                      {access.rows.map((r, i) => (
-                        <tr key={i} style={{ opacity: r.is_active ? 1 : .45 }}>
-                          <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                            <span style={{ fontFamily: MONO, fontSize: 10.5, padding: '2px 7px',
-                              borderRadius: 6,
-                              background: r.contour === 'кабинет' ? 'var(--warning-tint)' : 'var(--bg-subtle)',
-                              color: r.contour === 'кабинет' ? 'var(--warning-text)' : 'var(--text-muted)',
-                              border: `1px solid ${r.contour === 'кабинет' ? 'var(--warning-border)' : 'var(--border-card)'}` }}>
-                              {r.contour}
-                            </span>
-                          </td>
-                          <td style={td}>{r.name}{r.is_active ? '' : ' · выключен'}</td>
-                          <td style={{ ...td, fontFamily: MONO, fontSize: 12 }}>{r.email}</td>
-                          <td style={td}>{r.access}</td>
-                          <td style={{ ...td, color: 'var(--text-muted)', fontSize: 12.5 }}>{r.scope}</td>
-                          <td style={{ ...td, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)' }}>
-                            {r.last_login_at ? String(r.last_login_at).slice(0, 10) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+        {!!error && (
+          <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger-border)', color: 'var(--danger-fg)', borderRadius: 12, padding: '8px 14px', fontSize: 12.5 }}>{error}</div>
+        )}
+
+        <div data-no-unsaved style={{ display: 'flex', alignItems: 'center', gap: '10px 14px', flexWrap: 'wrap' }}>
+          <input value={f.q} onChange={e => setF({ ...f, q: e.target.value })} placeholder="Имя или email" aria-label="Поиск" type="search"
+            style={{ width: 220, height: 32, boxSizing: 'border-box', padding: '0 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+              borderRadius: 10, fontSize: 12.5, outline: 'none', fontFamily: UI, color: 'var(--text-primary)' }} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {[['all', 'Все', drafts.length], ['on', 'Активные', active], ['off', 'Деактивированные', drafts.length - active]].map(([v, l, n]) => (
+              <button key={v} type="button" onClick={() => setF({ ...f, status: v })} style={pinStyle(f.status === v)}>{l}<Num n={n} /></button>
+            ))}
+          </span>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span style={{ ...cap, paddingRight: 4 }}>Группы</span>
+            <button type="button" onClick={() => setF({ ...f, group: '', role: '' })} style={pinStyle(!f.group && !f.role)}>Все<Num n={drafts.length} /></button>
+            {GROUPS.filter(g => inGroup(g.id) > 0).map(g => (
+              <button key={g.id} type="button" onClick={() => setF({ ...f, group: f.group === g.id ? '' : g.id, role: '' })}
+                style={pinStyle(f.group === g.id)}>{g.title}<Num n={inGroup(g.id)} /></button>
+            ))}
+          </span>
+        </div>
+
+        <div style={{ flex: '1 1 auto', minHeight: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, overflow: 'auto' }}>
+          {loading ? <div style={{ color: 'var(--text-muted)', padding: 20 }}>Загрузка…</div> : (
+            <div style={{ minWidth: 1320 }}>
+              <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center',
+                padding: '12px 20px 10px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border-card)', ...cap }}>
+                <span /><span style={{ paddingLeft: 9 }}>Имя</span><span style={{ paddingLeft: 9 }}>Email</span><span>Роль</span><span>Статус</span>
+                <span>Профиль уведомлений</span><span>Пароль</span><span />
+              </div>
+              {sections.map(s => {
+                const act = s.rows.filter(d => d.active).length
+                return (
+                  <div key={s.id}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 20px 7px 46px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
+                      <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-cap)' }}>{s.title}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.04em', color: 'var(--text-faint)' }}>
+                        {plural(s.rows.length, 'человек', 'человека', 'человек')}{act < s.rows.length ? ` · активных ${act}` : ''}
+                      </span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                        {s.roles.filter(r => counts[r.key]).map(r => {
+                          const on = f.role === r.key
+                          return (
+                            <button key={r.key} type="button" title="Показать только эту роль" onClick={() => setF({ ...f, role: on ? '' : r.key })}
+                              style={{ ...plain, display: 'inline-flex', alignItems: 'center', gap: 5, height: 20, padding: '0 7px', borderRadius: 6,
+                                background: on ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
+                                fontSize: 11, fontWeight: on ? 700 : 600, color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              {r.label}{isMasterRole(r) ? ' ★' : ''}<span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{counts[r.key]}</span>
+                            </button>
+                          )
+                        })}
+                      </span>
+                    </div>
+                    {s.rows.map(d => {
+                      const idx = ord++
+                      const me = d.id === selfId
+                      return (
+                        <UserRow key={d.id} d={d} savedActive={!!(origs[d.id] && origs[d.id].active)} me={me} changed={keys.some(k => k.startsWith(`${d.id}:`))} roles={rolesList} rolesByKey={rolesByKey}
+                          counts={counts} profiles={profiles} pw={pw[d.id]} copied={copied === d.id}
+                          open={open && open.id === d.id ? open.kind : ''} setOpen={kind => setOpen(kind ? { id: d.id, kind } : null)}
+                          up={idx > rowsShown - 6 && idx > 8} onPatch={(field, v) => patch(d.id, field, v)}
+                          onGenPw={() => setPw(prev => ({ ...prev, [d.id]: genPassword() }))}
+                          onClearPw={() => setPw(prev => { const p = { ...prev }; delete p[d.id]; return p })}
+                          onCopy={() => copy(d.id)} onRemove={() => remove(d)} />
+                      )
+                    })}
+                  </div>
+                )
+              })}
+              {rowsShown === 0 && <div style={{ padding: '36px 20px', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Никого не нашлось — измените поиск или фильтр</div>}
             </div>
           )}
         </div>
-
-        <div style={{ ...card, padding: '16px 18px', marginBottom: 16 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: 'var(--text-primary)' }}>Новый пользователь</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input placeholder="Имя" value={newUser.name} onChange={e => setNewUser(p => ({ ...p, name: e.target.value }))} style={{ ...inp, width: 160 }} />
-            <input placeholder="Email" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={{ ...inp, width: 200 }} />
-            {/* Пароль с тем же генератором, что и в строке таблицы: 16 символов
-                через Web Crypto, сразу видимый и с копированием — иначе пароль,
-                который нужно передать человеку, негде прочитать. */}
-            <input placeholder="Пароль" type={showNewPw ? 'text' : 'password'} value={newUser.password}
-              onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
-              style={{ ...inp, width: 200, fontFamily: showNewPw ? MONO : UI }} />
-            <button title="Сгенерировать пароль (16 символов)"
-              onClick={() => { setNewUser(p => ({ ...p, password: genPassword(16) })); setShowNewPw(true) }}
-              style={iconBtn}>🎲</button>
-            {newUser.password && (
-              <button title="Скопировать пароль" onClick={() => copyText(newUser.password)} style={iconBtn}>📋</button>
-            )}
-            <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={sel}>
-              {allRoles.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
-            </select>
-            <button onClick={handleCreateUser} disabled={creatingUser} style={primaryBtn}>{creatingUser ? '...' : 'Создать'}</button>
-          </div>
-          {userError && <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>{userError}</div>}
-        </div>
-
-        {/* Тулбар: скрыть деактивированных + массовое сохранение */}
-        {!loadingUsers && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
-            <label style={{ fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <input type="checkbox" checked={hideInactive} onChange={e => setHideInactive(e.target.checked)} /> скрыть деактивированных
-            </label>
-            <button onClick={handleSaveAllUsers} disabled={savingAllUsers} style={{ ...primaryBtn, marginLeft: 'auto' }}>
-              {savingAllUsers ? 'Сохранение…' : 'Сохранить все'}
-            </button>
-          </div>
-        )}
-
-        {/* Таблица пользователей */}
-        {loadingUsers ? <div style={{ color: 'var(--text-muted)', padding: 20 }}>Загрузка…</div> : (
-          <div style={{ ...card, padding: '14px 18px' }}>
-            <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1000 }}>
-              <thead>
-                <tr>
-                  <th style={th}>Имя</th>
-                  <th style={th}>Email</th>
-                  <th style={th}>Роль</th>
-                  <th style={th}>Активен</th>
-                  <th style={th}>Профиль уведомлений</th>
-                  <th style={th}>Новый пароль</th>
-                  <th style={th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.filter(u => !hideInactive || u.is_active).map(u => {
-                  const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', notification_profile_id: u.notification_profile_id || 0 }
-                  const isSelf = u.id === selfId
-                  return (
-                    <tr key={u.id}>
-                      <td style={td}>
-                        <input value={ed.name}
-                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, name: e.target.value } }))}
-                          style={{ ...inp, width: 160 }} />
-                      </td>
-                      <td style={td}>
-                        <input type="email" value={ed.email}
-                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, email: e.target.value } }))}
-                          style={{ ...inp, width: 200 }} />
-                      </td>
-                      <td style={td}>
-                        <select disabled={isSelf} value={ed.role}
-                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, role: e.target.value } }))}
-                          style={sel}>
-                          {allRoles.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
-                        </select>
-                      </td>
-                      <td style={td}>
-                        <button
-                          disabled={isSelf}
-                          onClick={() => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, is_active: !ed.is_active } }))}
-                          style={{ padding: '5px 12px', borderRadius: 20, border: '1px solid ' + (ed.is_active ? 'var(--border-card)' : 'var(--danger-tint)'), cursor: isSelf ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, fontFamily: UI, background: ed.is_active ? 'var(--bg-subtle)' : 'var(--danger-tint)', color: ed.is_active ? 'var(--success)' : 'var(--danger)' }}>
-                          {ed.is_active ? 'Активен' : 'Деактивирован'}
-                        </button>
-                      </td>
-                      <td style={td}>
-                        {/* Профиль уведомлений НЕ выводится из роли: роль = что можно
-                            видеть, профиль = что человека касается (см. app/notify). */}
-                        <select value={ed.notification_profile_id || 0}
-                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, notification_profile_id: Number(e.target.value) } }))}
-                          style={{ ...sel, minWidth: 170 }}>
-                          <option value={0}>— по умолчанию —</option>
-                          {profiles.map(p => <option key={p.id} value={p.id}>{p.label}{p.is_default ? ' (умолч.)' : ''}</option>)}
-                        </select>
-                      </td>
-                      <td style={td}>
-                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <input type={ed.showPw ? 'text' : 'password'} placeholder="не менять" value={ed.password}
-                            onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: e.target.value } }))}
-                            style={{ ...inp, width: 150, fontFamily: ed.showPw ? MONO : UI }} />
-                          <button title="Сгенерировать пароль (16 символов)"
-                            onClick={() => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: genPassword(16), showPw: true } }))}
-                            style={iconBtn}>🎲</button>
-                          {ed.password && (
-                            <button title="Скопировать пароль"
-                              onClick={() => copyText(ed.password)}
-                              style={iconBtn}>📋</button>
-                          )}
-                        </div>
-                      </td>
-                      <td style={td}>
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <button onClick={() => handleSaveUser(u.id)} disabled={savingUsers[u.id]} style={rowBtn}>
-                            {savingUsers[u.id] ? '...' : 'Сохранить'}
-                          </button>
-                          {/* Удаление — только деактивированных и не себя (2026-07-16) */}
-                          {!isSelf && !u.is_active && (
-                            <button onClick={() => handleDeleteUser(u.id, u.name)} title="Удалить пользователя"
-                              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--danger-tint)', background: 'var(--danger-tint)', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>
-                              🗑
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {!users.filter(u => !hideInactive || u.is_active).length && (
-                  <tr><td colSpan={7} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Пользователей нет</td></tr>
-                )}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        )}
       </div>
+      <style jsx global>{`
+        .u-row:hover { background: var(--bg-tint) !important }
+        .u-inline:hover:not([data-bad]), .u-inline:focus:not([data-bad]) { border-color: var(--border-card) !important; background: var(--bg-card) !important }
+        .u-inline:focus:not([data-bad]) { border-color: var(--accent) !important }
+        .u-opt:hover { background: var(--bg-subtle) !important }
+        .u-link:hover, .u-add:hover { color: var(--accent) !important }
+        .u-add:hover { border-color: var(--border-hover) !important }
+        .u-quiet:hover { color: var(--text-secondary) !important }
+        .u-danger:hover { color: var(--danger) !important }
+      `}</style>
+
+      {!!toast && (
+        <div role="status" style={{ position: 'fixed', right: 24, bottom: 24, zIndex: Z.toast, background: 'var(--text-primary)', color: 'var(--bg-card)',
+          padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-modal)' }}>{toast}</div>
+      )}
+
+      {accessOpen && <AccessOverview onClose={() => setAccessOpen(false)} />}
+
+      {toDelete && (
+        <Modal title={`Удалить пользователя «${toDelete.name}»?`} width={460} onClose={() => setToDelete(null)}
+          footer={<>
+            <button type="button" onClick={() => setToDelete(null)} style={{ ...plain, height: 34, padding: '0 14px', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, color: 'var(--text-secondary)' }}>Отмена</button>
+            <button type="button" onClick={confirmDelete} style={{ ...plain, marginLeft: 'auto', height: 34, padding: '0 14px', borderRadius: 10, fontSize: 13, fontWeight: 700, background: 'var(--danger)', color: 'var(--bg-card)' }}>Удалить при сохранении</button>
+          </>}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Учётка {toDelete.email} будет удалена при нажатии «Сохранить». Записи журнала действий останутся с его именем.
+            Если у пользователя есть созданные им операции, система удалить не даст — тогда оставьте его деактивированным.
+          </div>
+        </Modal>
+      )}
     </>
   )
 }

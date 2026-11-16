@@ -231,7 +231,7 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         return into.setdefault(key, {"label": label, "no": no,
                                      "site": defaultdict(lambda: [0, 0, 0]),
                                      "day": defaultdict(lambda: [0, 0, 0]),
-                                     "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0]))})
+                                     "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))})
 
     groups: Dict[object, dict] = {}
     by_group: Dict[str, dict] = {}
@@ -243,6 +243,7 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         for g in targets:
             g["site_day"][site][day][0] += v[0]
             g["site_day"][site][day][1] += v[1] or 0
+            g["site_day"][site][day][2] += (v[2] if len(v) > 2 else 0) or 0   # уники — охват на «По неделям»
             for acc in (g["site"][site], g["day"][day]):
                 for i in range(3):
                     acc[i] += (v[i] if i < len(v) else 0) or 0

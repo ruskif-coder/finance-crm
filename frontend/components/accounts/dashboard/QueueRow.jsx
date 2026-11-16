@@ -9,6 +9,7 @@ import { MONO, DealCodeLink, SortHead, ROW_TONE } from '@/components/salesTableK
 import { surfaceTag } from '@/lib/dealTitle'
 import { LAYER_DOT, mln } from './ladder'
 import StateChips from './StateChips'
+import { periodEnd } from '@/lib/dates'
 
 export const COLS = [
   { key: 'code', label: 'Код', w: '78px' },   // +16 — квадрат срочности у кода (22.10.2026)
@@ -136,7 +137,7 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
           {r.period_from ? r.period_from.slice(0, 7) : '—'}</span>
         <span title={startSub} style={{ fontFamily: MONO, fontSize: 9.5, whiteSpace: 'nowrap',
           color: near ? 'var(--danger-fg)' : 'var(--text-faint)' }}>
-          {r.period_from ? `${dm(r.period_from)}–${dm(r.period_to)}` : 'даты не заданы'}</span>
+          {r.period_from ? `${dm(r.period_from)}–${dm(periodEnd(r.period_from, r.period_to))}` : 'даты не заданы'}</span>
       </span>
 
       <StateChips row={r} />

@@ -4,7 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import { isAdmin } from '../../lib/auth'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
-import { MONO, UI, card, inp, sel, primaryBtn } from '../../components/salesTableKit'
+import { MONO, UI, card, inp, sel, primaryBtn, PAGE_W } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -155,6 +155,8 @@ export default function SettingsBalances() {
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="balances" />
+        {/* Ряд вкладок — на всю ширину, содержимое — под 1600 по левому краю (владелец 16.11.2026). */}
+        <div style={{ maxWidth: PAGE_W.base }}>
 
         {/* Итоговая карточка */}
         <div style={{ ...card, padding: '20px 22px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
@@ -285,6 +287,7 @@ export default function SettingsBalances() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </>
   )

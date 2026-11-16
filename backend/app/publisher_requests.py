@@ -120,6 +120,16 @@ class PublisherReconLine(Base):
     agreed_volume = Column(BigInteger, nullable=False)
 
 
+class PublisherReconPrioLine(Base):
+    """Итог месяца по площадке приоритезации — та же доля нашего факта (16.11.2026, 2026-11-16_prio_in_publisher_recon.sql):
+    строка `publisher_recon_line` ссылается на размещение сборки, площадку приоритезации туда не записать."""
+    __tablename__ = "publisher_recon_prio_line"
+    request_id = Column(Integer, ForeignKey("publisher_request.id", ondelete="CASCADE"), primary_key=True)
+    prio_placement_id = Column(Integer, ForeignKey("prio_placements.id", ondelete="CASCADE"), primary_key=True)
+    our_volume = Column(BigInteger, nullable=False)
+    agreed_volume = Column(BigInteger, nullable=False)
+
+
 def mismatch(recon) -> float:
     """Расхождение в процентах от нашей цифры. Считается, а не хранится.
 

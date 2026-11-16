@@ -33,6 +33,28 @@ def available(db, deal, cat: Optional[Catalog] = None) -> Optional[str]:
     return next((k for k, (src, _, _) in ACTIONS.items() if cur and cur.name == src), None)
 
 
+PRIO_SELF_LAUNCH = ("У приоритезации сделка переходит «В размещении» сама — при запуске первой согласованной площадки "
+                    "с ЕРИД (блок «Приоритезация», «Запустить»)")
+
+
+def button(db, deal, cat: Optional[Catalog] = None) -> Optional[str]:
+    """Кнопка шапки сделки (владелец 16.11.2026): у приоритезации «Запустить» нет — оно давало проскочить ожидание согласования
+    площадок; сделку переводит запуск первой площадки (`prio.launch._deal_goes_live`, ему нужен `available`). «Завершить» — есть."""
+    return None if self_launch(db, deal, cat) else available(db, deal, cat)
+
+
+def self_launch(db, deal, cat: Optional[Catalog] = None) -> bool:
+    """Приоритезация на стадии старта: переход «В размещении» делает запуск первой площадки — шапке нечего предлагать."""
+    return available(db, deal, cat) == "launch" and flow.of_deal(db, deal) == flow.PRIO
+
+
+def run_button(db, deal, action: str, user) -> dict:
+    """Нажатие кнопки шапки — то же правило, что её показ (`button`): прямой запрос мимо экрана не переведёт приоритезацию."""
+    if action == "launch" and flow.of_deal(db, deal) == flow.PRIO:
+        raise LaunchError(409, PRIO_SELF_LAUNCH)
+    return run(db, deal, action, user)
+
+
 def run(db, deal, action: str, user) -> dict:
     if action not in ACTIONS:
         raise LaunchError(400, "Неизвестное действие")

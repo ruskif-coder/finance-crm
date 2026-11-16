@@ -151,3 +151,22 @@ def test_ds_needs_fact_for_every_launched_placement(env):
     db.add(M.PrioStatRaw(camp_id=777002, day=date(2026, 11, 5), shows=10, clicks=0))
     db.flush()
     assert sc.REGISTRY["prio_fact_complete"].fn(sc.Ctx(db, d)).state == sc.OK
+
+
+def test_header_has_no_launch_for_prio_before_any_site(env):
+    """Владелец 16.11.2026: «Запустить» в шапке давало проскочить ожидание согласования площадок. У приоритезации сделка
+    переходит «В размещении» сама при запуске первой площадки — кнопки шапки на старте нет, ручка отказывает; «Завершить»
+    остаётся. Уронит: шапка снова берёт `available` (там «launch» нужен автопереходу `launch._deal_goes_live`)."""
+    db, d, _ = env
+    _as_prio(db, d)
+    d.our_stage_id = _stage(db, "Готовятся к старту")
+    db.flush()
+    assert LAUNCH.available(db, d) == "launch", "автопереход первой площадки пользуется этим"
+    assert LAUNCH.button(db, d) is None
+    assert LAUNCH.self_launch(db, d), "шапка прячет и общий перевод на следующую стадию"
+    with pytest.raises(LAUNCH.LaunchError) as e:
+        LAUNCH.run_button(db, d, "launch", None)
+    assert e.value.status == 409
+    d.our_stage_id = _stage(db, "В размещении")
+    db.flush()
+    assert LAUNCH.button(db, d) == "finish" and not LAUNCH.self_launch(db, d)

@@ -75,8 +75,7 @@ export default function SimbIdSettings() {
     <>
       <Head><title>SIMB ID · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ width: 1600, maxWidth: '100%', background: 'var(--bg-canvas)',
-                    minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
+      <div style={{ background: 'var(--bg-canvas)', minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
         <SettingsTabs active="simb_id" />
         <div style={{ ...card, padding: '18px 22px', maxWidth: 760 }}>
           <div style={{ ...CAP }}>Коэффициенты отчётов клиенту</div>

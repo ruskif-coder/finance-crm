@@ -168,3 +168,10 @@ def test_now_on_a_live_deal_of_each_stage(stage):
     finally:
         db.rollback()
         db.close()
+
+
+def test_prio_head_is_not_done_while_sites_have_not_agreed():
+    """16.11.2026: запрос ушёл всем, никто не согласовал — шапка сборки звала это «собрано — можно в размещение»
+    (пункты «ждут» пропускались). Первый незакрытый пункт любого состояния, кроме «ok»."""
+    rows = AN.prio_assembly([("у площадки", False)] * 5)
+    assert AN.assembly_head([], rows) == {"text": "Согласование: 0 из 5", "href": "#sec-prio"}

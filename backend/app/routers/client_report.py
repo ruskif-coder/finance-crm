@@ -79,7 +79,9 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
     # листах факта по-прежнему — модель SIMB ID (24.10.2026); `to_xlsx` второй комплект умеет, но его больше не просят.
     body = client_report_xlsx.to_xlsx(rep)
     code = re.sub(r"[^\w-]", "", deal.code or str(deal.id))
-    human = f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"_{date.today():%d.%m.%Y}.xlsx"
+    # В имени — день, по который в отчёте есть данные (аккаунты 16.11.2026), а не дата выгрузки.
+    upto = min(x for x in (h["period_to"], h.get("last_data")) if x)
+    human = f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"_по_{upto:%d.%m.%Y}.xlsx"
     return Response(content=body, media_type=(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), headers={
         "Content-Disposition": f"attachment; filename=\"report_{code}.xlsx\"; "

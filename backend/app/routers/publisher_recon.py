@@ -5,7 +5,7 @@
 `app/publisher_recon`, здесь только двери, права и журнал.
 """
 from datetime import date
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -148,7 +148,7 @@ def remind(request_id: int, db: Session = Depends(get_db), user: User = Depends(
 class AgreeIn(BaseModel):
     volume: int
     mode: str = "even"                  # раскладка дельты по РК: even — по доле нашего факта, target — на одну РК
-    target_id: Optional[int] = None
+    target_id: Optional[Union[int, str]] = None   # ключ строки «t<id>» / «p<id>» (16.11.2026); число — РК, как раньше
 
 
 @router.post("/{request_id}/agree/preview")

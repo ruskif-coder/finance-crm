@@ -66,8 +66,11 @@ def ready():
 
 
 def _lines(db, rid):
-    return dict(db.execute(text("SELECT target_id, agreed_volume FROM publisher_recon_line WHERE request_id = :r"),
-                           {"r": rid}).all())
+    """Строки разнесения по ключу строки сверки («t<id>» — РК, «p<id>» — приоритезация, 16.11.2026)."""
+    return dict(db.execute(text("""SELECT 't' || target_id, agreed_volume FROM publisher_recon_line WHERE request_id = :r
+                                   UNION ALL
+                                   SELECT 'p' || prio_placement_id, agreed_volume FROM publisher_recon_prio_line
+                                    WHERE request_id = :r"""), {"r": rid}).all())
 
 
 def test_agree_on_one_campaign_writes_the_delta_there_only(ready):

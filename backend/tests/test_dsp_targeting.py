@@ -109,3 +109,42 @@ def test_plan_on_stand_data():
         assert p["enabled"] in (True, False)
     finally:
         db.close()
+
+
+# ── Базовая ставка площадки (владелец 16.11.2026: у всех 100, у Купера 161) ──────────────────────────────────────────
+
+def test_placement_coefficient_is_publisher_bid_over_source_bid():
+    """Ставка источника общая на кампанию, приложения в одной РК делят источник app — ставка площадки уходит коэффициентом
+    на её блоках: 161 / 100 = 1.61. У площадки со ставкой источника — 1, как было."""
+    assert tg.bid_rate_for(161, 100) == 1.61
+    assert tg.bid_rate_for(100, 100) == 1
+    assert tg.bid_rate_for(None, 100) == 1
+    assert tg.bid_rate_for(150, 120) == 1.25
+    body = tg.data(tg.placement_items(["33403", "33404"], 1.61))
+    assert body["items"] == {"33403": {"is_checked": True, "bid_rate": 1.61}, "33404": {"is_checked": True, "bid_rate": 1.61}}
+
+
+def test_plan_gives_kuper_blocks_161_and_others_1(monkeypatch):
+    """План выгрузки: креативу Купера — коэффициент из его базовой ставки, креативу другой площадки — 1."""
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(tg, "_blocks", lambda db, ids: {(1, "app"): (["33403"], 161), (2, "app"): (["50001"], 100)})
+    monkeypatch.setattr(tg, "_media_plan", lambda db, deal_id: (None, None))
+    monkeypatch.setattr(tg, "_setting", lambda db, key: None)
+    monkeypatch.setattr(tg, "enabled", lambda db: True)
+    import app.dsp.sources as src
+    monkeypatch.setattr(src, "source_key", lambda db, k: f"src-{k}")
+
+    class Q:
+        def __init__(self, *a): pass
+        def join(self, *a): return self
+        def filter(self, *a): return self
+        def all(self): return [(11, "app"), (12, "app")]
+
+    db = NS(query=lambda *a: Q())
+    rows = [{"creative": NS(id=101, pair_id=11), "placement": NS(publisher_id=1)},
+            {"creative": NS(id=102, pair_id=12), "placement": NS(publisher_id=2)}]
+    p = tg.plan_for(db, NS(deal_id=1), rows)
+    assert p["creatives"][101]["placement"]["items"]["33403"]["bid_rate"] == 1.61
+    assert p["creatives"][102]["placement"]["items"]["50001"]["bid_rate"] == 1
+    assert p["campaign"]["source"]["items"]["src-app"]["bid_start"] == 100
+    assert p["summary"]["publisher_bids"] == {101: 161}

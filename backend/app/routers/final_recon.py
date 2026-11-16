@@ -243,7 +243,9 @@ def close_deal_no_docs(deal_id: int, db: Session = Depends(get_db), user: User =
 def deal_flow(deal_id: int, db: Session = Depends(get_db), user: User = Depends(DEAL_VIEW)):
     """Цикл услуги сделки и какая кнопка аккаунта сейчас доступна (`launch` / `finish` / None)."""
     d = _deal(db, deal_id, user)
-    return {"flow": FLOW.of_deal(db, d), "action": LAUNCH.available(db, d)}
+    # self_launch: приоритезация на «Готовятся к старту» — сделка перейдёт сама при запуске первой площадки, кнопки перевода в
+    # шапке нет вовсе (владелец 16.11.2026: «Запустить» давало проскочить ожидание согласования площадок)
+    return {"flow": FLOW.of_deal(db, d), "action": LAUNCH.button(db, d), "self_launch": LAUNCH.self_launch(db, d)}
 
 
 @router.post("/deal/{deal_id}/{action}")
@@ -251,7 +253,7 @@ def deal_action(deal_id: int, action: str, db: Session = Depends(get_db), user: 
     """«Запустить» / «Завершить» в контуре аккаунта — тем же путём, что диалог движения (требования, история, уведомления)."""
     d = _deal(db, deal_id, user)
     try:
-        out = LAUNCH.run(db, d, action, user)
+        out = LAUNCH.run_button(db, d, action, user)
     except LAUNCH.LaunchError as e:
         raise HTTPException(e.status, e.message)
     db.commit()

@@ -263,6 +263,16 @@ register(Event(
 ))
 
 register(Event(
+    key="prio_auto_launched", direction="account", group="Приоритезация",
+    title="Площадка дозапущена автоматически",
+    description=("РК сделки уже шла, площадка согласовала запрос и получила ЕРИД позже — система запустила её сама "
+                 "(«дозапускать сам» у запроса включён). Выключить — переключатель в расхлопе сделки."),
+    tone="ok", action="Открыть сделку", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="prio_stop_failed", direction="account", group="Приоритезация",
     title="План выполнен, а остановить площадку не удалось",
     description="Автостоп отправил «Стоп», система приоритезации его не приняла — площадка продолжает крутить сверх плана.",
@@ -501,6 +511,50 @@ register(Event(
     tone="warn", action="Открыть заявку", widget_group="Документы",
     recipients=[{"type": "role", "value": "admin"}],
     channels={"app": True, "tg": True},
+))
+
+# ── Пользователи (экран «Пользователи» по макету 16.11.2026, владелец: «блоком уведомлений так же») ──────────────────
+_ADMINS = [{"type": "role", "value": "admin"}]
+_SUBJECT = [{"type": "resolver", "value": "subject_user"}]
+
+register(Event(
+    key="user_created", direction="sys", group="Пользователи", title="Заведён пользователь",
+    description="Администратор завёл учётку: кто, какая роль. Пароль в уведомление не попадает.",
+    tone="info", action="Открыть пользователей", widget_group="Документы", recipients=_ADMINS, channels={"app": True},
+))
+register(Event(
+    key="user_welcome", direction="sys", group="Пользователи", title="Вам заведена учётная запись",
+    description=("Письмо новому сотруднику: адрес входа и логин. Пароля в письме нет — его сообщает администратор "
+                 "(показывается на экране один раз). Адресат — сам заведённый, он задаётся кодом."),
+    tone="info", action="Войти", widget_group="Документы", recipients=[], channels={"mail": True},
+))
+register(Event(
+    key="user_password_reset", direction="sys", group="Пользователи", title="Ваш пароль сброшен администратором",
+    description="Администратор задал новый пароль; старый больше не действует. Самого пароля в уведомлении нет.",
+    tone="warn", action="Открыть", widget_group="Документы", recipients=_SUBJECT, channels={"app": True, "mail": True},
+))
+register(Event(
+    key="user_role_changed", direction="sys", group="Пользователи", title="Изменена роль пользователя",
+    description="Роль задаёт доступ к разделам. Новые права начнут действовать после повторного входа.",
+    tone="info", action="Открыть пользователей", widget_group="Документы", recipients=_SUBJECT + _ADMINS,
+    channels={"app": True},
+))
+register(Event(
+    key="user_admin_role", direction="sys", group="Пользователи", title="Назначена или снята роль «Администратор»",
+    description="Администратор проходит любые проверки прав — о каждом назначении и снятии знают все администраторы.",
+    tone="warn", action="Открыть пользователей", widget_group="Документы", recipients=_ADMINS,
+    channels={"app": True, "tg": True},
+))
+register(Event(
+    key="user_activity_changed", direction="sys", group="Пользователи", title="Пользователь деактивирован или возвращён",
+    description="Вход закрыт или открыт снова. Мастеру группы — чтобы знал, кто из его людей больше не работает.",
+    tone="info", action="Открыть пользователей", widget_group="Документы",
+    recipients=_ADMINS + [{"type": "resolver", "value": "group_master_of_user"}], channels={"app": True},
+))
+register(Event(
+    key="user_deleted", direction="sys", group="Пользователи", title="Пользователь удалён",
+    description="Учётка удалена насовсем; записи журнала действий остались с его именем.",
+    tone="warn", action="Открыть пользователей", widget_group="Документы", recipients=_ADMINS, channels={"app": True},
 ))
 
 register(Event(

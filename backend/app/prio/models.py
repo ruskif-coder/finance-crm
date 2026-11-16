@@ -26,6 +26,8 @@ class PrioRequest(Base):
     date_start = Column(Date)
     date_end = Column(Date)
     erid_meta = Column(String(300))
+    # Автодозапуск: РК уже идёт — согласованная площадка с ЕРИД запускается сама (`autolaunch.py`, 2026-11-16_prio_auto_launch.sql)
+    auto_launch_more = Column(Boolean, nullable=False, server_default="true", default=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_by = Column(Integer, ForeignKey("users.id"))

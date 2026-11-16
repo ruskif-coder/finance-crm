@@ -123,6 +123,8 @@ class Bundle:
     pay_due: Optional[date] = None
     today: Optional[date] = None
     flow: str = "полный цикл"            # цикл сделки (= `flow.FULL`) (`final_recon/flow`) — для «чей ход» (13.11.2026)
+    # Площадки приоритезации (16.11.2026): готовы к запуску (согласовали + ЕРИД) / всего без отказавших / идут / черновики
+    prio: tuple = (0, 0, 0, 0)
 
 
 def _fact(k, v):
@@ -232,6 +234,8 @@ def _by_slot(b: Bundle):
         # матрице (владелец 14.10.2026): у услуги без креативов/ЕРИД они были бы неправдой.
         need_cr = _applies(b, "creatives_accepted")
         need_erid = _applies(b, "erid_issued")
+        if b.flow == "приоритезация":
+            return _prio_prep(b)
         external = account_turn.external_launch(b.flow, b.applies)
         if external:
             # Контур аккаунта (OLV, Альфарм-Таргет, Polza): по матрице креативы и ЕРИД не требуются, запуск — во внешней системе,
@@ -296,7 +300,14 @@ def _by_slot(b: Bundle):
             # видит запуск, не открывая дашборд трафика.
             if dl.get("placements_on"):
                 state.insert(0, {"type": "status", "tone": "good", "v": "запущена"})
+        ready_n = b.prio[0]
+        if b.flow == "приоритезация" and ready_n:
+            # Согласовали и получили ЕРИД после запуска, а дозапуск выключен или не прошёл (16.11.2026)
+            state.append(_alert(f"есть незапущенные площадки: {ready_n}", "warn"))
         if b.flow in account_turn.ACCOUNT_LAUNCH:
+            if ready_n and b.flow == "приоритезация" and not (dl is not None and dl.get("flight_over")):
+                return state, {"label": "Дозапустить", "do": "expand",
+                               "hint": "Площадки согласовали и получили ЕРИД — запустить в раскрытой строке"}, ""
             # OLV, Polza, приоритезация (13.11.2026): запуск и завершение — кнопки аккаунта. Период кончился — «Завершить»
             # (`final_recon.launch`), отставание своего запуска — раскрыть открутку (владелец 14.11.2026: «ваш ход» без кнопки — тупик).
             if dl is not None and dl.get("flight_over"):
@@ -419,6 +430,38 @@ class Batch:
     kktu: Dict[int, bool]
     annex: Dict[int, tuple]          # сделка → (номер последнего приложения, сумма по сделке)
     campaigns: Dict[int, object]
+
+
+def _prio_prep(b) -> tuple:
+    """«Готовятся к старту» приоритезации (16.11.2026): площадки готовы → «Запустить» (чек-лист в раскрытой строке)."""
+    ready_n, total, _live, draft = b.prio
+    state = [_fact("площадки", f"готово {ready_n} / {total}" if total else "не добавлены")]
+    if ready_n:
+        return state, {"label": f"Запустить · {ready_n}", "do": "expand",
+                       "hint": "Чек-лист площадок с ЕРИД — запустить в раскрытой строке"}, ""
+    if not total or draft:
+        return state, {"label": "Запрос площадкам", "do": "link", "url": _card(b, "prio"),
+                       "hint": "Добавить площадки и отправить запрос — в карточке сделки"}, ""
+    return state, None, "ждём согласования площадок и ЕРИД"
+
+
+def prio_counts(db, deal_ids) -> Dict[int, tuple]:
+    """{сделка: (готовы к запуску, всего без отказавших, идут, черновики)} — одним запросом на очередь. «Готова» — тем же правилом,
+    что чек-лист и автодозапуск (`prio.autolaunch.ready`)."""
+    from app.prio import autolaunch
+    from app.prio import models as PM
+    if not deal_ids:
+        return {}
+    out: Dict[int, list] = {}
+    for deal_id, p in (db.query(PM.PrioRequest.deal_id, PM.PrioPlacement)
+                       .join(PM.PrioPlacement, PM.PrioPlacement.request_id == PM.PrioRequest.id)
+                       .filter(PM.PrioRequest.deal_id.in_(list(deal_ids)), PM.PrioPlacement.status != PM.REJECTED).all()):
+        acc = out.setdefault(deal_id, [0, 0, 0, 0])
+        acc[0] += autolaunch.ready(p)
+        acc[1] += 1
+        acc[2] += p.status == PM.LIVE
+        acc[3] += p.status == PM.DRAFT
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def _flow_of(db, d) -> str:
@@ -595,6 +638,7 @@ def _build(db, deals, verdicts, today, amounts):
         db, {did: c for did, c in batch.campaigns.items() if slots.get(did) in ("live", "recon")},
         today)
     share = round(lp.erid_threshold(db) * 100)
+    prio = prio_counts(db, [d.id for d in deals if slots[d.id] in ("prep", "live")])
     pay_ids = {d.payer_counterparty_id or d.counterparty_id for d in deals
                if slots[d.id] == "pay"} - {None}
     terms = ({c.id: c.term_days for c in db.query(Counterparty.id, Counterparty.term_days)
@@ -634,6 +678,6 @@ def _build(db, deals, verdicts, today, amounts):
             annex_sum=(batch.annex.get(d.id) or ("", None))[1],
             pay_due=(payment_due(DealFacts(period_to=d.period_to, term_days=terms.get(cp)))
                      if slot == "pay" else None),
-            today=today, flow=_flow_of(db, d))
+            today=today, flow=_flow_of(db, d), prio=prio.get(d.id, (0, 0, 0, 0)))
         out[d.id] = row_state(b)
     return out

@@ -17,7 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.publisher_recon import board as B
-from app.publisher_requests import (PublisherRecon, PublisherReconLine, PublisherRequest, PublisherRequestFile,
+from app.publisher_requests import (PublisherRecon, PublisherReconLine, PublisherReconPrioLine, PublisherRequest,
+                                    PublisherRequestFile,
                                     PublisherRequestMessage)
 
 ANSWER_WORKDAYS = 2                    # срок ответа площадки после активации и после нашего ответа (владелец 26.10)
@@ -185,13 +186,30 @@ def spread(total: int, weights: Dict[int, int]) -> Dict[int, int]:
 MODES = ("even", "target")
 
 
-def distribute(total: int, facts: Dict[int, int], mode: str, target_id: Optional[int] = None) -> Dict[int, int]:
+def line_key(target) -> Optional[str]:
+    """Ключ строки сверки: «t<id>» (РК) / «p<id>» (приоритезация); голое число — РК, как писал экран до 16.11.2026."""
+    if target is None or target == "":
+        return None
+    s = str(target).strip()
+    return s if s[:1] in ("t", "p") else f"t{s}"
+
+
+def _line(request_id: int, key: str, ours: int, agreed: int):
+    kind, oid = key[0], int(key[1:])
+    if kind == "p":
+        return PublisherReconPrioLine(request_id=request_id, prio_placement_id=oid, our_volume=ours, agreed_volume=agreed)
+    return PublisherReconLine(request_id=request_id, target_id=oid, our_volume=ours, agreed_volume=agreed)
+
+
+def distribute(total: int, facts: Dict[str, int], mode: str, target_id=None) -> Dict[str, int]:
     """Итог по РК сверки (владелец 14.11.2026). `even` — дельта пропорционально нашему факту (то же, что итог по долям,
     `spread`); `target` — вся дельта на одну РК, остальные остаются с нашим фактом. Сумма всегда равна `total`."""
     if mode == "even":
         return spread(total, facts)
     if mode != "target":
         raise ReconError(400, "Неизвестный способ раскладки")
+    if target_id not in facts:
+        target_id = line_key(target_id)
     if target_id not in facts:
         raise ReconError(400, "Выберите РК этой сверки")
     out = dict(facts)
@@ -201,7 +219,7 @@ def distribute(total: int, facts: Dict[int, int], mode: str, target_id: Optional
     return out
 
 
-def preview(db: Session, req: PublisherRequest, volume, mode: str, target_id: Optional[int] = None) -> dict:
+def preview(db: Session, req: PublisherRequest, volume, mode: str, target_id=None) -> dict:
     """Что запишет «Согласовать итог» при этой раскладке — окно менеджера показывает ровно это."""
     volume = _volume(volume)
     if volume is None:
@@ -213,7 +231,7 @@ def preview(db: Session, req: PublisherRequest, volume, mode: str, target_id: Op
 
 
 def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date] = None,
-          mode: str = "even", target_id: Optional[int] = None) -> PublisherRequest:
+          mode: str = "even", target_id=None) -> PublisherRequest:
     """«Согласовать итог N» — финальное решение менеджера: пишем нашу цифру, цифру площадки и итог, CPM на сейчас
     и разнесение по размещениям. Без возврата."""
     # Два «Согласовать» разом: второй ждёт первого на замке строки и видит уже зафиксированный итог — 409, а не
@@ -232,8 +250,8 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     # НДС — как и CPM, на момент согласования: разаллокация по закрытому месяцу не пересчитывается (владелец 29.10.2026).
     rc.vat_rate = publisher_vat(db, req.publisher_id)
     db.add(rc)
-    for tid, v in split.items():
-        db.add(PublisherReconLine(request_id=req.id, target_id=tid, our_volume=facts[tid], agreed_volume=v))
+    for key, v in split.items():
+        db.add(_line(req.id, key, facts[key], v))
     req.verdict, req.decided_at = B.AGREED, datetime.utcnow()
     req.decided_by, req.decided_email = user.name or user.email, user.email
     req.our_seen_at = datetime.utcnow()     # решение принято по прочитанному — «новое» в строке гаснет

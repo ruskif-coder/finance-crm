@@ -92,7 +92,22 @@ def _launch(db: Session, deal, pid: int, client) -> M.PrioPlacement:
     except (PrioError, PrioApiError) as e:
         p.check_warning = f"РК {camp_id} заведена, но перечитка не сошлась — проверьте в системе приоритезации: {e}"
     p.stage_note = _deal_goes_live(db, deal)
+    _rk_rows(db, deal)
     return p
+
+
+def _rk_rows(db: Session, deal) -> None:
+    """РК сделки и строка площадки в ней — сразу при запуске (16.11.2026), а не ночным прогоном: по этой строке сбор пишет
+    показы площадки, их видят итоговая сверка и сверка с площадкой. Сбой сборки РК запуск не отменяет — доберёт ночь."""
+    import logging
+    from app.ad import build
+    from app.sales.models import SalesStage
+    try:
+        with db.begin_nested():
+            if build.ensure_campaign_on_move(db, deal, db.get(SalesStage, deal.our_stage_id)) is None:
+                build.sync_deal(db, deal.id, commit=False)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("finance.prio").warning("приоритезация %s: строка площадки в РК не заведена: %s", deal.code, e)
 
 
 def _deal_goes_live(db: Session, deal):

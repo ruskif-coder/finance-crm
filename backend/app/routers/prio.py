@@ -2,7 +2,7 @@
 """Приоритезация — сборка в карточке сделки (владелец 19.10.2026). Собирает аккаунт; права — реестр сделок (как сверка),
 область видимости — как у сделки. Ответы площадки идут через шлюз кабинета (`cabinet_gw`), не сюда."""
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -270,15 +270,46 @@ def prio_fact_source(deal_id: int, pid: int, body: FactSourceIn, db: Session = D
     return S.view(db, d)
 
 
+class BulkIn(BaseModel):
+    # Только отмеченные площадки (чек-лист запуска на дашборде, 16.11.2026); не передано — все готовые, как раньше
+    ids: Optional[List[int]] = None
+
+
+class AutoIn(BaseModel):
+    on: bool
+
+
+@router.put("/deal/{deal_id}/auto-launch")
+def prio_auto_launch(deal_id: int, body: AutoIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Дозапускать сам» (16.11.2026): РК уже идёт — согласованная площадка с ЕРИД стартует без аккаунта (`prio/autolaunch.py`).
+    Включение сразу дозапускает тех, кто уже ждёт."""
+    from app.prio import autolaunch as A
+    d = _deal(db, deal_id, user)
+    r = S.request_of(db, d)
+    if r is None:
+        raise HTTPException(404, "Запроса приоритезации у сделки ещё нет")
+    r.auto_launch_more = body.on
+    db.commit()
+    log_action(db, user, "prio_auto_launch_toggle", "sales_deal", d.id,
+               f"{d.code}: дозапуск площадок — {'сам' if body.on else 'вручную'}")
+    if body.on:
+        for p in A.placements(db, r.id):
+            A.try_one(db, d, p)
+    return S.view(db, d)
+
+
 @router.post("/deal/{deal_id}/bulk/{action}")
-def prio_bulk(deal_id: int, action: str, db: Session = Depends(get_db), user: User = Depends(EDIT)):
-    """«Отправить площадкам» — все ГОТОВЫЕ черновики; «Запустить согласованные». Отказ по одной строке не роняет остальные."""
+def prio_bulk(deal_id: int, action: str, body: BulkIn = BulkIn(), db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Отправить площадкам» — все ГОТОВЫЕ черновики; «Запустить согласованные» (или только отмеченные `ids`).
+    Отказ по одной строке не роняет остальные."""
     d = _deal(db, deal_id, user)
     if action not in ("send", "launch"):
         raise HTTPException(400, "Массово: send / launch")
     st = S.view(db, d)
+    pick = set(body.ids) if body.ids is not None else None
     ids = [x["id"] for x in st["placements"]
-           if (action == "send" and x["status"] == M.DRAFT and not x["missing"]) or (action == "launch" and x["status"] == M.APPROVED and x["erid_ready"])]
+           if (pick is None or x["id"] in pick)
+           and ((action == "send" and x["status"] == M.DRAFT and not x["missing"]) or (action == "launch" and x["status"] == M.APPROVED and x["erid_ready"]))]
     done, failed, warnings = [], [], []
     for pid in ids:
         try:

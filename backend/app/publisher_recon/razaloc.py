@@ -95,9 +95,14 @@ def lines_of(db: Session, request_id: int) -> List[dict]:
                k.id AS contract_id, k.ord_contract_id AS f_ord_id, coalesce(m.number, k.contract_number) AS f_number,
                coalesce(m.date, k.contract_date) AS f_date, m.type AS f_type,
                coalesce(m.client_inn, cp.inn, k.inn) AS f_adv_inn, coalesce(m.client_name, cp.name, k.counterparty_name) AS f_adv_name
-          FROM publisher_recon_line l
-          JOIN launch_prep_target t ON t.id = l.target_id
-          JOIN sales_deals d ON d.id = t.deal_id
+          -- строки РК и строки приоритезации (16.11.2026) — у обеих сделка, а договор ОРД берётся у сделки
+          FROM (SELECT l.request_id, l.agreed_volume, t.deal_id
+                  FROM publisher_recon_line l JOIN launch_prep_target t ON t.id = l.target_id
+                UNION ALL
+                SELECT l.request_id, l.agreed_volume, r.deal_id
+                  FROM publisher_recon_prio_line l JOIN prio_placements pp ON pp.id = l.prio_placement_id
+                  JOIN prio_requests r ON r.id = pp.request_id) l
+          JOIN sales_deals d ON d.id = l.deal_id
           LEFT JOIN ord_initial_contracts ic ON ic.id = d.ord_initial_contract_id
           LEFT JOIN contracts k ON k.id = d.ord_final_contract_id
           LEFT JOIN counterparties cp ON cp.id = k.counterparty_id

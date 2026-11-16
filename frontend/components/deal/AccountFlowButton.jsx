@@ -21,11 +21,12 @@ const GREEN = { height: 38, border: 'none', background: 'var(--income)', color: 
 // следующей стадии нет (2T7US3 на последней «Оплате» не двигалась никак).
 export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, nextTitle, onNext, onLost, lostLabel, onAny }) {
   const [action, setAction] = useState(null)
+  const [selfLaunch, setSelfLaunch] = useState(false)   // приоритезация на старте — переходит сама (16.11.2026)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
   const load = useCallback(() => {
-    api.get(`/final-recon/deal/${dealId}/flow`, auth()).then(r => setAction(r.data.action || null)).catch(e => { setAction(null); setErr(detailText(e, 'Не удалось узнать, доступна ли кнопка')) })
+    api.get(`/final-recon/deal/${dealId}/flow`, auth()).then(r => { setAction(r.data.action || null); setSelfLaunch(!!r.data.self_launch) }).catch(e => { setAction(null); setErr(detailText(e, 'Не удалось узнать, доступна ли кнопка')) })
   }, [dealId])
   useEffect(() => { load() }, [load, stageId])
 
@@ -37,11 +38,17 @@ export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, 
     finally { setBusy(false) }
   }
   // Контур аккаунта — «Запустить/Завершить» переводят сразу; иначе — действие следующей стадии через диалог; нет следующей — кнопки нет.
-  const label = action ? LABEL[action] : nextLabel
+  // Приоритезация на «Готовятся к старту»: ни «Запустить», ни перевода — сделку переводит запуск первой площадки
+  const label = action ? LABEL[action] : (selfLaunch ? null : nextLabel)
   const main = action ? run : onNext
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flex: '0 0 auto' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {selfLaunch && !action && (
+        <span title="Сделка перейдёт «В размещении» сама, когда запустится первая согласованная площадка с ЕРИД"
+          style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 260, textAlign: 'right', lineHeight: 1.35 }}>
+          В размещение — сама, при запуске первой площадки</span>
+      )}
       {!!label && (
         <button onClick={main} disabled={busy} title={action ? 'Контур аккаунта: запуск и завершение ведёт аккаунт' : nextTitle}
           style={{ ...GREEN, borderRadius: 10, padding: '0 18px', cursor: busy ? 'wait' : 'pointer' }}>

@@ -117,6 +117,9 @@ def _after(db: Session, deal, p, actor, out: dict, was_ready: bool) -> None:
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor, ctx={"deal": deal})
     db.commit()
+    # РК уже идёт и «дозапускать сам» включён — площадка с готовым маркером стартует сразу (16.11.2026)
+    from app.prio import autolaunch
+    autolaunch.try_one(db, deal, p)
 
 
 def _deal(db: Session, p: M.PrioPlacement):
@@ -193,5 +196,8 @@ def run_part(db: Session, dry_run: bool = False) -> dict:
             continue
         if out.get("status") != before:
             changed.append({"set_id": f"П{p.id}", "from": before, "to": out.get("status")})
+    # Добор автодозапуска: маркер стал готов, а запуск сразу не прошёл (сервис лежал) — пробуем каждым прогоном (16.11.2026)
+    from app.prio import autolaunch
+    auto = [] if dry_run else autolaunch.run(db)
     return {"issued": issued, "pending": pending, "blocked": blocked, "failed": failed,
-            "checked": len(polled), "changed": changed, "refresh_failed": refresh_failed}
+            "checked": len(polled), "changed": changed, "refresh_failed": refresh_failed, "auto_launched": auto}

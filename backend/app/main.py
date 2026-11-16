@@ -662,6 +662,8 @@ app.include_router(publisher_recon_router.router, prefix="/api/publisher-recon",
 from app.routers import agency_terms as agency_terms_router  # noqa: E402 — «Агентские условия» (2026-10-27_agency_terms.sql)
 app.include_router(agency_terms_router.router, prefix="/api/agency-terms", tags=["agency-terms"])
 app.include_router(cabinet_gateway_recon.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
+from app.routers import journal as journal_router  # noqa: E402 — журнал действий по макету (16.11.2026)
+app.include_router(journal_router.router, prefix="/api/journal", tags=["journal"])
 
 def _db_ping() -> None:
     from sqlalchemy import text as _t

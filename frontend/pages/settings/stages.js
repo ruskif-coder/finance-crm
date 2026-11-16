@@ -4,7 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import { isAdmin } from '../../lib/auth'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
-import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn } from '../../components/salesTableKit'
+import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PAGE_W } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { markDirty, markClean } from '@/lib/unsaved'
@@ -106,6 +106,8 @@ export default function SettingsStages() {
             {saving ? 'Сохранение…' : 'Сохранить все'}
           </button>
         } />
+        {/* Ряд вкладок — на всю ширину, содержимое — под 1600 по левому краю (владелец 16.11.2026). */}
+        <div style={{ maxWidth: PAGE_W.base }}>
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
           <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Каталог стадий</h1>
@@ -200,6 +202,7 @@ export default function SettingsStages() {
             </div>
           </>
         )}
+        </div>
       </div>
     </>
   )

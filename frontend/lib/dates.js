@@ -124,6 +124,10 @@ export const monthEnd = (ym) => {
   return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
 }
 
+/** Конец периода сделки для показа: пустой конец по контракту модели = календарный месяц старта
+    (`sales_deals.period_to` NULL). Без этого карточка писала «01.12 — » (15.11.2026, после снятия протухших концов). */
+export const periodEnd = (from, to) => to || (from ? monthEnd(String(from).slice(0, 7)) : null)
+
 /** Метка в имя выгружаемого файла, «2026-09-23_0130» — по Москве, по той же причине. */
 export const fileStamp = () => {
   const p = partsOf(new Date(), { year: 'numeric', month: '2-digit', day: '2-digit',

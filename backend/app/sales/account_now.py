@@ -92,7 +92,7 @@ def assembly_head(docs: list, rows: list) -> dict:
     if docs:
         return {"text": f"{docs[0]['label']}: {docs[0]['text']}", "href": _anchor(docs[0]["link"])}
     for r in rows:
-        if r["state"] in ("warn", "go"):
+        if r["state"] != "ok":                # и «ждёт»: у приоритезации все площадки могут ждать согласования (16.11.2026)
             return {"text": f"{r['label']}: {r['text']}", "href": ANCHOR.get(r["key"], "#sec-creatives")}
     return {"text": "собрано — можно в размещение", "href": "#sec-prio" if rows and rows[0]["key"] == "sent" else "#sec-creatives"}
 

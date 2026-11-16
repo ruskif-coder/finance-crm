@@ -215,6 +215,25 @@ def traffic_masters(db: Session, ctx: dict) -> List[int]:
                                                 User.is_active == 1).all()]
 
 
+def subject_user(db: Session, ctx: dict) -> List[int]:
+    """Сам пользователь, о котором событие (экран «Пользователи», 16.11.2026): ему сбросили пароль, сменили роль."""
+    u = ctx.get("user")
+    return _active(db, [u.id]) if u is not None else []
+
+
+def group_master_of_user(db: Session, ctx: dict) -> List[int]:
+    """Мастера рабочей группы роли пользователя (16.11.2026: человека деактивировали или вернули — мастер его группы
+    должен знать). Роль без группы — мастеров нет. По признакам роли, а не по `roles.key`."""
+    u = ctx.get("user")
+    role = db.get(Role, u.role_id) if u is not None else None
+    if role is None or not role.staff_group:
+        return []
+    ids = [r.id for r in db.query(Role).filter(Role.staff_group == role.staff_group, Role.is_master.is_(True)).all()]
+    if not ids:
+        return []
+    return [x.id for x in db.query(User).filter(User.role_id.in_(ids), User.is_active == 1).all() if x.id != u.id]
+
+
 def master_collector(db: Session, ctx: dict) -> List[int]:
     """Кто собирает мастер-сделку — её автор (тот же, что «собирает <кто>» в карточке сделки)."""
     m = ctx.get("master")
@@ -242,6 +261,8 @@ RESOLVERS = {
     "onec_desk_editors": onec_desk_editors,
     "traffic_masters": traffic_masters,
     "account_masters": account_masters,
+    "subject_user": subject_user,
+    "group_master_of_user": group_master_of_user,
 }
 
 # Что резолвер ждёт в `ctx`. Объявлено списком, а не только в теле функции, потому что
@@ -268,6 +289,8 @@ RESOLVER_CTX = {
     "master_of_responsible": "deal",    # SalesDeal
     "master_collector": "master",       # MasterDeal
     "reminder_owner": "reminder",       # SalesStatusReminder
+    "subject_user": "user",             # User — о ком событие
+    "group_master_of_user": "user",     # User
     # "sales_head" и роль/пользователь в получателях контекста не читают вовсе.
 }
 
@@ -286,6 +309,8 @@ RESOLVER_LABELS = {
     "onec_desk_editors": "Бухгалтерия (право правки «Документов для 1С»)",
     "traffic_masters": "Мастера трафика (мастер-роли контура трафика)",
     "account_masters": "Мастера аккаунтов (мастер-роли контура аккаунтов)",
+    "subject_user": "Сам пользователь",
+    "group_master_of_user": "Мастер группы пользователя",
 }
 
 

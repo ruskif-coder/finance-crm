@@ -103,6 +103,13 @@ def test_admin_downloads_excel_without_model_sheets(client):
     assert "filename*=UTF-8''" in r.headers["content-disposition"]
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
     assert wb.sheetnames == ["Отчёт", "По неделям"]
+    # Имя — по какой день отчёт (аккаунты 16.11.2026): последний день данных, не дата выгрузки
+    from urllib.parse import quote
+    db = SessionLocal()
+    cid = db.execute(text("SELECT id FROM ad_campaign WHERE deal_id = :d ORDER BY id DESC LIMIT 1"), {"d": deal_id}).scalar()
+    last = CR.last_data_day(db, cid)
+    db.close()
+    assert quote(f"_по_{last:%d.%m.%Y}.xlsx") in r.headers["content-disposition"]
 
 
 def test_no_campaign_and_bad_period(client):
@@ -270,3 +277,30 @@ def test_unknown_group_is_refused(client, grouped):
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
     assert any("ТЕСТ группа" in str(c.value) for c in wb["Отчёт"]["A"] + wb["Отчёт"]["B"] + tuple(
         x for row in wb["Отчёт"].iter_rows(max_row=10) for x in row))
+
+
+def test_weeks_sheet_has_reach_column():
+    """Аккаунты 16.11.2026: на «По неделям» у каждой недели и у «ИТОГО» четвёртая колонка — охват
+    (уники модели SIMB ID, сложенные по дням, как «Уники» листа «Отчёт»). Уронит: охват не сложен
+    по неделе / колонок у группы снова три."""
+    from app.ad import client_report_xlsx as X
+    # 2026-10-18 — воскресенье: неделя 1 = 15–18.10, неделя 2 = 19–20.10
+    head = {"period_from": date(2026, 10, 15), "period_to": date(2026, 10, 20),
+            "days_to": date(2026, 10, 20), "last_data": date(2026, 10, 20),
+            "date_start": date(2026, 10, 15), "date_end": date(2026, 10, 20),
+            "advertiser": "А", "code": "TEST02"}
+    sd = {"a.ru": {date(2026, 10, d): [100, 2, 40] for d in (15, 16, 17, 18, 19, 20)},
+          "b.ru": {date(2026, 10, 19): [50, 1, 30.4]}}
+    tot = {"shows": 650, "clicks": 13, "ctr": 2.0, "plan": None, "done_pct": None}
+    rep = CR.Report(head=head, totals=tot, by_placement=[], by_day=[], site_days=sd)
+    ws = X.render(rep)["По неделям"]
+    hdr = next(c for row in ws.iter_rows() for c in row if c.value == "охват")
+    subs = [ws.cell(hdr.row, hdr.column - 3 + i).value for i in range(12)]
+    assert subs == ["показы", "клики", "ctr", "охват"] * 3
+    row_a = next(r for r in range(hdr.row + 1, hdr.row + 5) if ws.cell(r, 2).value == "a.ru")
+    row_t = next(r for r in range(hdr.row + 1, hdr.row + 6) if ws.cell(r, 2).value == "ИТОГО:")
+    c0 = hdr.column - 3
+    week1_a = [ws.cell(row_a, c0 + k).value for k in range(4)]
+    assert week1_a == [400, 8, 0.02, 160]
+    assert ws.cell(row_t, c0 + 4 + 3).value == 110     # неделя 2: 40+40+30.4 → 110
+    assert ws.cell(row_t, c0 + 8 + 3).value == 270     # ИТОГО: 240 + 30.4 → 270

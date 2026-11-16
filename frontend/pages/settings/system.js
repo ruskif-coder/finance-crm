@@ -207,10 +207,9 @@ export default function SystemStatus() {
           экран, и данные уезжали ПОД сгиб (владелец 17.09.2026). Высота в один экран
           нужна фону страницы, а фон — это тот же контейнер, что держит содержимое.
 
-          Ширина прежняя, центровки нет: все экраны настроек выровнены по левому краю
-          (владелец 16.09.2026) — иначе при переходе между ними содержимое прыгает. */}
-      <div style={{ width: 1600, maxWidth: '100%', background: 'var(--bg-canvas)',
-                    minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
+          Ширина — на всё окно, как у остальных экранов настроек: ряд вкладок от края до края, по левому краю
+          (владелец 16.09 и 16.11.2026) — иначе при переходе между экранами ряд прыгает. */}
+      <div style={{ background: 'var(--bg-canvas)', minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
         <SettingsTabs active="system" />
 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',

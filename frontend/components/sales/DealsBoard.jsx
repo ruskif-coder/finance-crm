@@ -3,6 +3,7 @@ import { productWithSurface } from '@/lib/dealTitle';
 import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN, Z } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
 import { dm } from '@/lib/salesFormat'
+import { periodEnd } from '@/lib/dates'
 import { serverDate, todayMsk } from '@/lib/dates'
 
 /**
@@ -112,7 +113,7 @@ function toCard(d) {
     rows: [
       ['Продавец', d.sales_rep || '—'], ['Аккаунт', d.account_manager || '—'],
       ['Агентство', d.agency || '—'], ['Услуга', productWithSurface(d.product, d.inventory) || '—'],
-      ['Период РК', (d.period_from || d.period_to) ? `${dm(d.period_from, '') || '…'} — ${dm(d.period_to, '') || '…'}` : '—'],
+      ['Период РК', (d.period_from || d.period_to) ? `${dm(d.period_from, '') || '…'} — ${dm(periodEnd(d.period_from, d.period_to), '') || '…'}` : '—'],
       ['Сумма с НДС', money(gross) + ' ₽'],
     ],
     docs: docs.map(x => ({ ...x, bg: DOC_BG[x.state] })),

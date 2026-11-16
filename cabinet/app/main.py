@@ -556,7 +556,7 @@ def campaigns(acc=Depends(current_account)):
     with scoped_session(ids) as db:
         rows = db.execute(text(
             "SELECT placement_id, publisher_id, brand, service, surface, date_from, date_to, plan, "
-            "       fact, cpm, status, erid, site, reconciled, advertiser, brand_name "
+            "       fact, cpm, status, erid, site, reconciled, advertiser, brand_name, kind "
             "  FROM pub.campaign_v1")).all()
         # Согласованные креативы размещения — для глаза и «Отозвать» (29.09.2026).
         crs = db.execute(text(
@@ -607,7 +607,10 @@ def campaigns(acc=Depends(current_account)):
             # группировка по месяцам на экране «Кампании» и период в строке обязаны
             # совпадать, а два вычисления одного месяца однажды разошлись бы.
             "period": r.date_from.strftime('%Y-%m') if r.date_from else None,
-            "creatives": creatives_of.get(r.placement_id, []),
+            # Креативы — только у размещений РК: номер строки приоритезации из своей последовательности и совпал бы
+            # с номером чужого размещения (16.11.2026). У приоритезации баннера нет — товар в выдаче аптеки.
+            "creatives": creatives_of.get(r.placement_id, []) if r.kind == "рк" else [],
+            "kind": r.kind,
         })
     return {"campaigns": out}
 

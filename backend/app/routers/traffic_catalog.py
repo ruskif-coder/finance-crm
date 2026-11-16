@@ -52,6 +52,10 @@ SURFACE_KINDS = ("web", "app")
 # Типовые разделы страниц — курируемая основа; накопитель пополняется фактически
 # использованными значениями (кнопка «+ тип» на экране). Отдельную таблицу-справочник не
 # заводим: значение хранится строкой на блоке, список собирается из употреблений.
+# Базовая ставка площадки в DSP (владелец 16.11.2026): всем 100, Куперу 161; потолок — от опечатки в лишний ноль.
+BASE_BID_DEFAULT = 100.0
+BASE_BID_MAX = 100000.0
+
 DEFAULT_PAGE_TYPES = ["главная", "каталог", "карточка товара", "корзина", "статьи", "акции", "лк"]
 
 
@@ -60,6 +64,7 @@ DEFAULT_PAGE_TYPES = ["главная", "каталог", "карточка то
 class SurfaceMS(BaseModel):
     ms_publisher_id: Optional[str] = None
     default_ms_block_id: Optional[str] = None
+    base_bid: Optional[float] = None      # базовая ставка в DSP (16.11.2026); пусто — 100
 
 
 class SurfaceNew(BaseModel):
@@ -104,6 +109,7 @@ def _surface_out(db: Session, s: SalesPublisherSurface) -> dict:
               .order_by(PublisherBlock.page_type, PublisherBlock.ms_block_id).all())
     return dict(id=s.id, kind=s.kind, ms_publisher_id=s.ms_publisher_id,
                default_ms_block_id=s.default_ms_block_id,
+               base_bid=float(s.base_bid) if s.base_bid is not None else BASE_BID_DEFAULT,
                blocks=[_block_out(b) for b in blocks])
 
 
@@ -198,11 +204,15 @@ def edit_surface(surface_id: int, payload: SurfaceMS,
     s = db.query(SalesPublisherSurface).get(surface_id)
     if not s:
         raise HTTPException(404, "Поверхность не найдена")
+    bid = BASE_BID_DEFAULT if payload.base_bid is None else payload.base_bid
+    if not (0 < bid <= BASE_BID_MAX):
+        raise HTTPException(400, f"Базовая ставка — число больше 0 и не больше {BASE_BID_MAX:g}; пусто — {BASE_BID_DEFAULT:g}")
     s.ms_publisher_id = (payload.ms_publisher_id or None)
     s.default_ms_block_id = (payload.default_ms_block_id or None)
+    s.base_bid = round(bid, 2)
     db.commit()
     log_action(db, user, "traffic_catalog_surface_edit", "sales_publisher", s.publisher_id,
-               f"{s.kind}: ms={s.ms_publisher_id} default={s.default_ms_block_id}")
+               f"{s.kind}: ms={s.ms_publisher_id} default={s.default_ms_block_id} ставка={float(s.base_bid):g}")
     return _surface_out(db, s)
 
 

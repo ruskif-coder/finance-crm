@@ -38,6 +38,7 @@
 """
 import sys
 
+import app.model_registry  # noqa: F401,E402 — все модели: без них ORM не разрешит FK сделки (15.11.2026, скрипт падал на commit)
 from app.database import SessionLocal
 from app.sales.models import SalesDeal, SalesDealFieldOverride
 

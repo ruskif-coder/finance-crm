@@ -231,7 +231,7 @@ def test_list_users_and_profiles_and_access_overview(db, made):
     listing = users.list_users(db=db, current_user=_admin())
     mine = next(x for x in listing if x["id"] == uid)
     assert mine["email"] == email and mine["role"] == "viewer" and mine["is_active"] is True
-    profiles = users.notification_profiles(db=db, current_user=_admin())
+    profiles = users.notification_profiles(db=db, current_user=_admin())["profiles"]      # с 16.11.2026 — объект
     assert profiles and {"id", "label", "is_default"} <= set(profiles[0])
     ov = users.access_overview(db=db, current_user=_admin())
     assert {"rows", "core", "outer", "shared_emails"} <= set(ov)

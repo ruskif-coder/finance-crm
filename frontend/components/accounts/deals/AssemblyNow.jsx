@@ -42,7 +42,8 @@ function ExternalLaunch({ dealId, canEdit, onDone }) {
 
 export default function AssemblyNow({ now, code, hot, cols = 4, dealId, canEdit, onDone }) {
   const chips = now.chips || []
-  const done = chips.every(c => c.tone !== 'warn')
+  // зелёным — только когда и чипы, и шаги сборки закрыты (у приоритезации шаги — площадки, чипы — один ОРД; 16.11.2026)
+  const done = chips.every(c => c.tone !== 'warn') && (now.assembly || []).every(r => r.state === 'ok')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px 16px 8px' }}>

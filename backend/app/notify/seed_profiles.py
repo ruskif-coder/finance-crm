@@ -43,7 +43,7 @@ PLAN = {
                        "account_launch_finish": ["app", "tg"],
                        "master_reverted": ["app", "tg", "mail"],      # возврат стадии пакета (12.11.2026)
                        # Приоритезация (19.10.2026) — собирает аккаунт, ему и ответы, и автостоп.
-                       **{k: ["app"] for k in ("prio_site_answered", "prio_goal_reached")},
+                       **{k: ["app"] for k in ("prio_site_answered", "prio_goal_reached", "prio_auto_launched")},
                        "prio_stop_failed": ["app", "tg"]},
     # «ЕРИД не выпустился» — решение владельца 31.08.2026: адресуем админу и мастеру
     # аккаунта. Маркер не выпустился = сделка не может стартовать в размещении, и знать
@@ -122,6 +122,12 @@ STAFF_GROUP_TO_PROFILE = {
 }
 
 
+def start_profile_key(role_key, staff_group):
+    """С какого профиля уведомлений начинает сотрудник этой роли: по роли, иначе по рабочей группе роли. Одна функция
+    на раскладку профилей, создание пользователя и экран «Пользователи» (16.11.2026)."""
+    return ROLE_TO_PROFILE.get(role_key) or STAFF_GROUP_TO_PROFILE.get(staff_group)
+
+
 def assign_profiles(dry_run: bool = False) -> int:
     """Разложить активных пользователей по профилям согласно их ролям.
 
@@ -139,8 +145,7 @@ def assign_profiles(dry_run: bool = False) -> int:
         groups = {r.id: r.staff_group for r in all_roles}
         for u in db.query(User).filter(User.is_active == 1,
                                        User.notification_profile_id.is_(None)).all():
-            prof_key = (ROLE_TO_PROFILE.get(roles.get(u.role_id))
-                        or STAFF_GROUP_TO_PROFILE.get(groups.get(u.role_id)))
+            prof_key = start_profile_key(roles.get(u.role_id), groups.get(u.role_id))
             pid = profiles.get(prof_key) if prof_key else None
             if not pid:
                 print(f"  ? {u.email}: роль {roles.get(u.role_id)} не сопоставлена — пропуск")
