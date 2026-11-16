@@ -13,7 +13,7 @@
 import json
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,10 @@ from app.models import User
 
 router = APIRouter()
 KEY = "simb_id"
-DEFAULTS = {"freq_base": 3.7, "freq_dev_pct": 0.0, "ctr_base": 0.1, "ctr_dev_pct": 0.0}
+DEFAULTS = {"freq_base": 3.7, "freq_dev_pct": 0.0, "ctr_base": 0.1, "ctr_dev_pct": 0.0,
+            # Расчётный охват (владелец 16.11.2026): на каждый день пары — повторные заходы в рамках недели и пересечение
+            # аудитории площадок, % из диапазона; выбираются и фиксируются разово (`report_coef.ensure`)
+            "repeat_min": 8.0, "repeat_max": 16.0, "overlap_min": 3.0, "overlap_max": 8.0}
 
 
 class SimbIdIn(BaseModel):
@@ -31,6 +34,16 @@ class SimbIdIn(BaseModel):
     freq_dev_pct: float = Field(ge=0, le=100)     # поправка ±%
     ctr_base: float = Field(ge=0, le=100)         # CTR, %
     ctr_dev_pct: float = Field(ge=0, le=100)      # поправка ±%
+    repeat_min: float = Field(DEFAULTS["repeat_min"], ge=0, le=90)     # повторные заходы в неделе, % — от
+    repeat_max: float = Field(DEFAULTS["repeat_max"], ge=0, le=90)     # … до
+    overlap_min: float = Field(DEFAULTS["overlap_min"], ge=0, le=90)   # пересечение аудитории площадок, % — от
+    overlap_max: float = Field(DEFAULTS["overlap_max"], ge=0, le=90)   # … до
+
+    @model_validator(mode="after")
+    def _ranges(self):
+        if self.repeat_min > self.repeat_max or self.overlap_min > self.overlap_max:
+            raise ValueError("«от» больше «до» в диапазоне")
+        return self
 
 
 def load(db: Session) -> dict:

@@ -194,9 +194,11 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     settings = load_settings(db)
     coefs = report_coef.ensure(db, [k for k, v in per.items() if v[0]], settings)
     for k, v in per.items():
-        d = report_coef.derive(v[0], coefs[k]) if k in coefs else {"uniques": 0, "clicks": 0}
-        per[k] = [v[0], d["clicks"] if model else v[1], d["uniques"]]
-    pair_site_day: Dict[tuple, list] = defaultdict(lambda: [0, 0, 0])
+        d = report_coef.derive(v[0], coefs[k]) if k in coefs else {"uniques": 0, "clicks": 0, "reach": 0}
+        # [показы, клики, уники, расчётный охват] — охват дня пары (16.11.2026): уники × (1 − повторы) × (1 − пересечение)
+        per[k] = [v[0], d["clicks"] if model else v[1], d["uniques"], d["reach"]]
+    rest_keep = (1 - report_coef.mid_reach(settings)[0] / 100) * (1 - report_coef.mid_reach(settings)[1] / 100)
+    pair_site_day: Dict[tuple, list] = defaultdict(lambda: [0, 0, 0, 0])
     for (cid, day), v in per.items():
         acc = pair_site_day[(labels[cid][2], day)]
         for i, x in enumerate(v):
@@ -210,18 +212,23 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     # ── площадки и дни: факт системы (в модели — клики/уники из пар + остаток по базе) ─
     by_site: Dict[str, list] = defaultdict(lambda: [0, 0, 0])
     by_day: Dict[date, list] = defaultdict(lambda: [0, 0, 0])
-    # [показы, клики, уники] — уники только в модели (`model=True`), их читает и страница разбора РК
-    site_days: Dict[str, Dict[date, list]] = defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))
+    # [показы, клики, уники, расчётный охват] — уники модели читает и страница разбора РК; охват — лист «По неделям»
+    site_days: Dict[str, Dict[date, list]] = defaultdict(lambda: defaultdict(lambda: [0, 0, 0, 0]))
     for r in rows:
         site, day, sh = r["site"] or NO_PLACEMENT, r["date"], r["shows"] or 0
-        pv = pair_site_day.get((site, day), [0, 0, 0])
+        pv = pair_site_day.get((site, day), [0, 0, 0, 0])
         rest = max(0, sh - pv[0])
         ck = (pv[1] + rest * settings["ctr_base"] / 100) if model else (r["clicks"] or 0)
-        un = pv[2] + (rest / settings["freq_base"] if settings["freq_base"] else 0)
-        un = with_real_uniques(un, sh, r["adfox_shows"] or 0, r["adfox_uniques"])
+        rest_un = rest / settings["freq_base"] if settings["freq_base"] else 0
+        un_model = pv[2] + rest_un
+        un = with_real_uniques(un_model, sh, r["adfox_shows"] or 0, r["adfox_uniques"])
+        # Охват площадки-дня: доля «осталось после повторов и пересечения» — по парам дня, у остатка — середины диапазонов;
+        # реальные уники Adfox получают ту же долю (они тоже за день, повторы недели в них есть)
+        keep = (pv[3] + rest_un * rest_keep) / un_model if un_model else rest_keep
         site_days[site][day][0] += sh
         site_days[site][day][1] += ck
         site_days[site][day][2] += un
+        site_days[site][day][3] += un * keep
         for acc in (by_site[site], by_day[day]):
             acc[0] += sh
             acc[1] += ck
@@ -231,7 +238,7 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         return into.setdefault(key, {"label": label, "no": no,
                                      "site": defaultdict(lambda: [0, 0, 0]),
                                      "day": defaultdict(lambda: [0, 0, 0]),
-                                     "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))})
+                                     "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0, 0, 0]))})
 
     groups: Dict[object, dict] = {}
     by_group: Dict[str, dict] = {}
@@ -243,7 +250,8 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         for g in targets:
             g["site_day"][site][day][0] += v[0]
             g["site_day"][site][day][1] += v[1] or 0
-            g["site_day"][site][day][2] += (v[2] if len(v) > 2 else 0) or 0   # уники — охват на «По неделям»
+            g["site_day"][site][day][2] += (v[2] if len(v) > 2 else 0) or 0
+            g["site_day"][site][day][3] += (v[3] if len(v) > 3 else 0) or 0   # расчётный охват — «По неделям»
             for acc in (g["site"][site], g["day"][day]):
                 for i in range(3):
                     acc[i] += (v[i] if i < len(v) else 0) or 0

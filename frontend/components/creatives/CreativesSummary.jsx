@@ -125,8 +125,12 @@ export function creativesSummary(data) {
     return { text: `${label}: ${n} ${plural(n, 'площадка', 'площадки', 'площадок')} в ${inSets} `
       + plural(inSets, 'креативе', 'креативах', 'креативах'), tone }
   }
+  // Посадочная на домене другой площадки (16.11.2026, сервер — launch_prep/landing_check): плашкой в шапке, чтобы видно
+  // было и в свёрнутой секции; не запирает. Считаем площадки, а не строки комплектов.
+  const foreign = new Set(sets.flatMap(s => (s.recipients || []).filter(r => r.landing_foreign).map(r => r.name)))
   const chips = [fix ? chip('правки', fix, 'fix', 'warn') : null,
-    rej ? chip('отказ', rej, 'rej', 'danger') : null].filter(Boolean)
+    rej ? chip('отказ', rej, 'rej', 'danger') : null,
+    foreign.size ? { text: `чужая посадочная: ${[...foreign].join(', ')}`, tone: 'warn' } : null].filter(Boolean)
   if (chips.length) return { text: chips.map(c => c.text).join(' · '), tone: 'warn', chips }
   const marked = sets.filter(s => s.erid).length
   if (marked === sets.length) return { text: 'все маркированы', tone: 'ok' }

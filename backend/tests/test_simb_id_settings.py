@@ -75,7 +75,10 @@ def test_save_and_read_back(client):
     _as("admin")
     body = {"freq_base": 3.7, "freq_dev_pct": 10, "ctr_base": 0.25, "ctr_dev_pct": 15}
     assert client.put("/api/settings/simb-id", json=body).status_code == 200
-    assert client.get("/api/settings/simb-id").json() == body
+    got = client.get("/api/settings/simb-id").json()
+    assert {k: got[k] for k in body} == body
+    # диапазоны расчётного охвата (16.11.2026) не прислали — остаются по умолчанию
+    assert (got["repeat_min"], got["repeat_max"], got["overlap_min"], got["overlap_max"]) == (8, 16, 3, 8)
 
 
 @pytest.mark.parametrize("bad", [

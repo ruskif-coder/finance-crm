@@ -106,6 +106,11 @@ function Landing({ p, canEdit, onSave }) {
   return (
     <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
       <a href={safeHref(p.product_url)} target="_blank" rel="noreferrer" title={p.product_url} style={{ ...ELL, color: 'var(--accent)', fontFamily: MONO, fontSize: 12 }}>{p.product_url.replace(/^https?:\/\//, '')}</a>
+      {/* Посадочная на домене другой площадки запроса — предупреждение, не запрет (16.11.2026) */}
+      {!!p.landing_foreign && (
+        <span title={p.landing_foreign} style={{ flex: '0 0 auto', fontSize: 11, fontWeight: 700, color: 'var(--warning-fg)', background: 'var(--warning-tint)',
+          borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap', cursor: 'help' }}>⚠ чужой домен</span>
+      )}
       {!locked && <button type="button" title="Изменить посадочную" onClick={() => setEdit(true)} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}>✎</button>}
     </span>
   )

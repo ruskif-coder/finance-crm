@@ -67,7 +67,7 @@ def test_model_keeps_real_shows():
         # Уники и в отчёте факта — модель SIMB ID (DSP их не отдаёт; владелец 24.10.2026)
         assert all(r["uniques"] is not None for r in f.by_placement)
         assert [r["uniques"] for r in f.by_placement] == [r["uniques"] for r in m.by_placement]
-        assert all(len(v) == 3 for v in f.pair_days.values())   # без DSP-сырья пар может не быть
+        assert all(len(v) == 4 for v in f.pair_days.values())   # показы, клики, уники, охват; без DSP-сырья пар может не быть
     finally:
         db.close()
 
@@ -279,28 +279,35 @@ def test_unknown_group_is_refused(client, grouped):
         x for row in wb["Отчёт"].iter_rows(max_row=10) for x in row))
 
 
-def test_weeks_sheet_has_reach_column():
-    """Аккаунты 16.11.2026: на «По неделям» у каждой недели и у «ИТОГО» четвёртая колонка — охват
-    (уники модели SIMB ID, сложенные по дням, как «Уники» листа «Отчёт»). Уронит: охват не сложен
-    по неделе / колонок у группы снова три."""
+def test_weeks_sheet_has_estimated_reach_row():
+    """Владелец 16.11.2026: охват не колонкой у площадок, а строкой «Расчётный охват» над неделями; у недели — показы, клики,
+    ctr. Охват недели = сумма охватов площадок-дней (4-е число `site_days`), «ИТОГО» — сумма недель. Уронит: снова колонка
+    охвата / охват из уников, а не из охвата / «ИТОГО» не сумма недель."""
     from app.ad import client_report_xlsx as X
     # 2026-10-18 — воскресенье: неделя 1 = 15–18.10, неделя 2 = 19–20.10
     head = {"period_from": date(2026, 10, 15), "period_to": date(2026, 10, 20),
             "days_to": date(2026, 10, 20), "last_data": date(2026, 10, 20),
             "date_start": date(2026, 10, 15), "date_end": date(2026, 10, 20),
             "advertiser": "А", "code": "TEST02"}
-    sd = {"a.ru": {date(2026, 10, d): [100, 2, 40] for d in (15, 16, 17, 18, 19, 20)},
-          "b.ru": {date(2026, 10, 19): [50, 1, 30.4]}}
+    sd = {"a.ru": {date(2026, 10, d): [100, 2, 40, 30] for d in (15, 16, 17, 18, 19, 20)},
+          "b.ru": {date(2026, 10, 19): [50, 1, 30.4, 20.6]}}
     tot = {"shows": 650, "clicks": 13, "ctr": 2.0, "plan": None, "done_pct": None}
     rep = CR.Report(head=head, totals=tot, by_placement=[], by_day=[], site_days=sd)
     ws = X.render(rep)["По неделям"]
-    hdr = next(c for row in ws.iter_rows() for c in row if c.value == "охват")
-    subs = [ws.cell(hdr.row, hdr.column - 3 + i).value for i in range(12)]
-    assert subs == ["показы", "клики", "ctr", "охват"] * 3
+    hdr = next(c for row in ws.iter_rows() for c in row if c.value == "показы")
+    subs = [ws.cell(hdr.row, hdr.column + i).value for i in range(9)]
+    assert subs == ["показы", "клики", "ctr"] * 3, "колонки охвата у недели нет"
+    reach_row = hdr.row - 2
+    assert ws.cell(reach_row, 2).value == "Расчётный охват"
+    c0 = hdr.column
+    assert [ws.cell(reach_row, c0 + 3 * k).value for k in range(3)] == [120, 81, 201]   # 4×30; 2×30+20,6; сумма недель
     row_a = next(r for r in range(hdr.row + 1, hdr.row + 5) if ws.cell(r, 2).value == "a.ru")
-    row_t = next(r for r in range(hdr.row + 1, hdr.row + 6) if ws.cell(r, 2).value == "ИТОГО:")
-    c0 = hdr.column - 3
-    week1_a = [ws.cell(row_a, c0 + k).value for k in range(4)]
-    assert week1_a == [400, 8, 0.02, 160]
-    assert ws.cell(row_t, c0 + 4 + 3).value == 110     # неделя 2: 40+40+30.4 → 110
-    assert ws.cell(row_t, c0 + 8 + 3).value == 270     # ИТОГО: 240 + 30.4 → 270
+    assert [ws.cell(row_a, c0 + k).value for k in range(3)] == [400, 8, 0.02]
+
+
+def test_day_reach_is_uniques_without_repeats_and_overlap():
+    """Охват дня пары = уники × (1 − повторы) × (1 − пересечение): 1000 × 0,90 × 0,95 = 855."""
+    from app.ad import report_coef as RC
+    assert RC.reach(1000, 10, 5) == 855
+    assert RC.derive(3700, {"freq": 3.7, "ctr_pct": 0.1, "repeat_pct": 10, "overlap_pct": 5})["reach"] == 855
+    assert RC.reach(1000, None, None) == 1000, "дни без чисел охвата (до дозаполнения) — без поправок"

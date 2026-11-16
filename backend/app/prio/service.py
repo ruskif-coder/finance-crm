@@ -218,6 +218,13 @@ def view(db: Session, deal) -> dict:
                          "remark": ({"text": pl.comment, "at": pl.comment_at.isoformat(timespec="seconds") if pl.comment_at else None,
                                      "by": _user_name(db, pl.comment_by)} if pl.comment else None),
                          "reminded_at": pl.reminded_at.isoformat(timespec="seconds") if pl.reminded_at else None})
+    # Посадочная на домене другой площадки запроса (16.11.2026: QGNY4M ушла с посадочными соседних аптек) — предупреждение
+    from app.launch_prep import landing_check
+    doms = {pid: (dom, net) for pid, dom, net in db.execute(text(
+        "SELECT id, domain, network FROM sales_publishers WHERE id = ANY(:i)"), {"i": [x["publisher_id"] for x in rows] or [0]})}
+    for x in rows:
+        dom, net = doms.get(x["publisher_id"], (None, None))
+        x["landing_foreign"] = landing_check.foreign(x["product_url"], dom, doms.values(), net)
     tot = sum(idx.values())
     for x in rows:
         x["weight_pct"] = (round(x["index"] / tot * 100, 1) if tot else (round(100 / len(idx), 1) if idx else None)) if x["index"] is not None else None

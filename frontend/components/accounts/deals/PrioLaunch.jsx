@@ -96,7 +96,8 @@ export default function PrioLaunch({ dealId, live, canEdit, onDone }) {
               <div key={x.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, alignItems: 'center', minHeight: 30, borderBottom: '1px solid var(--border-row)' }}>
                 {can ? <input type="checkbox" checked={chosen.includes(x.id)} disabled={!canEdit} onChange={() => toggle(x.id)} aria-label={`Запустить ${x.name}`} />
                   : <span style={{ textAlign: 'center', color: LIVE.has(x.status) ? 'var(--income)' : 'var(--text-disabled)', fontSize: 12 }}>{LIVE.has(x.status) ? '✓' : '·'}</span>}
-                <span style={{ ...oneLine, fontWeight: 600 }} title={x.name}>{x.name}</span>
+                <span style={{ ...oneLine, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }} title={x.landing_foreign || x.name}>{x.name}
+                  {!!x.landing_foreign && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--warning-fg)', background: 'var(--warning-tint)', borderRadius: 6, padding: '0 5px' }}>⚠ чужая посадочная</span>}</span>
                 <Status x={x} />
                 {live ? <>
                   <span style={num}>{x.goal_imp ? grp(x.goal_imp) : '—'}</span>

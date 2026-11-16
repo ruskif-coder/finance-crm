@@ -1298,6 +1298,11 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
               {r.url_state === 'запрошена' ? 'ждём ответа площадки' : 'ссылки нет'}
             </span>
           )}
+          {/* Посадочная на домене другой площадки сделки — видно сразу, но не запирает (владелец 16.11.2026) */}
+          {!!r.landing_foreign && (
+            <span title={r.landing_foreign} style={{ flex: '0 0 auto', fontSize: 11, fontWeight: 700, color: CB.warnFg, background: CB.warnTint,
+              borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap', cursor: 'help' }}>⚠ домен {(r.landing_foreign.split(': ')[1] || '').split(' — ')[0]}</span>
+          )}
           {canEdit && !!r.advertiser_url && !gone && (
             <span onClick={() => setEditing(true)} title="Изменить посадочную"
               style={{ cursor: 'pointer', color: CB.t4, fontSize: 11, flex: '0 0 auto' }}>✎</span>

@@ -190,6 +190,9 @@ class ReportDailyCoef(Base):
     date = Column(Date, nullable=False)
     freq = Column(Numeric(6, 2), nullable=False)
     ctr_pct = Column(Numeric(8, 4), nullable=False)
+    # Расчётный охват (2026-11-16_report_reach_coef.sql): повторные заходы в неделе и пересечение аудитории, % — разово
+    repeat_pct = Column(Numeric(5, 2))
+    overlap_pct = Column(Numeric(5, 2))
     computed_at = Column(DateTime, nullable=False, server_default=func.now())
 
 

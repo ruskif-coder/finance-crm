@@ -305,7 +305,7 @@ def render(rep: Report, rep_model: Optional[Report] = None, template_path: str =
 WEEKS_SHEET = WEEKS_SHEET_BASE = "По неделям"
 WEEKS_MAX_FONT = 14
 PCT_CTR = '0.00%'
-PER = 4             # колонок у недели и у «ИТОГО»: показы, клики, CTR, охват
+PER = 3             # колонок у недели и у «ИТОГО»: показы, клики, CTR (охват — строкой над неделями, 16.11.2026)
 
 
 def weeks_of(d1: date, d2: date, last: date | None) -> list:
@@ -323,8 +323,10 @@ def weeks_of(d1: date, d2: date, last: date | None) -> list:
 
 def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None:
     """Лист «По неделям» (вид — по примеру аккаунтов 05.10.2026): площадки строками, у каждой
-    календарной недели и у «ИТОГО» по четыре колонки — показы, клики, CTR, охват (аккаунты 16.11.2026).
-    Охват — уники модели SIMB ID, сложенные по дням, как колонка «Уники» листа «Отчёт». Дельты нет. Сначала вся
+    календарной недели и у «ИТОГО» по три колонки — показы, клики, CTR. Над неделями — строка «Расчётный охват» (владелец
+    16.11.2026): по дням недели сумма охватов пар «площадка × креатив» = уники модели × (1 − повторные заходы в неделе) ×
+    (1 − пересечение аудитории площадок), оба числа — из диапазонов настроек SIMB ID, фиксируются на день (`report_coef`);
+    в «ИТОГО» — сумма недель. По площадкам охвата нет. Дельты нет. Сначала вся
     РК, ниже — то же по каждому креативу. В комплекте «модель» клики и CTR — модель SIMB ID."""
     ws = wb.create_sheet(title)
     ws.sheet_view.showGridLines = False
@@ -335,23 +337,26 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
     groups = len(weeks) + 1                         # недели + «ИТОГО»
     last_col = C + PER * groups - 1
     put = _Painter(ws, s, []).put
-    sub = ("показы", "клики (модель)" if model else "клики", "ctr (модель)" if model else "ctr", "охват")
+    sub = ("показы", "клики (модель)" if model else "клики", "ctr (модель)" if model else "ctr")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     def sums(days: dict, d_from=None, d_to=None):
-        sh = ck = un = 0
+        sh = ck = 0
         for d, v in days.items():
             if d_from is None or d_from <= d <= d_to:
                 sh += v[0]
                 ck += v[1]
-                un += v[2] if len(v) > 2 else 0
-        return sh, ck, un
+        return sh, ck
 
-    def quad(rr, col, sh, ck, un, num, fmt_num=NUM):
+    def reach(site_days: dict, d_from, d_to) -> float:
+        """Расчётный охват таблицы за дни [d_from, d_to] — сумма охватов площадок-дней (4-е число `site_days`)."""
+        return sum((v[3] if len(v) > 3 else 0) or 0 for days in site_days.values() for d, v in days.items()
+                   if d_from <= d <= d_to)
+
+    def triple(rr, col, sh, ck, num, fmt_num=NUM):
         put(rr, col, sh, num, fmt_num)
         put(rr, col + 1, ck, num, fmt_num)
         put(rr, col + 2, (ck / sh) if sh else None, num, PCT_CTR)
-        put(rr, col + 3, round(un) if sh else None, num, fmt_num)
 
     def row_of(rr, label, days, text, num, total_style):
         cell = put(rr, B, label, text)
@@ -363,9 +368,9 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
                 for k in range(PER):
                     put(rr, col + k, None, num)
                 continue
-            quad(rr, col, *sums(days, w["from"], w["to"]), num)
+            triple(rr, col, *sums(days, w["from"], w["to"]), num)
         tc = C + PER * len(weeks)
-        quad(rr, tc, *sums(days), total_style)
+        triple(rr, tc, *sums(days), total_style)
         for k in range(PER):
             c = ws.cell(rr, tc + k)
             if c.font.sz and c.font.sz > WEEKS_MAX_FONT:
@@ -377,6 +382,23 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         put(r, B, title_text, s.section)
         ws.merge_cells(start_row=r, end_row=r, start_column=B, end_column=last_col)
         ws.row_dimensions[r].height = s.h.get("title")
+        r += 1
+        # «Расчётный охват» — строкой над неделями (владелец 16.11.2026): число на неделю, в «ИТОГО» — сумма недель
+        put(r, B, "Расчётный охват", s.total_text)
+        acc_reach = 0
+        for g in range(groups):
+            col = C + PER * g
+            if g < len(weeks):
+                w = weeks[g]
+                val = None if w["future"] else round(reach(site_days, w["from"], w["to"]))
+                acc_reach += val or 0
+            else:
+                val = acc_reach
+            for k in range(PER):
+                put(r, col + k, None, s.total_num)
+            put(r, col, val, s.total_num, NUM).alignment = center
+            ws.merge_cells(start_row=r, end_row=r, start_column=col, end_column=col + PER - 1)
+        ws.row_dimensions[r].height = s.h.get("total")
         r += 1
         # две строки шапки: группы недель (объединены на PER колонок) и подписи метрик
         put(r, B, None, s.head)
@@ -421,7 +443,7 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 26
     for g in range(groups):
-        for k, wdt in enumerate((13, 11, 11, 12)):
+        for k, wdt in enumerate((13, 11, 11)):
             ws.column_dimensions[get_column_letter(C + PER * g + k)].width = wdt
     bg = copy(s.background.fill)
     for row in ws.iter_rows(min_row=1, max_row=r, max_col=last_col + 1):

@@ -2,7 +2,8 @@
  * Настройки → SIMB ID (владелец 05.10.2026).
  *
  * Коэффициенты для отчётов клиенту по РК: частота (уники = показы ÷ частота дня) и CTR,
- * у каждого базовое значение и поправка ±%. Одни на все РК. Значение дня считается из этих
+ * у каждого базовое значение и поправка ±%; диапазоны расчётного охвата (16.11.2026) — повторные заходы в неделе и
+ * пересечение аудитории площадок. Одни на все РК. Значение дня считается из этих
  * настроек один раз и хранится — поэтому правка здесь действует на новые дни, а уже
  * выгруженные отчёты не меняются. Экран только админа (`/api/settings/simb-id`).
  */
@@ -16,12 +17,20 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
 
 const FIELDS = [
-  { group: 'Частота', hint: 'показов на одного человека; уники = показы ÷ частота дня',
-    base: { key: 'freq_base', label: 'Базовое значение', step: '0.1', unit: '' },
-    dev: { key: 'freq_dev_pct', label: 'Поправка в обе стороны', unit: '± %' } },
-  { group: 'CTR', hint: 'доля кликов от показов',
-    base: { key: 'ctr_base', label: 'Базовое значение', step: '0.01', unit: '%' },
-    dev: { key: 'ctr_dev_pct', label: 'Поправка в обе стороны', unit: '± %' } },
+  { group: 'Частота', hint: 'показов на одного человека; уники = показы ÷ частота дня', fields: [
+    { key: 'freq_base', label: 'Базовое значение', step: '0.1', unit: '' },
+    { key: 'freq_dev_pct', label: 'Поправка в обе стороны', unit: '± %' }] },
+  { group: 'CTR', hint: 'доля кликов от показов', fields: [
+    { key: 'ctr_base', label: 'Базовое значение', step: '0.01', unit: '%' },
+    { key: 'ctr_dev_pct', label: 'Поправка в обе стороны', unit: '± %' }] },
+  // Расчётный охват на «По неделям» (владелец 16.11.2026): охват дня = уники × (1 − повторы) × (1 − пересечение),
+  // оба числа на каждый день — случайно в диапазоне, фиксируются раз и навсегда
+  { group: 'Повторные заходы в неделе', hint: 'расчётный охват: доля людей, вернувшихся в течение недели', fields: [
+    { key: 'repeat_min', label: 'От', step: '0.5', unit: '%' },
+    { key: 'repeat_max', label: 'До', step: '0.5', unit: '%' }] },
+  { group: 'Пересечение аудитории площадок', hint: 'расчётный охват: люди, которые ходят в несколько аптек', fields: [
+    { key: 'overlap_min', label: 'От', step: '0.5', unit: '%' },
+    { key: 'overlap_max', label: 'До', step: '0.5', unit: '%' }] },
 ]
 const NUM_INP = { ...inp, width: 120, fontFamily: MONO, textAlign: 'right' }
 
@@ -65,7 +74,7 @@ export default function SimbIdSettings() {
       setForm(r.data); setSaved(r.data); setErr('')
     } catch (e) {
       setErr(e?.response?.status === 422
-        ? 'Проверьте значения: частота больше нуля, CTR и поправки — от 0 до 100.'
+        ? 'Проверьте значения: частота больше нуля, CTR и поправки — от 0 до 100, в диапазонах «от» не больше «до» (до 90 %).'
         : (detailText(e, 'Не удалось сохранить.')))
     }
     setBusy(false)
@@ -92,8 +101,7 @@ export default function SimbIdSettings() {
                 <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{g.hint}</span>
               </div>
               <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
-                <NumField f={g.base} value={form[g.base.key]} onChange={set} />
-                <NumField f={g.dev} value={form[g.dev.key]} onChange={set} />
+                {g.fields.map(f => <NumField key={f.key} f={f} value={form[f.key]} onChange={set} />)}
               </div>
             </div>
           ))}

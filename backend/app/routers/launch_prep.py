@@ -378,8 +378,14 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
                                      member=members.get((s.id, t.id)),
                                      rule=rules.get((t.publisher_id, t.surface_kind)))
                       for t in candidates]
+    # Посадочная на домене другой площадки сделки — предупреждение, не запрет (владелец 16.11.2026, launch_prep/landing_check)
+    from app.launch_prep import landing_check
+    deal_domains = [(p.domain, getattr(p, "network", None)) for p in pubs.values() if p is not None]
     for rc in recipients:
         rc["format_warning"] = teaser.format_warning(rc["creative_format"], files)
+        own = pubs.get(rc["publisher_id"])
+        rc["landing_foreign"] = landing_check.foreign(rc.get("advertiser_url"), getattr(own, "domain", None), deal_domains,
+                                                      getattr(own, "network", None))
 
     return {
         "id": s.id, "no": s.no, "title": s.title, "origin": s.origin,
