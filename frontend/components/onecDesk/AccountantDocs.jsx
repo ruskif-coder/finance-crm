@@ -151,9 +151,9 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   if (!searching && tab === 'done') qSub += ' · сегодня ' + todayDone;
 
   return (
-    <div className="ad-root" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '22px 30px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'center' }}>
+    <div className="acc-root" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '22px 30px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'center' }}>
       <style>{STYLE}</style>
-      <input ref={fileInput} type="file" hidden onChange={onFile} data-testid="ad-file" />
+      <input ref={fileInput} type="file" hidden onChange={onFile} data-testid="acc-file" />
       <div style={{ width: '100%', maxWidth: 2500, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* шапка */}
@@ -263,7 +263,7 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
     : [ageLabel(h), tone === 'ok' ? 'var(--text-muted)' : TONE[tone].fg, tone === 'ok' ? 'var(--text-faint)' : TONE[tone].dot];
   const exp = expectedOf(req);
   return (
-    <div role="button" tabIndex={0} className="ad-row" aria-current={sel || undefined} onClick={onPick} onKeyDown={e => e.key === 'Enter' && onPick()}
+    <div role="button" tabIndex={0} className="acc-row" aria-current={sel || undefined} onClick={onPick} onKeyDown={e => e.key === 'Enter' && onPick()}
       style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 150px 112px', gap: '0 12px', alignItems: 'center', padding: '9px 10px', borderRadius: 12, cursor: 'pointer', marginBottom: 2,
         background: ready ? 'var(--income-tint)' : sel ? 'var(--bg-tint)' : 'transparent', border: `1px solid ${sel ? 'var(--accent)' : ready ? 'var(--income-border)' : 'transparent'}`,
         boxShadow: sel ? '0 0 0 1px var(--accent)' : 'none' }}
@@ -391,7 +391,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
                   {[['net', 'без НДС', money(l.net), 600], ['rate', 'ставка', l.vat_rate + ' %', 500], ['vat', 'НДС', money(l.vat), 600], ['gross', 'с НДС', money(l.gross), 700]].map(([k, lab, v, w]) => {
                     const can = k !== 'rate', s = can ? cstate(k) : '';
-                    return <span key={k} role={can ? 'button' : undefined} tabIndex={can ? 0 : undefined} className={can ? 'ad-copy' : undefined} onClick={() => can && copy(k, v)}
+                    return <span key={k} role={can ? 'button' : undefined} tabIndex={can ? 0 : undefined} className={can ? 'acc-copy' : undefined} onClick={() => can && copy(k, v)}
                       style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '9px 12px', alignItems: 'flex-end', background: s === 'last' ? 'var(--accent-tint)' : can ? 'var(--bg-subtle)' : 'var(--bg-card)', borderLeft: '1px solid var(--border-inner)' }}>
                       <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><span style={{ fontSize: 11, fontWeight: 700, color: s === 'last' ? 'var(--accent-fg)' : 'var(--text-faint)' }}>{s === 'last' ? 'в буфере' : s === 'was' ? '✓' : ''}</span><Cap>{lab}</Cap></span>
                       <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: w }}>{v}</span></span>; })}
@@ -467,7 +467,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
             {/* видно 4 пакета, остальные — прокруткой */}
             <div style={{ maxHeight: 4 * 52, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             {past.map(x => (
-              <div key={x.code} role="button" tabIndex={0} className="ad-row" onClick={() => select(x.code)} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: '2px 10px', padding: 8, borderRadius: 10, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
+              <div key={x.code} role="button" tabIndex={0} className="acc-row" onClick={() => select(x.code)} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: '2px 10px', padding: 8, borderRadius: 10, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
                 <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}><span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)' }}>{x.code}</span><span style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{x.annex.short}</span><span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.brand}</span></span>
                 <Sum v={expectedOf(x).gross} size={12.5} />
                 <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)' }}>{x.done ? `сч. ${x.done.inv.no} · УПД ${x.done.upd.no} от ${x.done.upd.date}` : '—'}</span>

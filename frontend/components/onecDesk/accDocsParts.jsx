@@ -12,31 +12,32 @@ export { MONO, SANS };
 
 /* ── стили страницы (подключаются один раз) ── */
 export const STYLE = `
-.ad-root { --ad-rise: adRise 0.4s cubic-bezier(0.22,1,0.36,1) both; font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
-.ad-root a { color:var(--accent); text-decoration:none } .ad-root a:hover { color:var(--accent-hover); text-decoration:underline }
-.ad-cap { font-family:${MONO}; font-size:10.5px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-cap) }
-.ad-btn { display:inline-flex; align-items:center; gap:6px; height:34px; box-sizing:border-box; padding:0 14px; border:1px solid var(--border-card); background:var(--bg-card); border-radius:12px; font:600 13px ${SANS}; color:var(--text-secondary); white-space:nowrap; cursor:pointer; user-select:none }
-.ad-btn:hover { border-color:var(--border-hover); color:var(--accent-fg) }
-.ad-btn:focus-visible, .ad-row:focus-visible, .ad-copy:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
-.ad-btn.p { background:var(--accent); border-color:var(--accent); color:#FFFFFF; font-weight:700 } .ad-btn.p:hover { background:var(--accent-hover); border-color:var(--accent-hover); color:#FFFFFF }
-.ad-btn[aria-disabled="true"] { opacity:0.45 }
-.ad-in { font:600 14px ${SANS}; color:var(--text-primary); box-sizing:border-box; width:100%; min-width:0; height:38px; padding:0 12px; border:1px solid var(--border-card); border-radius:12px; background:var(--bg-card); outline:none }
-.ad-in.mono { font-family:${MONO}; font-weight:500 } .ad-in:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint) } .ad-in::placeholder { color:var(--text-disabled); font-weight:500 }
-.ad-row:hover { background:var(--bg-subtle) }
-.ad-copy { cursor:copy } .ad-copy:hover { border-color:var(--accent-border) !important }
+/* Классы — «acc-», не «ad-» (16.11.2026): блокировщики рекламы прячут [class^=ad-], и у части машин экран был пуст */
+.acc-root { --acc-rise: adRise 0.4s cubic-bezier(0.22,1,0.36,1) both; font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
+.acc-root a { color:var(--accent); text-decoration:none } .acc-root a:hover { color:var(--accent-hover); text-decoration:underline }
+.acc-cap { font-family:${MONO}; font-size:10.5px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-cap) }
+.acc-btn { display:inline-flex; align-items:center; gap:6px; height:34px; box-sizing:border-box; padding:0 14px; border:1px solid var(--border-card); background:var(--bg-card); border-radius:12px; font:600 13px ${SANS}; color:var(--text-secondary); white-space:nowrap; cursor:pointer; user-select:none }
+.acc-btn:hover { border-color:var(--border-hover); color:var(--accent-fg) }
+.acc-btn:focus-visible, .acc-row:focus-visible, .acc-copy:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+.acc-btn.p { background:var(--accent); border-color:var(--accent); color:#FFFFFF; font-weight:700 } .acc-btn.p:hover { background:var(--accent-hover); border-color:var(--accent-hover); color:#FFFFFF }
+.acc-btn[aria-disabled="true"] { opacity:0.45 }
+.acc-in { font:600 14px ${SANS}; color:var(--text-primary); box-sizing:border-box; width:100%; min-width:0; height:38px; padding:0 12px; border:1px solid var(--border-card); border-radius:12px; background:var(--bg-card); outline:none }
+.acc-in.mono { font-family:${MONO}; font-weight:500 } .acc-in:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint) } .acc-in::placeholder { color:var(--text-disabled); font-weight:500 }
+.acc-row:hover { background:var(--bg-subtle) }
+.acc-copy { cursor:copy } .acc-copy:hover { border-color:var(--accent-border) !important }
 @keyframes adRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
 @keyframes adPop { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-@media (prefers-reduced-motion: reduce) { .ad-root * { animation-duration:1ms !important; animation-delay:0s !important } }
+@media (prefers-reduced-motion: reduce) { .acc-root * { animation-duration:1ms !important; animation-delay:0s !important } }
 `;
 
 /* ── примитивы ── */
-export const Cap = ({ children, style }) => <span className="ad-cap" style={style}>{children}</span>;
+export const Cap = ({ children, style }) => <span className="acc-cap" style={style}>{children}</span>;
 export const Card = ({ children, style, ...p }) => <div style={{ ...card, ...style }} {...p}>{children}</div>;   // стенд: карточка кита
 export const Btn = ({ children, primary, disabled, onClick, style, title }) => (
-  <span role="button" tabIndex={0} title={title} aria-disabled={disabled ? 'true' : undefined} className={'ad-btn' + (primary ? ' p' : '')} style={style}
+  <span role="button" tabIndex={0} title={title} aria-disabled={disabled ? 'true' : undefined} className={'acc-btn' + (primary ? ' p' : '')} style={style}
     onClick={onClick} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onClick && onClick())}>{children}</span>
 );
-export const Input = ({ mono, style, ...p }) => <input className={'ad-in' + (mono ? ' mono' : '')} style={style} {...p} />;
+export const Input = ({ mono, style, ...p }) => <input className={'acc-in' + (mono ? ' mono' : '')} style={style} {...p} />;
 export const Dot = ({ c, s = 6 }) => <span style={{ width: s, height: s, borderRadius: 2, background: c, flex: '0 0 auto' }} />;
 export const Clip = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>;
 
@@ -64,7 +65,7 @@ export const Pip = ({ kind, label, title, onGreen }) => {
 export function CopyField({ label, value, hint, state, onCopy, big = true, children, style }) {
   const last = state === 'last', was = state === 'was';
   return (
-    <span role="button" tabIndex={0} className="ad-copy" title="Скопировать" onClick={onCopy} onKeyDown={e => e.key === 'Enter' && onCopy()}
+    <span role="button" tabIndex={0} className="acc-copy" title="Скопировать" onClick={onCopy} onKeyDown={e => e.key === 'Enter' && onCopy()}
       style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '9px 12px', borderRadius: 12, minWidth: 0,
         border: `1px solid ${last ? 'var(--accent)' : was ? 'var(--border-card)' : 'var(--border-inner)'}`, background: last ? 'var(--accent-tint)' : 'var(--bg-subtle)', ...style }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{label && <Cap>{label}</Cap>}
