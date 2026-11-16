@@ -2005,6 +2005,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     have = {tid for (tid,) in db.query(LaunchPrepPair.target_id)
             .filter(LaunchPrepPair.set_id == set_id)}
     reopened = []
+    new_pairs = []
     for t in targets:
         if t.id in have:
             continue          # повторная отправка тем же получателям — не дубль
@@ -2014,6 +2015,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
         pair = LaunchPrepPair(set_id=set_id, target_id=t.id)
         db.add(pair)
         db.flush()
+        new_pairs.append(pair.id)
         # Спрашиваем ТОЛЬКО трафик (разворот цепочки 28.08.2026). Строка площадки здесь
         # не заводится: «строка проверки = спросили», а площадку ещё не спрашивали —
         # материал до неё не дошёл. Заводит её вердикт трафика, см. routers/traffic.py.
@@ -2063,6 +2065,14 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     # а креатив соберётся по первому нажатию кнопки.
     from app.dsp.targeting_creative import ensure_quietly
     ensure_quietly(db, s)
+    # Проверка баннера в браузере уже на отправке (владелец 16.11.2026): каждая новая пара нашей DSP — в очередь, итог
+    # трафик видит в «Креативах на проверку». Тихо: отправка от проверки не зависит.
+    try:
+        from app.dsp.banner_check_pairs import enqueue_pairs
+        enqueue_pairs(db, new_pairs)
+    except Exception:  # noqa: BLE001 — очередь проверки не повод ронять отправку
+        db.rollback()
+        logging.getLogger("finance.dsp").exception("пары комплекта %s не поставлены в очередь проверки баннера", s.id)
     # Строка креатива в РК рождается в момент ОТПРАВКИ пары — значит и собирать её надо
     # здесь, а не ждать ночного прогона: счётчик «всего / согласовано / запущено» на
     # дашборде трафика до утра показывал бы вчерашний состав.

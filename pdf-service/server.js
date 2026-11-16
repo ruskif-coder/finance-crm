@@ -11,7 +11,10 @@ const FRONTEND = process.env.FRONTEND_URL || 'http://frontend:3000';
 const PORT = process.env.PORT || 3001;
 
 const app = express();
-app.use(express.json({ limit: '8mb' }));
+// /banner-check везёт файлы баннера в запросе (проверка на отправке, 16.11.2026) — ему свой предел, остальным прежний.
+const jsonSmall = express.json({ limit: '8mb' });
+const jsonBanner = express.json({ limit: '20mb' });
+app.use((req, res, next) => (req.path === '/banner-check' ? jsonBanner : jsonSmall)(req, res, next));
 
 let browser = null;
 async function getBrowser() {

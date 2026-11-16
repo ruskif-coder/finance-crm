@@ -244,6 +244,11 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind)
                                      for _r, _p, _s, t, _pub, _d in rows})
 
+    # Проверка баннера в браузере на отправке (владелец 16.11.2026) и куда ведёт клик — пачкой на экран.
+    from app.dsp.banner_check_pairs import state_of_pairs
+    from app.dsp.banner_emulate import click_link
+    checks = state_of_pairs(db, pair_ids)
+
     today = date.today()
     out = []
     for review, pair, s, target, pub, deal in rows:
@@ -318,6 +323,10 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                        "sandbox_url": sandbox.public_url(f.sandbox_token, f.entry_path)}
                       for f in mine],
             "shots_count": shots.get(pair.id, 0),
+            # Итог проверки баннера (✓/✗/…) и ссылка клика: посадочная, а пока её нет — сайт площадки.
+            "banner_check": checks.get(pair.id),
+            "click_link": dict(zip(("url", "source"), click_link(member.advertiser_url if member else None,
+                                                                pub.domain if pub else None))),
             "asked_at": review.asked_at,
             "verdict": review.verdict,
             "reason": review.reason,

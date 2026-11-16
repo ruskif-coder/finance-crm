@@ -78,11 +78,15 @@ def _rules_from_settings(db: Session) -> dict:
     return request_rules(viewability_src(db), [creative_script(db, True), creative_script(db, False)])
 
 
-def render(html: str, erid: str, opts: dict) -> dict:
-    """Замер в браузере сайдкара: {размер: сырые признаки}. Решение — в `problems_of`."""
+def render(html: str, erid: str, opts: dict, files: Optional[dict] = None, base: Optional[str] = None) -> dict:
+    """Замер в браузере сайдкара: {размер: сырые признаки}. Решение — в `problems_of`.
+
+    `files`/`base` — для проверки на отправке: файлы баннера едут в запросе, браузер отдаёт их по адресу `base`."""
+    body = {"html": html, "erid": erid or "", "sizes": SIZES, **opts}
+    if files is not None:
+        body.update(files=files, base=base)
     try:
-        r = httpx.post(f"{PDF_SERVICE_URL}/banner-check", json={"html": html, "erid": erid or "", "sizes": SIZES, **opts},
-                       timeout=RENDER_TIMEOUT)
+        r = httpx.post(f"{PDF_SERVICE_URL}/banner-check", json=body, timeout=RENDER_TIMEOUT)
     except httpx.HTTPError as e:
         raise BannerCheckError(f"сайдкар не ответил: {e}") from e
     if r.status_code != 200:
@@ -161,33 +165,49 @@ def _check_one(db: Session, c, row, opts: dict) -> dict:
     return {"html": html, "problems": problems_of(render(html, row["erid"] or "", opts), html)}
 
 
-def run(db: Session, client=None, limit: int = DEFAULT_LIMIT, only: Optional[list] = None) -> dict:
+def _save(db: Session, row_id: int, res: dict) -> dict:
+    problems = res["problems"]
+    rec = db.get(DspBannerCheck, row_id)
+    rec.html_hash = html_hash(res["html"])
+    rec.checked_at = datetime.utcnow()
+    rec.ok = not problems
+    rec.problems = problems or None
+    db.commit()
+    return problems
+
+
+def run(db: Session, client=None, limit: int = DEFAULT_LIMIT, only: Optional[list] = None,
+        only_pairs: Optional[list] = None) -> dict:
+    """Обе очереди за прогон: креативы, залитые в DSP, и пары, отправленные на согласование (с 16.11.2026).
+    `only` / `only_pairs` — ограничить одной очередью и этими строками (тесты, ручной прогон)."""
+    from app.dsp import banner_check_pairs as bp
     rep = {"checked": 0, "bad": 0, "failed": 0}
-    rows = _queue(db, limit, only)
-    if not rows:
+    creatives = [] if only_pairs is not None else _queue(db, limit, only)
+    pairs = [] if only is not None else bp.queue(db, max(limit - len(creatives), 0), only_pairs)
+    if not creatives and not pairs:
         return rep
     opts = _rules_from_settings(db)
-    if client is None:
+    if creatives and client is None:
         from app.dsp.client import MsClient
         client = MsClient()
-    for row in rows:
+    jobs = [("cr", r, lambda r=r: _check_one(db, client, r, opts), lambda r, p: _notify(db, r, p)) for r in creatives]
+    jobs += [("pair", r, lambda r=r: bp.check_pair(db, r, opts), lambda r, p: bp._notify_pair(db, r, p)) for r in pairs]
+    for kind, row, check, notify in jobs:
         try:
-            res = _check_one(db, client, row, opts)
+            res = check()
         except BannerCheckError as e:
             rep["failed"] += 1
-            log.warning("проверка баннера cr%s отложена: %s", row["creative_id"], e)
+            log.warning("проверка баннера %s %s отложена: %s", kind, row.get("creative_id") or row.get("pair_id"), e)
             continue
-        problems = res["problems"]
-        rec = db.get(DspBannerCheck, row["id"])
-        rec.html_hash = html_hash(res["html"])
-        rec.checked_at = datetime.utcnow()
-        rec.ok = not problems
-        rec.problems = problems or None
-        db.commit()
+        except Exception as e:  # noqa: BLE001 — непредвиденное на одном баннере не останавливает очередь (16.11.2026)
+            log.exception("проверка баннера %s %s упала", kind, row.get("creative_id") or row.get("pair_id"))
+            db.rollback()
+            res = {"html": "", "problems": {"разметка": [f"проверка не удалась: {type(e).__name__}: {str(e)[:160]}"]}}
+        problems = _save(db, row["id"], res)
         rep["checked"] += 1
         if problems:
             rep["bad"] += 1
-            _notify(db, row, problems)
+            notify(row, problems)
     return rep
 
 

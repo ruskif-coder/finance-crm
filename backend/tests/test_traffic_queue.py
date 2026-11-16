@@ -597,3 +597,36 @@ def test_send_is_blocked_when_publisher_needs_deeplink(env, monkeypatch):  # noq
     with pytest.raises(HTTPException) as e:
         _sent(env)
     assert e.value.status_code == 400 and "диплинк" in e.value.detail
+
+
+def test_sent_pairs_go_to_the_banner_check_queue(env, monkeypatch):  # noqa: F811
+    """16.11.2026: отправка на согласование ставит новые пары в очередь проверки баннера; отправка её не ждёт и от сбоя
+    очереди не падает."""
+    from app.dsp import banner_check_pairs
+    got = []
+    monkeypatch.setattr(banner_check_pairs, "enqueue_pairs", lambda db, ids: got.extend(ids) or list(ids))
+    pairs = _sent(env)
+    assert pairs and sorted(got) == sorted(p.id for p in pairs)
+
+
+def test_banner_check_queue_failure_does_not_break_sending(env, monkeypatch):  # noqa: F811
+    from app.dsp import banner_check_pairs
+
+    def boom(db, ids):
+        raise RuntimeError("очередь недоступна")
+    monkeypatch.setattr(banner_check_pairs, "enqueue_pairs", boom)
+    assert _sent(env), "сбой очереди проверки уронил отправку"
+
+
+def test_queue_row_shows_banner_check_and_where_the_click_leads(env):  # noqa: F811
+    """16.11.2026: в строке очереди — итог проверки баннера и ссылка клика: посадочная, а пока её нет — сайт площадки."""
+    pairs = _sent(env)
+    rows = [r for r in traffic.queue('all', env.db, _ADMIN)["rows"] if r["pair_id"] in {p.id for p in pairs}]
+    assert rows
+    for r in rows:
+        assert "banner_check" in r
+        link = r["click_link"]
+        if r["advertiser_url"]:
+            assert link == {"url": r["advertiser_url"].strip(), "source": "посадочная"}
+        else:
+            assert link["source"] == "сайт площадки" and link["url"].endswith(r["publisher"]["domain"])

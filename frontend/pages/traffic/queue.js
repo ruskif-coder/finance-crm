@@ -38,6 +38,7 @@ import safeHref from '@/lib/safeHref'
 import CopyCode from '@/components/CopyCode'
 import { aimToneFor, aimExpired, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 import { detailText } from '@/lib/loadError'
+import BannerCheckMark from '@/components/traffic/BannerCheckMark'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -833,9 +834,19 @@ export default function TrafficQueue() {
                         </a>
                       ) : (
                         <>
-                          <span style={{ fontSize: 11.5, color: 'var(--text-cap)' }}>
-                            не задана
-                          </span>
+                          {/* Посадочной ещё нет — клик в проверке баннера ведёт на сайт площадки (владелец 16.11.2026). */}
+                          {r.click_link?.url ? (
+                            <a href={safeHref(r.click_link.url)} target="_blank" rel="noreferrer"
+                               title={`Посадочной ещё нет — клик ведёт на сайт площадки: ${r.click_link.url}`}
+                               style={{ ...pill('var(--bg-card)', 'var(--text-secondary)', 'var(--border-card)'),
+                                 textDecoration: 'none', fontSize: 11.5, whiteSpace: 'nowrap' }}>
+                              Сайт площадки ↗
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: 11.5, color: 'var(--text-cap)' }}>
+                              не задана
+                            </span>
+                          )}
                           {mayEdit && (
                             <button
                               style={{ ...pill('var(--bg-card)',
@@ -854,6 +865,7 @@ export default function TrafficQueue() {
                         </>
                       )}
                       <RuleBadges r={r} onDownload={(url) => download(url)} />
+                      <BannerCheckMark check={r.banner_check} stage="pair" withLabel />
                     </div>
 
                     <div>

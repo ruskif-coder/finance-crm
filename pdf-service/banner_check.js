@@ -8,6 +8,20 @@ const { bannerRequestVerdict, privateIp } = require('./guards');
 const dns = require('dns').promises;
 
 const LANDING = 'https://landing.invalid/x';
+// Проверка на отправке (16.11.2026): файлы баннера приходят в запросе, браузер берёт их по этому адресу — в сеть не ходит.
+const TYPES = { html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8', css: 'text/css', js: 'application/javascript',
+  json: 'application/json', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  svg: 'image/svg+xml', ico: 'image/x-icon', woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf',
+  mp4: 'video/mp4', webm: 'video/webm' };
+
+function fromFiles(url, base, files) {
+  let rel = decodeURIComponent(url.slice(base.length).split('?')[0].split('#')[0]);
+  if (rel.startsWith('./')) rel = rel.slice(2);
+  const b64 = Object.prototype.hasOwnProperty.call(files, rel) ? files[rel] : null;
+  if (b64 === null) return { status: 404, body: '' };
+  const ext = (rel.split('.').pop() || '').toLowerCase();
+  return { status: 200, contentType: TYPES[ext] || 'application/octet-stream', body: Buffer.from(b64, 'base64') };
+}
 const BTN = '[class*="_infoBannerTetraf_btn"]';
 
 async function hostPrivate(host, cache) {
@@ -50,6 +64,7 @@ async function oneImpression(browser, html, erid, w, h, opts) {
       const rq = route.request();
       const url = rq.url();
       if (url.startsWith(LANDING)) { toLanding += 1; return route.abort('blockedbyclient'); }
+      if (opts.base && opts.files && url.startsWith(opts.base)) return route.fulfill(fromFiles(url, opts.base, opts.files));
       if (bannerRequestVerdict(url, rq.resourceType(), opts) === 'abort') return route.abort('blockedbyclient');
       let host = '';
       try { host = new URL(url).hostname; } catch (e) { return route.abort(); }
@@ -91,6 +106,9 @@ function mount(app, getBrowser) {
       block_hosts: Array.isArray(b.block_hosts) ? b.block_hosts.slice(0, 20) : [],
       block_domain: typeof b.block_domain === 'string' ? b.block_domain : '',
       allow_urls: Array.isArray(b.allow_urls) ? b.allow_urls.slice(0, 5) : [],
+      // только условный адрес https://<что-то>.invalid/ — настоящий хост так подменить нельзя
+      base: typeof b.base === 'string' && /^https:\/\/[a-z0-9-]+\.invalid\/$/.test(b.base) ? b.base : '',
+      files: b.files && typeof b.files === 'object' && !Array.isArray(b.files) ? b.files : null,
     };
     try {
       const browser = await getBrowser();

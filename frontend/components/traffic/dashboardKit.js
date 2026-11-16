@@ -22,7 +22,7 @@ import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MONO, UI, Modal, PortalPopover, Z, btnSm, selSm } from '../salesTableKit'
 import { grp } from '@/lib/salesFormat'
-import { fmtDateTime } from '@/lib/dates'
+import BannerCheckMark from './BannerCheckMark'
 
 /** Прочерк — общий для всего экрана: пустое НЕ рисуется нулём. */
 export const DASH = '—'
@@ -710,33 +710,7 @@ export const CreativeCounts = ({ counts }) => {
 
 // Два хеша DSP — РК и креатива — раздельно (владелец 28.09.2026): по хешу РК ищут
 // кампанию в кабинете, по хешу креатива — сам баннер, и путать их нельзя.
-// Проверка баннера в браузере после заливки в DSP (владелец 15.11.2026): ✓ прошёл, ✗ — что не так в подсказке,
-// … — в очереди. Нет строки проверки — креатив залит до появления проверки, значка нет.
-const BANNER_CHECK = {
-  ok: { mark: '✓', color: 'var(--success)' },
-  bad: { mark: '✗', color: 'var(--danger)' },
-  queued: { mark: '…', color: 'var(--text-faint)' },
-}
-
-function bannerCheckTitle(check) {
-  if (check.state === 'queued') return 'Проверка показа в браузере — в очереди'
-  const when = check.checked_at ? ` · ${fmtDateTime(check.checked_at)}` : ''
-  if (check.state === 'ok') return `Проверка показа пройдена: плашка «Реклама» видна и раскрывает ЕРИД, клик ведёт на посадочную${when}`
-  const lines = Object.entries(check.problems || {}).map(([k, v]) => `${k}: ${(v || []).join('; ')}`)
-  return `Проверка показа не пройдена${when}\n${lines.join('\n')}`
-}
-
-function BannerCheckMark({ check }) {
-  if (!check) return null
-  const s = BANNER_CHECK[check.state]
-  if (!s) return null
-  return (
-    <span title={bannerCheckTitle(check)}
-      style={{ marginLeft: 5, fontWeight: 700, color: s.color, cursor: 'help' }}>{s.mark}</span>
-  )
-}
-
-const CR_GRID ='minmax(0,1.6fr) 96px 128px 128px 80px 90px 132px 68px'
+const CR_GRID = 'minmax(0,1.6fr) 96px 128px 128px 80px 90px 132px 68px'
 
 /**
  * Строки креативов внутри площадки. Имя человеческое — первой строкой, полный индекс
