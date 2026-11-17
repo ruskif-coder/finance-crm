@@ -469,7 +469,7 @@ export function MultiDrop({ label, options, selected, onChange, block }) {
 export const IconBtn = ({ title, active, onClick, children }) => (
   <div title={title} onClick={onClick}
     style={{ flex: '0 0 32px', width: 32, height: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, cursor: 'pointer',
-      background: active ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${active ? '#D7DEFA' : 'var(--border-card)'}`, color: active ? 'var(--accent)' : 'var(--text-muted)' }}>
+      background: active ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${active ? 'var(--accent-border)' : 'var(--border-card)'}`, color: active ? 'var(--accent)' : 'var(--text-muted)' }}>
     {children}
   </div>
 )
@@ -582,7 +582,7 @@ export const ci = { ...inp, padding: '6px 8px', width: '100%' }
 export const cs = { ...sel, padding: '6px 6px', width: '100%' }
 
 // btn(primary): primary — акцентная заливка, иначе контурная светлая
-export const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer', fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? '#fff' : 'var(--text-secondary)', fontFamily: UI })
+export const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer', fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? 'var(--on-accent)' : 'var(--text-secondary)', fontFamily: UI })
 export const primaryBtn = btn(true)
 export const btnSm = (p) => ({ ...btn(p), padding: '4px 10px', fontSize: 12 })
 
@@ -860,8 +860,8 @@ export function Seg({ value, opts, onPick, disabled, size = 'md', slide = false 
         return (
           <button key={String(v)} type="button" title={title || ''} disabled={off} onClick={() => !off && onPick(v)} data-seg-on={on ? '1' : '0'}
             style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', height: h, padding: '0 9px', borderRadius: 7, border: 'none',
-              background: on && !slide ? 'var(--bg-card)' : 'transparent',
-              color: on ? (slide ? 'var(--on-accent)' : 'var(--accent)') : off ? 'var(--text-disabled)' : 'var(--text-secondary)',
+              background: on && !slide ? 'var(--hot)' : 'transparent',
+              color: on ? (slide ? 'var(--on-accent)' : 'var(--hot-fg)') : off ? 'var(--text-disabled)' : 'var(--text-secondary)',
               boxShadow: on && !slide ? 'var(--shadow-card)' : 'none', fontSize: 11.5, fontWeight: on ? 700 : 600, fontFamily: UI,
               whiteSpace: 'nowrap', cursor: off ? 'default' : 'pointer', transition: slide ? 'color .22s ease' : undefined }}>{label}</button>
         )
@@ -907,9 +907,10 @@ export function Segmented({ value, options, onChange, disabled = false, title })
  * компоненте, а понадобился реестру приложений («Приложения / Шаблоны»). Вкладки МЕЖДУ
  * экранами контура — другое: `SectionTabs`, из карты приложения.
  */
-export function UnderlineTabs({ value, tabs, onChange }) {
+// `line={false}` — без общей линии снизу: вкладки в одной строке с заголовком экрана (Операции, 17.11.2026)
+export function UnderlineTabs({ value, tabs, onChange, line = true }) {
   return (
-    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border-card)', fontFamily: UI }}>
+    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: line ? '1px solid var(--border-card)' : 'none', fontFamily: UI }}>
       {tabs.map(t => {
         const on = t.key === value
         return (

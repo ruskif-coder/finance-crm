@@ -9,7 +9,7 @@ import PassportButton from '@/components/traffic/PassportButton'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
 
 export const BTN_TONE = {
-  go: { background: 'var(--income-tint)', color: 'var(--income-fg)', borderColor: 'var(--income)' },
+  go: { background: 'var(--ok-tint)', color: 'var(--ok-fg)', borderColor: 'var(--ok)' },
   done: { background: 'var(--warning-tint)', color: 'var(--warning-fg)', borderColor: 'var(--warning)' },
   idle: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },
   off: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },

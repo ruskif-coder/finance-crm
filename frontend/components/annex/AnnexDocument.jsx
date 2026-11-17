@@ -11,10 +11,6 @@ const dm = (d) => {
   return s.length >= 10 ? `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)}` : s
 }
 
-/** «600000.16» → «600 000.16» — как в документе: две цифры после точки, разряды пробелом. */
-const fix2 = (v) => (v == null ? '—'
-  : Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля',
   'августа', 'сентября', 'октября', 'ноября', 'декабря']
 
@@ -43,81 +39,48 @@ const partyLine = (p, role) => {
 }
 
 export default function AnnexDocument({ d }) {
-  const rows = d.rows || []
   // Слово документа — из бэкенда (`document.with_words`), тем же видом, что DOCX и конструктор:
   // своя таблица форм здесь разошлась с тумблером договора (ревью 31.10.2026).
   const w = d.words || { nom: 'Приложение', gen: 'Приложения', dat: 'Приложению', ins: 'Приложением', pl_ins: 'Приложениями' }
   const W = { dat: `настоящему ${w.dat}`, gen: `настоящего ${w.gen}`, ins: `настоящим ${w.ins}`, nom: `Настоящее ${w.nom}`, plIns: w.pl_ins }
-  // Итоги считаются по строкам таблицы, а не берутся из шапки: если они разойдутся,
-  // это видно сразу — значит строки и общая сумма собраны из разного.
-  const totals = rows.reduce((a, r) => ({
-    volume: a.volume + (r.volume || 0),
-    net: a.net + (r.amount || 0),
-    vat: a.vat + (r.vat || 0),
-    gross: a.gross + (r.gross || 0),
-  }), { volume: 0, net: 0, vat: 0, gross: 0 })
   const cust = d.customer || {}
   const exec = d.executor || {}
 
   const clauses = d.clauses || []
+  // Таблица МП — готовыми ячейками с сервера (`annex_tpl/table_cols.view`, 17.11.2026): колонки задаёт шаблон ДС, значения и итог
+  // считает тот же код, что Word. Своего списка колонок и своих форматов здесь больше нет — им было бы с чем расходиться.
+  const tv = d.table_view
+  const cls = (c) => [c.align === 'right' && 'num', c.style === 'italic' && 'pos', c.style === 'bold' && c.align === 'right' && 'net']
+    .filter(Boolean).join(' ') || undefined
   const tableEl = (
     <>
-      {/* Медиаплан НАСТОЯЩЕЙ таблицей, а не картинкой из экселя, как в образце:
-          суммы совпадают с базой по построению, и документ ищется текстом. Колонки —
-          один в один с подписанным документом, включая «Место размещения» и «Тип
-          ротации»; последняя пока пустая — такого поля у нас нет. */}
-      {!!rows.length && (
+      {!!tv?.rows?.length && (
         <table>
           <thead>
             <tr>
-              <th>Место<br />размещения</th>
-              <th style={{ width: '22%' }}>Позиция</th>
-              <th>Гео</th><th>Формат</th><th>Девайс</th>
-              <th>Тип ротации<br />(для медийных<br />форматов)</th>
-              <th>Модель<br />закупки</th>
-              <th>Объем размещения</th>
-              <th>Период</th>
-              <th>Стоимость<br />за единицу<br />закупки</th>
-              <th>Стоимость<br />размещения</th>
-              <th>НДС {d.vat_rate}%</th>
-              <th>Стоимость<br />размещения<br />с учетом НДС</th>
+              {tv.head.map((c, i) => (
+                <th key={i} style={c.key === 'position' ? { width: '22%' } : undefined}>
+                  {c.label.split('\n').map((line, j) => <Fragment key={j}>{!!j && <br />}{line}</Fragment>)}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (r.group_title ? (
+            {tv.rows.map((r, i) => (r.group ? (
               /* ДС мастер-сделки: заголовок группы (бренд · услуга) строкой на всю ширину — как в DOCX */
-              <tr key={i}><td colSpan={13} style={{ fontWeight: 'bold', textAlign: 'left' }}>{r.group_title}</td></tr>
+              <tr key={i}><td colSpan={tv.head.length} style={{ fontWeight: 'bold', textAlign: 'left' }}>{r.group}</td></tr>
             ) : (
               <tr key={i}>
-                <td style={{ fontWeight: 'bold' }}>{r.network || '—'}</td>
-                <td className="pos">
-                  {r.doc_position || r.position || '—'}
-                </td>
-                <td>{r.geo || '—'}</td>
-                <td>{r.format || '—'}</td>
-                <td>{r.device || '—'}</td>
-                <td>{r.rotation || '—'}</td>
-                <td>{r.model || '—'}</td>
-                <td className="num">
-                  {r.volume == null ? '—' : Number(r.volume).toLocaleString('ru-RU')}
-                </td>
-                <td>
-                  {dm(r.date_from || d.period_from)} –<br />{dm(r.date_to || d.period_to)}
-                </td>
-                <td className="num">{r.bonus ? '—' : fix2(r.unit_price)}</td>
-                <td className="num net">{r.bonus ? '—' : fix2(r.amount)}</td>
-                <td className="num">{r.bonus ? '—' : fix2(r.vat)}</td>
-                <td className="num net">{r.bonus ? '—' : fix2(r.gross)}</td>
+                {r.cells.map((v, j) => (
+                  <td key={j} className={cls(tv.head[j])} style={tv.head[j].style === 'bold' && tv.head[j].align !== 'right' ? { fontWeight: 'bold' } : undefined}>
+                    {v.split('\n').map((line, k) => <Fragment key={k}>{!!k && <br />}{line}</Fragment>)}
+                  </td>
+                ))}
               </tr>
             )))}
             <tr className="total">
-              <td colSpan={7}>ИТОГО:</td>
-              <td className="num">{Number(totals.volume).toLocaleString('ru-RU')}</td>
-              <td />
-              <td />
-              <td className="num">{fix2(totals.net)}</td>
-              <td className="num">{fix2(totals.vat)}</td>
-              <td className="num">{fix2(totals.gross)}</td>
+              {tv.total.span > 0 && <td colSpan={tv.total.span}>ИТОГО:</td>}
+              {tv.total.cells.slice(tv.total.span).map((v, i) => <td key={i} className="num">{v}</td>)}
             </tr>
           </tbody>
         </table>

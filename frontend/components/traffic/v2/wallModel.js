@@ -17,7 +17,7 @@ const LAG_BAD = -8
 const LAG_WARN = -4
 
 export const STATE_BG = {
-  ok: 'var(--income)', warn: 'var(--warning)', bad: 'var(--danger)',
+  ok: 'var(--ok)', warn: 'var(--warning)', bad: 'var(--danger)',
   none: 'var(--border-card)', future: 'transparent',
 }
 export const STATE_BORDER = { ...STATE_BG, future: 'var(--border-inner)' }

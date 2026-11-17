@@ -9,7 +9,6 @@ import { isAdmin } from '@/lib/auth'
 import { MONO, UI, IconBtn } from '@/components/salesTableKit'
 import { bankColor, signRub, grp0 as RUB } from '@/lib/salesFormat'
 import { makeApi as api } from '@/lib/http'
-import { T } from '@/lib/tokens'
 import { monthMsk, monthsAgoMsk } from '@/lib/dates'
 import { errText, isAuth } from '@/lib/loadError'
 import { LoadError } from '@/components/salesTableKit'
@@ -61,13 +60,15 @@ const chartScale = (maxVal) => Math.max(1e6, Math.ceil((maxVal || 0) * 1.2 / 1e6
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 
 // ── Цвета баров ──────────────────────────────────────────────────
-const INCOME = T.income
-const OUTFLOW = T.expense
+// Токенами темы, а не хексами T (17.11.2026: в темах NAVY бары и графики ДДС не перекрашивались). Роли --chart-* — в styles/navy.css,
+// в прежних темах дают те же цвета, что T.
+const INCOME = 'var(--chart-in)'
+const OUTFLOW = 'var(--chart-out)'
 const EMPTY = 'var(--border-inner)'
-const FACT = T.accent
-const FORECAST = T.accentSoft
-const WARN_TXT = T.warningText
-const DANGER_TXT = T.danger
+const FACT = 'var(--chart-fact)'
+const FORECAST = 'var(--chart-forecast)'
+const WARN_TXT = 'var(--warning-text)'
+const DANGER_TXT = 'var(--danger-fg)'
 
 const CELLS = 14
 const WEEK_OFF = [-0.375, -0.125, 0.125, 0.375]
@@ -668,7 +669,7 @@ export default function DashboardV2() {
                       return (
                         <div key={m.period}>
                           <div onClick={() => setExpanded(open ? null : m.period)}
-                            style={{ ...GRID, padding: '11px 8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', cursor: 'pointer', background: open ? T.tipBg : 'transparent', transition: 'background .12s' }}
+                            style={{ ...GRID, padding: '11px 8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', cursor: 'pointer', background: open ? 'var(--bg-tint)' : 'transparent', transition: 'background .12s' }}
                             onMouseEnter={e => { if (!open) e.currentTarget.style.background = 'var(--bg-subtle)' }}
                             onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent' }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatPeriod(m.period)}</span>

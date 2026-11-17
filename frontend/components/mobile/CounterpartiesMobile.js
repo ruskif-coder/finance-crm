@@ -74,7 +74,7 @@ function CpCard({ c, open, onToggle, onOpen, onEdit, canEdit }) {
             ))}
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button onClick={() => onOpen(c)} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Открыть карточку</button>
+            <button onClick={() => onOpen(c)} style={{ flex: 1, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Открыть карточку</button>
             {canEdit && (
               <button onClick={() => onEdit(c)} aria-label="Редактировать" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
@@ -96,7 +96,7 @@ function CpForm({ initial, editId, isAdmin, onClose, onSave, saving }) {
   const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontFamily: UI, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
   return (
     <BottomSheet open onClose={onClose} title={editId ? 'Редактирование' : 'Новый контрагент'}
-      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
+      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
       <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{editId ? `Контрагент #${editId}` : 'Новый контрагент'}</div>
       <div style={fieldRow}><span style={lbl}>Название *</span><input autoFocus value={f.name} onChange={e => set({ name: e.target.value })} placeholder="ООО Контрагент" style={inp} /></div>
       <div style={fieldRow}><span style={lbl}>ИНН</span><input value={f.inn} onChange={e => set({ inn: e.target.value })} placeholder="1234567890" style={{ ...inp, fontFamily: MONO }} /></div>

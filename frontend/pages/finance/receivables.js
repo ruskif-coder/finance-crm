@@ -26,10 +26,10 @@ const formatDate = (d) => { if (!d) return '—'; const [y, mo, da] = String(d).
 // getPermissions + can — из lib/auth (единый источник, admin-bypass)
 
 // Тёмные тона текста поверх пастельных подложек (нет в токенах — из хендоффа).
-const T_OVERDUE = '#C93A3E'      // на danger-tint
-const T_CURRENT = '#B26A0C'      // на warning-tint
-const T_KPI_CURRENT = '#C27510'  // KPI «текущая»
-const C_PLAN = '#5B7CF0'         // = --dot-expense
+const T_OVERDUE = 'var(--danger-fg)'      // на danger-tint
+const T_CURRENT = 'var(--warning-text)'      // на warning-tint
+const T_KPI_CURRENT = 'var(--warning-fg)'  // KPI «текущая»
+const C_PLAN = 'var(--dot-expense)'         // = --dot-expense
 
 const niceMax = (v) => {
   if (!v || v <= 0) return 1e6
@@ -320,7 +320,7 @@ export default function Receivables() {
         .rcv-grid { display:grid; ${GRID} gap:16px; }
         .rcv-det { display:grid; ${DET_GRID} gap:14px; }
         .rcv-row:hover { background:var(--bg-subtle) !important; }
-        .rcv-x:hover { border-color:#C7D0E8 !important; color:var(--accent) !important; }
+        .rcv-x:hover { border-color:var(--border-hover) !important; color:var(--accent) !important; }
         .rcv-inn:hover { text-decoration:underline; color:var(--accent-hover) !important; }
         @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }
       `}</style>
@@ -644,7 +644,7 @@ function FilterDrop({ label, items, selected, onToggle, onClear, fmtItem }) {
               return (
                 <div key={item} onClick={() => onToggle(item)}
                   style={{ padding: '4px 12px', cursor: 'pointer', fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 8, background: on ? 'var(--accent-tint)' : 'transparent' }}>
-                  <span style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`, background: on ? 'var(--accent)' : 'transparent', color: '#fff', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{on ? '✓' : ''}</span>
+                  <span style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`, background: on ? 'var(--accent)' : 'transparent', color: 'var(--on-accent)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{on ? '✓' : ''}</span>
                   {f(item)}
                 </div>
               )

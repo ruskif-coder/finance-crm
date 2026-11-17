@@ -28,6 +28,7 @@ from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanE
 
 from app.sales.deal_label import deal_label
 from app.sales.row_context import merge_inventory
+from app.sales import mp_registry
 
 router = APIRouter()
 # Ставка НДС — у ВЕРСИИ ПЛАНА, а не константой (правило владельца 23.09.2026: фиксируется на
@@ -1255,6 +1256,7 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
     from sqlalchemy import text as sa_text
 
     svc = {}
+    label = {}
     plan_ids = [p.id for p in latest.values()]
     if plan_ids:
         raw = {}
@@ -1270,7 +1272,14 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
             if len(by_name) == 1:
                 name, vals = next(iter(by_name.items()))
                 svc[pid] = (name, merge_inventory(vals))
+            # Колонка «Услуга» реестра v2 (17.11.2026): одна услуга — её имя, несколько — «N услуги»; поверхность —
+            # свод по ВСЕМ строкам плана. Для имени плана выше остаётся прежнее правило «только одна».
+            n_svc = len(by_name)
+            label[pid] = (next(iter(by_name)) if n_svc == 1
+                          else f"{n_svc} {'услуги' if n_svc < 5 else 'услуг'}",
+                          merge_inventory(set().union(*by_name.values())))
 
+    extra = mp_registry.registry_extras(db, list(latest.values()), current_user, _plan_owned)
     items = [{
         "id": p.id, "group_id": p.group_id, "version": p.version, "title": p.title,
         "product": svc.get(p.id, (None, None))[0],
@@ -1289,8 +1298,19 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
         # не привязан, и это как раз то, что стоит видеть.
         "deal_code": deals.get(p.deal_id, (None, None))[0],
         "deal_stage": deals.get(p.deal_id, (None, None))[1],
+        "product_label": label.get(p.id, (None, None))[0],
+        "surface": label.get(p.id, (None, None))[1],
+        # Этап, замок, виза, «кто обновил», «мой» — app/sales/mp_registry.py.
+        **extra.get(p.id, {}),
     } for p in sorted(latest.values(), key=lambda x: (x.updated_at or x.created_at or 0), reverse=True)]
-    return {"items": items}
+    from app.sales import plan_lock
+    return {"items": items,
+            # Роли с областью «свои» переключатель «Мои» не нужен — у неё и так только свои.
+            "own_only": own_only,
+            # Зафиксированный план из реестра правит только администратор или мастер-аккаунт (сервер пропускает их
+            # правку с записью в журнал) — экран открывает им ячейки, остальным показывает замок.
+            "can_edit_locked": plan_lock.may_edit_locked(current_user),
+            "buckets": [{"key": k, "label": v} for k, v in mp_registry.BUCKETS]}
 
 
 def _deal_code(db, deal_id):

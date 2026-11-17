@@ -16,7 +16,7 @@ import { TONE, toneOf, toneWeight } from '@/lib/tone'
 import { allowedSections, allowedItems, findByPath, firstAllowedHref, resolveLegacy } from '@/lib/nav'
 import BugReport from './BugReport'
 import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
-import { applyTheme, readTheme, THEME_ON, THEMES } from '@/lib/theme'
+import { applyTheme, readTheme, saveTheme, THEME_ON, THEMES } from '@/lib/theme'
 import NavBar from './nav/NavBar'
 import { sumBadge } from '@/lib/navModel.mjs'
 
@@ -455,9 +455,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
   useEffect(() => { setTheme(readTheme()) }, [])
   // Тема — у пользователя (users.theme): ходит за ним на любое устройство. Браузер держит копию для первого кадра.
   const pickTheme = (t) => {
-    applyTheme(t); setTheme(t)
-    axios.put('/api/auth/me/theme', { theme: t }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      .catch(() => { /* не сохранилось на сервере — в этом браузере тема всё равно останется */ })
+    saveTheme(t); setTheme(t)
   }
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?'
   const size = compact ? 36 : 32

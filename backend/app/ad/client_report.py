@@ -191,15 +191,20 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     # ── модель SIMB ID: уники (и в модели — клики) пары-дня от реальных показов ──
     from app.ad import report_coef
     from app.routers.simb_id import load as load_settings
+    from app.ad.build import deal_plan
     settings = load_settings(db)
-    coefs = report_coef.ensure(db, [k for k, v in per.items() if v[0]], settings)
+    mp_freq = deal_plan(db, camp["deal_id"])["freq"]          # частота флайта из МП — потолок (17.11.2026)
+    freq_base = report_coef.day_base(settings, mp_freq)
+    coefs = report_coef.ensure(db, [k for k, v in per.items() if v[0]], settings, mp_freq)
     for k, v in per.items():
         d = report_coef.derive(v[0], coefs[k]) if k in coefs else {"uniques": 0, "clicks": 0, "reach": 0}
         # [показы, клики, уники, расчётный охват] — охват дня пары (16.11.2026): уники × (1 − повторы) × (1 − пересечение)
         per[k] = [v[0], d["clicks"] if model else v[1], d["uniques"], d["reach"]]
     rest_keep = (1 - report_coef.mid_reach(settings)[0] / 100) * (1 - report_coef.mid_reach(settings)[1] / 100)
     pair_site_day: Dict[tuple, list] = defaultdict(lambda: [0, 0, 0, 0])
+    pairs_at: Dict[tuple, list] = defaultdict(list)
     for (cid, day), v in per.items():
+        pairs_at[(labels[cid][2], day)].append((cid, day))
         acc = pair_site_day[(labels[cid][2], day)]
         for i, x in enumerate(v):
             acc[i] += x or 0
@@ -219,9 +224,16 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         pv = pair_site_day.get((site, day), [0, 0, 0, 0])
         rest = max(0, sh - pv[0])
         ck = (pv[1] + rest * settings["ctr_base"] / 100) if model else (r["clicks"] or 0)
-        rest_un = rest / settings["freq_base"] if settings["freq_base"] else 0
+        rest_un = rest / freq_base if freq_base else 0
         un_model = pv[2] + rest_un
         un = with_real_uniques(un_model, sh, r["adfox_shows"] or 0, r["adfox_uniques"])
+        if pv[2] > un:
+            # реальные уники Adfox площадки-дня меньше модельных уников её креативов — креативы ужимаются до площадки,
+            # иначе «по креативам» уников больше, чем у площадки (стало видно с частотой из МП, 17.11.2026)
+            k_fit = un / pv[2]
+            for key in pairs_at.get((site, day), ()):
+                per[key][2] *= k_fit
+                per[key][3] *= k_fit
         # Охват площадки-дня: доля «осталось после повторов и пересечения» — по парам дня, у остатка — середины диапазонов;
         # реальные уники Adfox получают ту же долю (они тоже за день, повторы недели в них есть)
         keep = (pv[3] + rest_un * rest_keep) / un_model if un_model else rest_keep
@@ -276,7 +288,8 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         head={**camp, "period_from": d1, "period_to": d2, "last_data": last,
               # колонки дней — до конца флайта, если период не задан (будущие дни пустые)
               "to_flight_end": date_to is None, "model": model,
-              "days_to": per_["days_to"], "group": group},
+              "days_to": per_["days_to"], "group": group,
+              "mp_freq": mp_freq},                                # потолок частоты для охвата недели (17.11.2026)
         totals={"shows": shows, "clicks": clicks,
                 "ctr": round(clicks / shows * 100, 2) if shows else None,
                 "plan": plan, "done_pct": round(shows / plan * 100, 1) if plan else None},

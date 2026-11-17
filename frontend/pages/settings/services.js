@@ -305,7 +305,7 @@ export default function SettingsServices() {
                       <td style={td}><input value={ed.doc_position ?? ''} onChange={e => svcSet(s, 'doc_position', e.target.value)} title={ed.doc_position || 'Описание услуги для колонки «Позиция» документа'} placeholder="описание для документа" style={ci} /></td>
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                       <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
-                        {svcDirty(s.id) && <button onClick={() => saveService(s.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
+                        {svcDirty(s.id) && <button onClick={() => saveService(s.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: 'var(--on-accent)', marginRight: 6 }}>✓</button>}
                         {mayDelete && <button onClick={() => setConfirmDel({ kind: 'service', id: s.id, name: s.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>}
                       </td>
                     </tr>
@@ -384,7 +384,7 @@ export default function SettingsServices() {
                     <td style={td}><input value={ed.doc_phrase} onChange={e => addonSet(a, 'doc_phrase', e.target.value)} placeholder={a.name.charAt(0).toLowerCase() + a.name.slice(1)} style={ci} /></td>
                     <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!ed.can_be_bonus} onChange={e => addonSet(a, 'can_be_bonus', e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                     <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      {addonDirty(a.id) && <button onClick={() => saveAddon(a.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
+                      {addonDirty(a.id) && <button onClick={() => saveAddon(a.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: 'var(--on-accent)', marginRight: 6 }}>✓</button>}
                       {mayDelete && <button onClick={() => setConfirmDel({ kind: 'addon', id: a.id, name: a.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>}
                     </td>
                   </tr>
@@ -422,7 +422,7 @@ export default function SettingsServices() {
                 {!formats.length && <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: 8 }}>Форматов нет — добавьте в блоке «Форматы» ниже.</div>}
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
                   <button onClick={() => setFmtOpen(null)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Готово</button>
-                  {svcDirty(s.id) && <button onClick={() => { saveService(s.id); setFmtOpen(null) }} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>Сохранить</button>}
+                  {svcDirty(s.id) && <button onClick={() => { saveService(s.id); setFmtOpen(null) }} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>Сохранить</button>}
                 </div>
               </div>
             </div>
@@ -436,7 +436,7 @@ export default function SettingsServices() {
               <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 20 }}>Удалить {confirmDel.kind === 'addon' ? 'доп. услугу' : 'услугу'} «<b>{confirmDel.name}</b>»? Действие необратимо — точно надо?</div>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button onClick={() => setConfirmDel(null)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Отмена</button>
-                <button onClick={runDel} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--danger)', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>Удалить</button>
+                <button onClick={runDel} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--danger)', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>Удалить</button>
               </div>
             </div>
           </div>

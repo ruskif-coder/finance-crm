@@ -42,7 +42,7 @@ def _theme(uid):
         db.close()
 
 
-@pytest.mark.parametrize("theme", ["dark", "graphite", "pink", "japandi", "light"])
+@pytest.mark.parametrize("theme", ["dark", "graphite", "pink", "japandi", "navy", "navy-dark", "light"])
 def test_theme_is_saved_and_returned_by_me(me, theme):
     c = TestClient(app)
     r = c.put("/api/auth/me/theme", json={"theme": theme})

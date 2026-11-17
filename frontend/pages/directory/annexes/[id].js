@@ -30,6 +30,7 @@ import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
 import { ExternalSignButton, ExternalAnnexView } from '@/components/annex/ExternalAnnex'
 import { SignActions, SignBadge } from '@/components/master/docParts'
 import { detailText } from '@/lib/loadError'
+import ChangesModal from '@/components/annex/ChangesModal'
 
 const dm = (d) => fmtCalendarDate(d)
 
@@ -164,6 +165,7 @@ export default function AnnexAssembly() {
   const [a, setA] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
+  const [rebuilding, setRebuilding] = useState(null)   // окно «Пересоздать» с «было → станет»: { chosen, pick }
   // Номер и дата — редактируемые. Предзаполняются посчитанными: следующим свободным
   // номером внутри договора и последним днём предыдущего месяца.
   const [no, setNo] = useState('')
@@ -252,19 +254,15 @@ export default function AnnexAssembly() {
   }
 
   /** Пересоздать подтверждённое приложение на актуальном шаблоне (до отправки в 1С). С аргументом — по выбранному шаблону
-   *  (владелец 02.11.2026: выбор шаблона у подтверждённого ДС); `null` — по шаблону по умолчанию. */
-  const rebuild = async (pick) => {
-    const chosen = pick !== undefined
-    const title = chosen && pick != null ? (a.template_choice?.options || []).find(o => o.id === pick)?.title : null
-    const what = chosen ? `по шаблону «${title || 'по умолчанию'}»` : 'по актуальной версии шаблона договора'
-    if (!window.confirm(`Пересоздать документ ${what}? Номер и дата сохранятся, прежний текст документа будет заменён.`)) return
+   *  (владелец 02.11.2026: выбор шаблона у подтверждённого ДС); `null` — по шаблону по умолчанию. Сначала окно «было → станет»
+   *  (владелец 17.11.2026), применение — из него. */
+  const rebuild = (pick) => setRebuilding({ chosen: pick !== undefined, pick: pick ?? null })
+  const rebuildBody = rebuilding?.chosen ? { choose: true, template_id: rebuilding.pick } : {}
+  const loadRebuild = useCallback(() => api.get(`/annexes/${id}/rebuild/preview`,
+    { ...auth(), params: rebuilding?.chosen ? { choose: true, template_id: rebuilding.pick } : {} }).then(r => r.data), [id, rebuilding])
+  const applyRebuild = async () => {
     setBusy('rebuild')
-    setErr('')
-    try {
-      await api.post(`/annexes/${id}/rebuild`, chosen ? { choose: true, template_id: pick } : {}, auth())
-      await load()
-    } catch (e) { setErr(detailText(e, 'Не удалось пересоздать документ')) }
-    finally { setBusy('') }
+    try { await api.post(`/annexes/${id}/rebuild`, rebuildBody, auth()); await load() } finally { setBusy('') }
   }
 
   /** Сохранить правку блока (зона аккаунта) или основания закрывающих; `text = null` — вернуть по шаблону. */
@@ -624,6 +622,10 @@ export default function AnnexAssembly() {
           </>
         )}
       </div>
+      {rebuilding && (
+        <ChangesModal title={`Пересоздать ${a?.number || 'документ'}`} applyLabel="Пересоздать" onClose={() => setRebuilding(null)}
+          load={loadRebuild} apply={applyRebuild} />
+      )}
     </div>
   )
 }

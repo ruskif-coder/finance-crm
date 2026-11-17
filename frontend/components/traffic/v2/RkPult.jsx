@@ -9,7 +9,8 @@ import { RunToggle, StopBtn, TaskDoc } from '@/components/traffic/dashboardKit'
 // Ширина правой колонки расхлопа (аналитика, хендофф v2, 17.11.2026) — общая для пульта и тела расхлопа.
 export const ANALYTICS_W = 680
 
-const LEVEL_DOT = { red: 'var(--danger)', yellow: 'var(--warning)', green: 'var(--income)', skip: 'var(--text-faint)' }
+// NAVY (17.11.2026): блокер шага (красный) — оранжевый «действуй сейчас», вопрос (жёлтый) — внимание, норма — сталь
+const LEVEL_DOT = { red: 'var(--signal)', yellow: 'var(--attn)', green: 'var(--ok)', skip: 'var(--text-faint)' }
 const plain = { background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }
 const iconBtn = {
   ...plain, position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 30,
@@ -48,7 +49,8 @@ function Step({ g, onAction }) {
     <span title={`${g.title}${g.total ? ` ${g.ok} из ${g.total}` : ''} · ${g.text || ''}`}
       style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2, height: 44,
         padding: '0 10px', borderRadius: 9, boxSizing: 'border-box', whiteSpace: 'nowrap',
-        background: bad ? 'var(--warning-tint)' : 'transparent', border: `1px solid ${bad ? 'var(--warning-border)' : 'var(--border-inner)'}` }}>
+        background: g.level === 'red' ? 'var(--signal-tint)' : bad ? 'var(--attn-tint)' : 'transparent',
+        border: `1px solid ${g.level === 'red' ? 'var(--signal-border)' : bad ? 'var(--attn-border)' : 'var(--border-inner)'}` }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
         <span style={{ flex: '0 0 7px', width: 7, height: 7, borderRadius: 2, background: LEVEL_DOT[g.level] || LEVEL_DOT.skip }} />
         <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700,

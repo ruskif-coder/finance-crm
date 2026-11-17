@@ -51,7 +51,7 @@ function AgCard({ a, open, onToggle, onEdit, canEdit }) {
           </div>
           {canEdit && (
             <div style={{ marginTop: 12 }}>
-              <button onClick={() => onEdit(a)} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Редактировать</button>
+              <button onClick={() => onEdit(a)} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Редактировать</button>
             </div>
           )}
         </div>
@@ -68,7 +68,7 @@ function AgForm({ initial, editId, onClose, onSave, saving }) {
   const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontFamily: UI, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
   return (
     <BottomSheet open onClose={onClose} title={editId ? 'Редактирование' : 'Новое агентство'}
-      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
+      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
       <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{editId ? `Агентство #${editId}` : 'Новое агентство'}</div>
       <div style={fieldRow}><span style={lbl}>Русское название</span><input autoFocus value={f.name_ru} onChange={e => set({ name_ru: e.target.value })} placeholder="Агентство" style={inp} /></div>
       <div style={fieldRow}><span style={lbl}>Английское</span><input value={f.name_en} onChange={e => set({ name_en: e.target.value })} placeholder="Agency" style={inp} /></div>

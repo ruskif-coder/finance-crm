@@ -19,6 +19,7 @@ import { ScansPanel } from '@/components/master/docParts'
 import { can, getPermissions } from '@/lib/auth'
 import LayoutPanel from '@/components/master/LayoutPanel'
 import DsCard from '@/components/master/DsCard'
+import ChangesModal from '@/components/annex/ChangesModal'
 import { CARD, Note, plural } from '@/components/master/kit'
 import { createdAnnexes } from '@/lib/masterSteps'
 import { detailText } from '@/lib/loadError'
@@ -39,6 +40,7 @@ export default function MasterDealPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)  // окно «Обновить из сделки» с «было → станет»
   const [picked, setPicked] = useState(null)          // скан какого документа грузим: a<annex_id> | u<upd_no>
   const pickScan = (k) => { setPicked(k); document.querySelector('[data-scans]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }     // право «Мастер-сделки · редактирование»; без него — только смотреть
   useEffect(() => { setMayEdit(can(getPermissions(), 'master_deals', 'edit')) }, [])
@@ -64,6 +66,7 @@ export default function MasterDealPage() {
       if (my === seq.current) setPreview(r.data)
     } catch (e) { setErr(detailText(e, 'Не удалось пересчитать раскладку')) }
   }
+  const loadRefresh = useCallback(() => api.get(`/master-deals/${code}/refresh/preview`, auth()).then(r => r.data), [code])
   const call = async (fn) => {
     setBusy(true); setErr('')
     try { apply((await fn()).data); return true } catch (e) { setErr(detailText(e, 'Не удалось сохранить')); return false } finally { setBusy(false) }
@@ -95,13 +98,10 @@ export default function MasterDealPage() {
                       onClick={() => { if (window.confirm('Подтвердить все ДС пакета? Номера будут заняты.')) call(() => api.post(`/master-deals/${m.code}/confirm-ds`, {}, auth())) }}>
                       Подтвердить ДС пакета</button>
                   )}
-                  {/* после возврата на «согласование» ДС уже с номерами (12.11.2026): пересобрать по данным и отправить дальше */}
+                  {/* после возврата на «согласование» ДС уже с номерами (12.11.2026); «Обновить» — в шапке карточки ДС (17.11.2026) */}
                   {mayEdit && m.status === 'согласование' && m.unconfirmed === 0 && (
                     <>
-                      <button type="button" disabled={busy} style={{ ...primaryBtn, marginLeft: 'auto', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}
-                        onClick={() => { if (window.confirm('Пересобрать ДС и комплекты по текущим данным сделок? Номера и даты останутся.')) call(() => api.post(`/master-deals/${m.code}/refresh`, {}, auth())) }}>
-                        Обновить из сделки</button>
-                      <button type="button" data-step-target="confirm" disabled={busy} style={primaryBtn}
+                      <button type="button" data-step-target="confirm" disabled={busy} style={{ ...primaryBtn, marginLeft: 'auto' }}
                         onClick={() => { if (window.confirm('ДС проверены — отправить пакет бухгалтеру в 1С?')) call(() => api.post(`/master-deals/${m.code}/agreed`, {}, auth())) }}>
                         ДС проверены → в 1С</button>
                     </>
@@ -167,12 +167,16 @@ export default function MasterDealPage() {
                 {lay.ds.map(ds => (
                   <DsCard key={ds.kind} ds={ds} vat={lay.vat_rate} locked={locked} moved={draft.moved || []}
                     separate={!!draft.addons_separate && lay.has_paid_extras} flash={flash} onMove={toggleMove}
-                    doc={docOf(m, ds)} code={m.code} onPick={pickScan} canEdit={mayEdit} onDone={apply} atStart={!!m.issue?.start?.phase}
+                    doc={docOf(m, ds)} code={m.code} onPick={pickScan} canEdit={mayEdit} onDone={apply} onRefresh={() => setRefreshing(true)} mayRefresh={!!m.may_refresh} atStart={!!m.issue?.start?.phase}
                     basis={(m.upds || []).filter(u => u.annex_id === docOf(m, ds)?.annex_id)} busy={busy} onBasis={apply} />
                 ))}
               </>
             )}
             <IssuePanel m={m} footer={docsRow} />
+            {refreshing && (
+              <ChangesModal title="Обновить ДС и комплекты из сделки" applyLabel="Обновить" onClose={() => setRefreshing(false)}
+                load={loadRefresh} apply={async (reason) => apply((await api.post(`/master-deals/${m.code}/refresh`, reason ? { reason } : {}, auth())).data)} />
+            )}
             {/* ДС на старте (02.11.2026): пакет одной сделки, раскладка по МП, после подтверждения ждёт итоговой сверки. */}
             {!!m.issue?.start?.phase && (
               <Note tone="info" style={{ marginBottom: 14 }}>

@@ -10,6 +10,8 @@ export const annexTemplatesApi = {
   list: () => api.get(base, auth()).then(r => r.data.items || []),
   formats: () => api.get(`${base}/formats`, auth()).then(r => r.data),
   subs: () => api.get(`${base}/subs`, auth()).then(r => r.data.items || []),
+  // поля колонок таблицы МП в шаблоне (17.11.2026)
+  tableColumns: () => api.get(`${base}/table-columns`, auth()).then(r => r.data),
   one: (id) => api.get(`${base}/${id}`, auth()).then(r => r.data),
   forContract: (contractId, templateId) => api.get(`${base}/for-contract/${contractId}`, { ...auth(), params: templateId ? { template_id: templateId } : {} }).then(r => r.data),
   versions: (id) => api.get(`${base}/${id}/versions`, auth()).then(r => r.data.items || []),

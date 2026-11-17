@@ -192,6 +192,7 @@ def _sort_map():
         'status': Operation.status,
         'income': Operation.income,
         'expense': Operation.expense,
+        'amount': Operation.income - Operation.expense,      # «Сумма» со знаком (хендофф «Операции · NAVY», 17.11.2026)
         'bank': Operation.bank,
         'article': Article.name,
         'counterparty': Counterparty.name,
@@ -244,8 +245,38 @@ def _apply_gaps(query, gaps):
         col = columns.get(g)
         if col is None:
             continue
-        conds.append(col.is_(None) if g in ('article', 'counterparty') else or_(col.is_(None), col == ''))
+        if g == 'counterparty':
+            conds.append(_no_counterparty())          # и заглушка «ПЛАН» (хендофф «Операции · NAVY», 17.11.2026)
+            continue
+        conds.append(col.is_(None) if g == 'article' else or_(col.is_(None), col == ''))
     return query.filter(or_(*conds)) if conds else query
+
+
+# Контрагент-заглушка у плановых операций: на экране — «без контрагента», в «Незаполненных» — как пустой (17.11.2026).
+PLAN_COUNTERPARTY = "ПЛАН"
+
+
+def _no_counterparty():
+    from sqlalchemy import select
+    return or_(Operation.counterparty_id.is_(None),
+               Operation.counterparty_id.in_(select(Counterparty.id).where(Counterparty.name == PLAN_COUNTERPARTY)))
+
+
+def _empty_cond():
+    """Плитка «Незаполненные»: нет контрагента (или заглушка «ПЛАН») или нет статьи — те же поля, что фильтр «Незаполненные»."""
+    return or_(_no_counterparty(), Operation.article_id.is_(None))
+
+
+def _overdue_cond():
+    """Просроченная ДЗ: плановое поступление, срок оплаты + GRACE_DAYS позади. Срок — тем же SQL, что сортировка по ДЗ
+    (`_sort_map()['dz']`), правила старения — receivables.py: просрочка = больше GRACE_DAYS сверх срока."""
+    from datetime import timedelta
+    from app.receivables import GRACE_DAYS
+    return _sort_map()['dz'] < date.today() - timedelta(days=GRACE_DAYS)
+
+
+QUICK = {'in': lambda: Operation.income > 0, 'out': lambda: Operation.expense > 0,
+         'over': _overdue_cond, 'empty': _empty_cond}
 
 
 def _order_by(sort_col, sort_dir):
@@ -281,6 +312,13 @@ def _receivable_status(op):
     due_date = _due_date(op.period, term_days)
     bucket = _aging_bucket(due_date, date.today())
     return bucket if bucket in RECEIVABLE_STATUS_LABELS else None
+
+def _receivable_due(op):
+    """Срок оплаты планового поступления — тем же правилом, что `_receivable_status`; у остальных строк None."""
+    if op.status != 'ПЛАН ПОСТУПЛЕНИЙ' or not op.income or op.income <= 0:
+        return None
+    return _due_date(op.period, _term_days_for_counterparty(op.counterparty))
+
 
 def compute_vat_fact(income: float, expense: float, vat_rate: float) -> float:
     """Сумма НДС, выделенная из дохода/расхода по ставке vat_rate (НДС "в том числе",
@@ -367,6 +405,72 @@ def _apply_pay_plan(query, pay_plan: bool):
     return query.filter(Operation.pay_plan_at.isnot(None), Operation.status != operation_chains.PAID)
 
 
+def _filtered(db, *, status=None, bank=None, date_from=None, date_to=None, article_id=None, counterparty_id=None,
+              period=None, op_type=None, gaps=None, ids=None, pay_plan=False):
+    """Операции под фильтры реестра (с присоединёнными статьёй и контрагентом) — одна функция для списка и итогов,
+    чтобы плитки считались ровно по тому, что видно в таблице."""
+    query = db.query(Operation)
+    query = _apply_op_type(query, op_type)
+    if ids:
+        query = query.filter(Operation.id.in_(ids))
+    query = _apply_pay_plan(query, pay_plan)
+    if status:
+        query = query.filter(Operation.status.in_(status))
+    if bank:
+        query = query.filter(Operation.bank.in_(bank))
+    query = _apply_dates(query, date_from, date_to)
+    if article_id:
+        query = query.filter(Operation.article_id.in_(article_id))
+    if counterparty_id:
+        query = query.filter(Operation.counterparty_id.in_(counterparty_id))
+    if period:
+        query = query.filter(Operation.period.in_(period))
+    query = _apply_gaps(query, gaps)
+    return query.outerjoin(Article, Operation.article_id == Article.id)\
+                .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
+
+
+@router.get("/summary")
+def operations_summary(
+    status: Optional[List[str]] = Query(None),
+    bank: Optional[List[str]] = Query(None),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    article_id: Optional[List[int]] = Query(None),
+    counterparty_id: Optional[List[int]] = Query(None),
+    period: Optional[List[str]] = Query(None),
+    op_type: Optional[List[str]] = Query(None),
+    gaps: Optional[List[str]] = Query(None),
+    pay_plan: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view"))
+):
+    """Полоса итогов над таблицей (хендофф «Операции · NAVY», 17.11.2026): по ВСЕМ операциям текущего фильтра, а не по
+    странице. Плитка-фильтр (`quick`) сюда не входит — числа плиток не прыгают, когда одна из них нажата."""
+    q = _filtered(db, status=status, bank=bank, date_from=date_from, date_to=date_to, article_id=article_id,
+                  counterparty_id=counterparty_id, period=period, op_type=op_type, gaps=gaps, pay_plan=pay_plan)
+    paid = Operation.status == operation_chains.PAID
+    dz = _sort_map()['dz']
+    over = _overdue_cond()
+    zero = func.coalesce
+    row = q.with_entities(
+        zero(func.sum(case((paid, Operation.income), else_=0)), 0),
+        zero(func.sum(case((~paid, Operation.income), else_=0)), 0),
+        zero(func.sum(case((paid, Operation.expense), else_=0)), 0),
+        zero(func.sum(case((~paid, Operation.expense), else_=0)), 0),
+        zero(func.sum(case((over, Operation.income), else_=0)), 0),
+        func.count(case((over, Operation.id))),
+        func.min(case((over, dz))),
+        func.count(case((_empty_cond(), Operation.id))),
+    ).one()
+    in_f, in_p, out_f, out_p, over_sum, over_n, oldest, empty_n = row
+    oldest_days = (date.today() - (oldest.date() if hasattr(oldest, 'date') else oldest)).days if oldest else None
+    return {"income_fact": float(in_f), "income_plan": float(in_p), "expense_fact": float(out_f), "expense_plan": float(out_p),
+            "saldo_fact": float(in_f) - float(out_f), "saldo_plan": float(in_p) - float(out_p),
+            "overdue_sum": float(over_sum), "overdue_count": int(over_n), "overdue_oldest_days": oldest_days,
+            "empty_count": int(empty_n)}
+
+
 @router.get("/")
 def get_operations(
     skip: int = 0,
@@ -387,30 +491,14 @@ def get_operations(
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
     pay_plan: bool = False,
+    quick: Optional[str] = None,          # плитка итогов: in | out | over | empty (хендофф «Операции · NAVY», 17.11.2026)
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "view"))
 ):
-    query = db.query(Operation)
-    query = _apply_op_type(query, op_type)
-
-    if ids:
-        query = query.filter(Operation.id.in_(ids))
-    query = _apply_pay_plan(query, pay_plan)
-    if status:
-        query = query.filter(Operation.status.in_(status))
-    if bank:
-        query = query.filter(Operation.bank.in_(bank))
-    query = _apply_dates(query, date_from, date_to)
-    if article_id:
-        query = query.filter(Operation.article_id.in_(article_id))
-    if counterparty_id:
-        query = query.filter(Operation.counterparty_id.in_(counterparty_id))
-    if period:
-        query = query.filter(Operation.period.in_(period))
-    query = _apply_gaps(query, gaps)
-
-    query = query.outerjoin(Article, Operation.article_id == Article.id)\
-                 .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
+    query = _filtered(db, status=status, bank=bank, date_from=date_from, date_to=date_to, article_id=article_id,
+                      counterparty_id=counterparty_id, period=period, op_type=op_type, gaps=gaps, ids=ids, pay_plan=pay_plan)
+    if quick in QUICK:
+        query = query.filter(QUICK[quick]())
 
     total = query.count()
 
@@ -473,6 +561,8 @@ def get_operations(
                 "parent_operation_id": op.parent_operation_id,
                 "parts_count": parts_by_op.get(op.id, 0),
                 "receivable_status": _receivable_status(op),
+                "receivable_due": _receivable_due(op),     # срок оплаты — подсказка у точки ДЗ (17.11.2026)
+                "no_counterparty": op.counterparty is None or op.counterparty.name == PLAN_COUNTERPARTY,
                 "pay_plan": op.pay_plan_at is not None,
             }
             for op in operations
@@ -530,6 +620,7 @@ def export_operations(
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
     pay_plan: bool = False,
+    quick: Optional[str] = None,          # плитка итогов — как в списке (17.11.2026), иначе файл расходится с экраном
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "view"))
 ):
@@ -538,25 +629,11 @@ def export_operations(
     весь отфильтрованный список, а не только видимую страницу. Параметры
     фильтрации/сортировки повторяют GET /operations/, чтобы кнопка "Скачать"
     на фронтенде выгружала ровно то, что выбрано текущими фильтрами."""
-    query = db.query(Operation)
-    query = _apply_op_type(query, op_type)
-    query = _apply_pay_plan(query, pay_plan)
-
-    if status:
-        query = query.filter(Operation.status.in_(status))
-    if bank:
-        query = query.filter(Operation.bank.in_(bank))
-    query = _apply_dates(query, date_from, date_to)
-    if article_id:
-        query = query.filter(Operation.article_id.in_(article_id))
-    if counterparty_id:
-        query = query.filter(Operation.counterparty_id.in_(counterparty_id))
-    if period:
-        query = query.filter(Operation.period.in_(period))
-    query = _apply_gaps(query, gaps)
-
-    query = query.outerjoin(Article, Operation.article_id == Article.id)\
-                 .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
+    # Фильтры — та же функция, что у списка и итогов (17.11.2026: до того здесь была своя копия цепочки)
+    query = _filtered(db, status=status, bank=bank, date_from=date_from, date_to=date_to, article_id=article_id,
+                      counterparty_id=counterparty_id, period=period, op_type=op_type, gaps=gaps, pay_plan=pay_plan)
+    if quick in QUICK:
+        query = query.filter(QUICK[quick]())
 
     # Порядок общий со списком (см. _order_by): выгрузка обязана совпадать с экраном.
     query = query.order_by(_order_by(sort_col, sort_dir))

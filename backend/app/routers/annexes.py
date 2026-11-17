@@ -520,6 +520,32 @@ def _check_template(db: Session, c: Contract, template_id: int) -> None:
         raise HTTPException(e.status, e.message)
 
 
+@router.get("/{annex_id}/rebuild/preview")
+def rebuild_preview(annex_id: int, choose: bool = False, template_id: Optional[int] = None,
+                    db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Что перепишет «Пересоздать» — «было → станет» по печатаемым местам документа (владелец 17.11.2026), ничего не сохраняя."""
+    import copy
+    from app.annex_tpl import frozen_diff as FD
+    a = _annex(db, annex_id, user)
+    _assert_not_external(a)
+    if a.no is None:
+        raise HTTPException(400, "Черновик собирается по текущему шаблону сам — пересоздавать нечего")
+    c = _contract(db, a.contract_id)
+    if choose and template_id is not None:
+        _check_template(db, c, template_id)
+    before = copy.deepcopy(a.blocks)
+    sp = db.begin_nested()
+    try:
+        if choose:
+            a.tpl_template_id = template_id
+        rebuild_frozen(db, a, c)
+        after = copy.deepcopy(a.blocks)
+    finally:
+        sp.rollback()
+    db.rollback()
+    return {"number": a.number, "changes": FD.model_changes(before, after)}
+
+
 @router.post("/{annex_id}/rebuild")
 def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT),
                   payload: Optional[RebuildIn] = None):

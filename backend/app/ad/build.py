@@ -121,8 +121,9 @@ def deal_plan(db: Session, deal_id: int) -> dict:
         WHERE mp.deal_id = :d AND mp.id = ({LATEST_PLAN_SQL})
     """), {"d": deal_id}).mappings().all()
 
-    services, surfaces, shows, budget = set(), set(), 0.0, 0.0
+    services, surfaces, shows, budget, freq = set(), set(), 0.0, 0.0, 0.0
     for r in rows:
+        freq = max(freq, mp_row.num((r["forecast"] or {}).get("freq")))
         if (r["position"] or "").strip():
             services.add(r["position"].strip())
         for s in INVENTORY_SURFACES.get((r["inventory"] or "").strip().lower(), ()):
@@ -134,6 +135,8 @@ def deal_plan(db: Session, deal_id: int) -> dict:
         budget += mp_row.row_net(r["model"], r["volume"], r["unit_price"], r["discount"])
     return {"services": sorted(services), "surfaces": sorted(surfaces),
             "plan_show": shows or None, "plan_budget": budget or None,
+            # частота флайта — наибольшая по строкам, как «Итого по МП» в карточке (17.11.2026: потолок частоты в отчёте клиенту)
+            "freq": freq or None,
             "has_plan": bool(rows)}
 
 

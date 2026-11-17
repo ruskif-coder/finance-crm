@@ -347,16 +347,53 @@ def master_back(code: str, payload: BackIn, db: Session = Depends(get_db), user:
     return _done(db, user, m, "master_deal_back", f"возврат «{out['was']}» → «{m.status}»: {payload.reason.strip()}{lost}{moved}")
 
 
-@router.post("/{code}/refresh")
-def master_refresh(code: str, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
-    """«Обновить из сделки»: ДС и комплекты пакета по текущим данным, номера и даты прежние. Только на «согласовании»."""
+@router.get("/{code}/refresh/preview")
+def master_refresh_preview(code: str, db: Session = Depends(get_db), user: User = Depends(MD_VIEW),
+                           _e: User = Depends(MD_EDIT)):     # GET — с правом просмотра, но пересобирать вхолостую может только правящий
+    """Что перепишет «Обновить из сделки» — «было → станет» по ДС и комплектам (владелец 17.11.2026), ничего не сохраняя."""
     from app.master_deal import revert as RV
     m = _master_rw(db, code, user)
     try:
+        out = RV.preview(db, m, user)
+    except RV.RevertError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
+    db.rollback()
+    return {**out, "may_back": RV.ST.AGREE in RV.targets(db, m) and _may_revert(db, user)}
+
+
+class RefreshIn(BaseModel):
+    reason: Optional[constr(max_length=500)] = None     # пакет не на «согласовании» — вернуть туда с этой причиной
+
+
+def _may_revert(db: Session, user) -> bool:
+    from app.permissions import get_permissions_for_user
+    return bool((get_permissions_for_user(db, user).get("master_deals_revert") or {}).get("edit"))
+
+
+@router.post("/{code}/refresh")
+def master_refresh(code: str, payload: Optional[RefreshIn] = None, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    """«Обновить из сделки»: ДС и комплекты пакета по текущим данным, номера и даты прежние. Пакет дальше «согласования» —
+    сначала возврат туда (право «возврат стадии», причина обязательна): ДС снова на подпись, комплекты снова у бухгалтера."""
+    from app.master_deal import revert as RV
+    m = _master_rw(db, code, user)
+    back = None
+    try:
+        if not RV.may_refresh(m):
+            raise RV.RevertError(409, RV.refresh_refusal(m))
+        if m.status != RV.ST.AGREE:
+            if not _may_revert(db, user):
+                raise RV.RevertError(403, "Пакет дальше «согласования» — вернуть его туда может роль с правом «возврат стадии»")
+            back = RV.revert(db, m, RV.ST.AGREE, user, (payload.reason if payload else None) or "")
         out = RV.refresh(db, m, user)
     except RV.RevertError as e:
         db.rollback()
         raise HTTPException(e.status, e.message)
+    if back:
+        reason = payload.reason.strip()
+        CN.reverted(db, m, back["was"], reason, back, user)
+        log_action(db, user, "master_deal_back", "master_deal", m.id,
+                   f"{m.code}: возврат «{back['was']}» → «{m.status}» для обновления из сделки: {reason}")
     return _done(db, user, m, "master_deal_refresh", "обновлено из сделки — " + ", ".join(out["ds"]))
 
 

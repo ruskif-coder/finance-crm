@@ -8,10 +8,10 @@ from typing import List
 
 
 def diff(prev: List[dict], nxt: List[dict]) -> list:
+    out = _table_change(prev, nxt)
     a = [b for b in prev if not b.get("sys")]
     b = [x for x in nxt if not x.get("sys")]
     ia, ib = {x["id"]: x for x in a}, {x["id"]: x for x in b}
-    out = []
     for x in b:
         if x["id"] not in ia:
             out.append(["+", x["title"], "добавлен пункт"])
@@ -35,3 +35,16 @@ def diff(prev: List[dict], nxt: List[dict]) -> list:
         if order_a.index(x["id"]) != order_b.index(x["id"]):
             out.append(["↕", x["title"], "перемещён"])
     return out
+
+
+def _table_change(prev: List[dict], nxt: List[dict]) -> list:
+    """Колонки таблицы МП (17.11.2026) — свойство системного блока, поэтому сравниваются отдельно от пунктов."""
+    def cols(blocks):
+        t = next((x for x in blocks or [] if x.get("sys") == "table"), None)
+        return (t or {}).get("columns") or None
+    was, now = cols(prev), cols(nxt)
+    if was == now:
+        return []
+    def names(c):
+        return ", ".join((x.get("label") or x["key"]).replace("\n", " ") for x in c) if c else "по умолчанию"
+    return [["~", "Таблица МП", "изменены колонки", names(was), names(now)]]

@@ -71,7 +71,7 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
             <span style={{ color: 'var(--text-muted)' }}>Описание</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', wordBreak: 'break-word' }}>{o.description || '—'}</span>
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button onClick={() => onEdit(o)} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Редактировать</button>
+            <button onClick={() => onEdit(o)} style={{ flex: 1, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Редактировать</button>
             <button onClick={() => onCopy(o)} aria-label="Копировать" title="Копировать в новую операцию" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
             </button>
@@ -218,7 +218,7 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
 
       {/* липкий подвал */}
       <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button onClick={save} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Добавить операцию'}</button>
+        <button onClick={save} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Добавить операцию'}</button>
         {editId && onDelete
           ? <button onClick={async () => { if (window.confirm('Удалить операцию?')) { await onDelete(editId); onClose() } }} aria-label="Удалить" style={{ width: 52, borderRadius: 12, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: '#C93A3E', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
           : <button onClick={onClose} style={{ flex: '0 0 auto', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>}
@@ -294,12 +294,12 @@ export default function OperationsMobile({
 
       {/* плавающая кнопка + — по праву создания, которое спросит сервер (аудит, 6.L1) */}
       {canCreate && (
-        <button onClick={openCreate} aria-label="Новая операция" style={{ position: 'fixed', right: 18, bottom: 18, width: 56, height: 56, borderRadius: 18, background: 'var(--accent)', color: '#fff', border: 'none', boxShadow: '0 6px 20px rgba(79,108,230,.4)', fontSize: 30, lineHeight: 1, cursor: 'pointer', zIndex: Z.sticky }}>+</button>
+        <button onClick={openCreate} aria-label="Новая операция" style={{ position: 'fixed', right: 18, bottom: 18, width: 56, height: 56, borderRadius: 18, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', boxShadow: '0 6px 20px rgba(79,108,230,.4)', fontSize: 30, lineHeight: 1, cursor: 'pointer', zIndex: Z.sticky }}>+</button>
       )}
 
       {/* шторка фильтров */}
       <BottomSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Фильтры"
-        footer={<button onClick={() => setFiltersOpen(false)} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Показать {new Intl.NumberFormat('ru-RU').format(total)}</button>}>
+        footer={<button onClick={() => setFiltersOpen(false)} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Показать {new Intl.NumberFormat('ru-RU').format(total)}</button>}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{activeFilterCount > 0 ? `выбрано ${activeFilterCount}` : 'фильтры не заданы'}</span>
           <span onClick={resetFilters} style={{ fontSize: 13, fontWeight: 600, color: activeFilterCount > 0 ? 'var(--accent)' : 'var(--text-faint)', cursor: 'pointer' }}>Сбросить</span>

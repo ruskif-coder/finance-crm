@@ -196,6 +196,15 @@ def subs(user: User = Depends(VIEW)):
     return {"items": listing()}
 
 
+@router.get("/table-columns")
+def table_columns(user: User = Depends(VIEW)):
+    """Поля для колонок таблицы МП в шаблоне (17.11.2026) — один источник для редактора: `annex_tpl/table_cols.CATALOG`."""
+    from app.annex_tpl import table_cols as TC
+    return {"items": [{"key": k, "title": TC.TITLES[k], "label": v[0], "money": k in TC.MONEY, "text": k not in TC.MONEY | {"volume", "period", "const"}}
+                      for k, v in TC.CATALOG.items()],
+            "default": TC.DEFAULT}
+
+
 @router.get("/formats")
 def formats(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Какой базовый шаблон обслуживает какой формат сотрудничества; `known` — форматы, которые предлагает экран."""

@@ -108,7 +108,7 @@ function AdvCard({ a, open, onToggle, onEdit, onDeals, canEdit }) {
               <button onClick={() => onDeals(a)} style={{ flex: 1, background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Сделки · {grp(a.deals)}</button>
             )}
             {canEdit && (
-              <button onClick={() => onEdit(a)} style={{ flex: a.deals > 0 ? '0 0 auto' : 1, minWidth: 46, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <button onClick={() => onEdit(a)} style={{ flex: a.deals > 0 ? '0 0 auto' : 1, minWidth: 46, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '12px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
                 {a.deals > 0 ? '' : 'Редактировать'}
               </button>
@@ -129,7 +129,7 @@ function AdvForm({ initial, editId, onClose, onSave, saving }) {
   const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontFamily: UI, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
   return (
     <BottomSheet open onClose={onClose} title={editId ? 'Редактирование' : 'Новый рекламодатель'}
-      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
+      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
       <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{editId ? `Рекламодатель #${editId}` : 'Новый рекламодатель'}</div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>Достаточно любого из названий</div>
       <div style={fieldRow}><span style={lbl}>Короткое</span><input autoFocus value={f.short_name} onChange={e => set({ short_name: e.target.value })} placeholder="напр. Coca-Cola" style={inp} /></div>

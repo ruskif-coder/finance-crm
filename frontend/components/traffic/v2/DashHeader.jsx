@@ -1,9 +1,10 @@
 // Шапка дашборда трафика v2 (хендофф design_handoff_traffic_expand_v2, 17.11.2026, раздел 4) и панель списка РК (раздел 6).
 // Свежесть — плашкой с кнопкой «Обновить из сделок» (кнопка — только админу, как на бою); «без факта» — короткой плашкой с
 // прежним текстом баннера в подсказке; сверка с Weborama — плашкой ТОЛЬКО при сбое (владелец 17.11.2026), в норме её нет.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MONO, PortalPopover } from '@/components/salesTableKit'
 import { dm as dmShared } from '@/lib/salesFormat'
+import { readTheme, saveTheme } from '@/lib/theme'
 
 const plain = { background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }
 export const headBtn = {
@@ -17,6 +18,9 @@ const plaque = {
 }
 const warnPlaque = { ...plaque, padding: '0 4px 0 10px', background: 'var(--warning-tint)', border: '1px solid var(--warning-border)',
   fontWeight: 700, color: 'var(--warning-fg)' }
+// NAVY (17.11.2026): устаревшие данные — оранжевый «действуй сейчас», кнопка залита
+const signalPlaque = { ...plaque, padding: '0 4px 0 10px', background: 'var(--signal-tint)', border: '1px solid var(--signal-border)',
+  fontWeight: 700, color: 'var(--signal-text)' }
 const innerBtn = { ...plain, display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 9px', borderRadius: 6,
   background: 'var(--bg-card)', border: '1px solid var(--warning-border)', fontSize: 11.5, fontWeight: 700, color: 'var(--text-primary)' }
 const dm = (v) => dmShared(v, '')
@@ -27,15 +31,15 @@ export const verifierBroken = (v) => !!v && (!v.configured || !!v.cursor?.last_e
 function Freshness({ asOf, stale, isAdmin, syncing, syncSaid, onSync }) {
   if (!asOf) return null
   const btn = isAdmin ? (
-    <button type="button" disabled={syncing} onClick={onSync} style={innerBtn}
+    <button type="button" disabled={syncing} onClick={onSync} style={stale ? { ...innerBtn, background: 'var(--signal)', borderColor: 'var(--signal)', color: 'var(--signal-fg)' } : innerBtn}
       title="Пересобрать РК, площадки и креативы из сделок. Это же делает крон в 06:00; кнопка — для разбора, когда ждать до утра нельзя">
       {syncing ? 'Обновляю…' : 'Обновить из сделок'}</button>
   ) : null
   return (
     <>
       {stale ? (
-        <span style={warnPlaque} title="Статистика DSP не обновлялась больше суток — проверьте ночной съём">
-          <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--warning)' }} />
+        <span style={signalPlaque} title="Статистика DSP не обновлялась больше суток — проверьте ночной съём">
+          <span className="tp-beacon" style={{ width: 7, height: 7, borderRadius: 4, background: 'var(--signal)' }} />
           данные на {dm(asOf)} — устарели{btn}
         </span>
       ) : (
@@ -66,6 +70,28 @@ function WhoPicker({ value, data, onPick }) {
               background: k === value ? 'var(--accent-tint)' : 'transparent' }}>{l}</button>
         ))}
       </PortalPopover>
+    </span>
+  )
+}
+
+const NIGHT = new Set(['navy-dark', 'dark', 'graphite'])
+
+/** «День / Ночь» — темы NAVY (хендофф design_handoff_traffic_navy, 17.11.2026): выбор у пользователя, общий для всех экранов. */
+function DayNight() {
+  const [theme, setTheme] = useState('light')
+  useEffect(() => { setTheme(readTheme()) }, [])
+  const night = NIGHT.has(theme)
+  const pick = (t) => { saveTheme(t); setTheme(t) }
+  const seg = (on) => ({ ...plain, display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 10px', borderRadius: 8,
+    fontSize: 12, fontWeight: on ? 700 : 600, background: on ? 'var(--hot)' : 'transparent', color: on ? 'var(--hot-fg)' : 'var(--text-secondary)' })
+  return (
+    <span style={{ display: 'inline-flex', padding: 2, borderRadius: 10, background: 'var(--bg-card)', border: '1px solid var(--border-card)' }}>
+      <button type="button" onClick={() => pick('navy')} style={seg(!night)} title="Тема NAVY — день">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" /></svg>День</button>
+      <button type="button" onClick={() => pick('navy-dark')} style={seg(night)} title="Тема NAVY — ночь">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" /></svg>Ночь</button>
     </span>
   )
 }
@@ -112,6 +138,7 @@ export default function DashHeader({ data, scope, onScope, archive, onArchive, m
           <button type="button" className="tp-head" onClick={onAdfox} style={headBtn}
             title="Импорт ADFOX: загрузить суточный отчёт Adfox — показы площадок вне нашей DSP лягут в факт РК">↑ ADFOX</button>
         )}
+        <DayNight />
         <button type="button" className="tp-head" onClick={onWidgets} title={widgets ? 'Свернуть виджеты в строку-итог' : 'Развернуть виджеты'}
           style={widgets ? { ...headBtn, color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderColor: 'var(--accent-border)' } : headBtn}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
@@ -138,8 +165,8 @@ export function ListPanel({ q, onQ, shown, total, tabs, tab, onTab }) {
           return (
             <button key={k} type="button" onClick={() => onTab(k)} title={hint}
               style={{ ...plain, display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 8,
-                background: on ? 'var(--bg-card)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
-                color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap' }}>
+                background: on ? 'var(--hot)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
+                color: on ? 'var(--hot-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap' }}>
               {label}<span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{n}</span>
             </button>
           )

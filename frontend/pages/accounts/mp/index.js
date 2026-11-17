@@ -1,41 +1,36 @@
 import MonthInput from '@/components/MonthInput'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { isAdmin as isAdminFn, canDelete as canDeleteRight } from '@/lib/auth'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
-import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop, LoadError, Z } from '@/components/salesTableKit'
+import { MONO, UI, card, primaryBtn, MultiDrop, LoadError, PortalPopover } from '@/components/salesTableKit'
 import { errText, isAuth, detailText } from '@/lib/loadError'
 import api, { auth } from '@/lib/api'
-import { fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
 import { downloadMp } from '@/lib/mpDownload'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import ValuePopover from '@/components/ValuePopover'
-import { buildTitle, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
+import { buildTitle, separatePriceSet, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
+import { monthMsk } from '@/lib/dates'
+import { bucketCounts, cellsOpen, closedByDefault, filterRows, pageView } from '@/lib/mpRegistryModel.mjs'
+import RegistryRow, { RowDetail, GRID, TABLE_MIN_W } from '@/components/accounts/mpRegistry/RegistryRow'
+import { GroupHead, RegistryFooter, SortBlock, StageChips, Toggle } from '@/components/accounts/mpRegistry/controls'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
-// Реестр медиапланов (контур аккаунта). Тулбар (поиск/период/фильтры/сортировка) и
-// клик-редактирование ячеек — как в реестре сделок. Данные приходят пачкой (последние
-// версии), поэтому фильтрация/сортировка — клиентские.
-// Деньги — общим `grp`: см. lib/salesFormat, там же `grp0`/`grpDash` на случай,
-// когда ноль значащий, а когда пустой.
-const rub = (n) => (n == null ? '—' : `${grp(n)} ₽`)
-// Колонки CSS-grid — ширины/раскладка как в реестре сделок (sales.js). edit — поле пикера.
-const COLS = [
-  { key: 'id', w: '52px', label: 'ID' },
-  { key: 'title', w: '1.5fr', label: 'Сделка' },
-  { key: 'agency', w: '96px', label: 'Агентство', edit: 'agency' },
-  { key: 'advertiser', w: '1.1fr', label: 'Рекламодатель', edit: 'advertiser' },
-  { key: 'brand', w: '1fr', label: 'Бренд', edit: 'brand' },
-  { key: 'period', w: '80px', label: 'Период', edit: 'period' },
-  { key: 'amount_gross', w: '92px', label: 'Сумма', right: true },
-  { key: 'sales_rep', w: '100px', label: 'Продавец', edit: 'seller' },
-  { key: 'account_manager', w: '96px', label: 'Аккаунт', edit: 'account' },
-  { key: 'payer', w: '1.15fr', label: 'Плательщик', edit: 'payer' },
-  { key: 'deal_code', w: '132px', label: 'Сделка' },
-  { key: 'actions', w: '162px', label: '', right: true },
+// Реестр медиапланов (контур аккаунта), v2 — хендофф design_handoff_mp_registry (17.11.2026): расхлоп строки
+// с планом (как в карточке сделки), колонки «Услуга» и «Обновлён», замок и виза у ID, группы по месяцам, чипы этапов
+// и «Мои», блок «Порядок», липкие шапка и первая колонка, страницы. Правка ячеек, права, выгрузки и удаление — как были.
+// Данные приходят пачкой (последние версии), фильтр/сортировка/страницы — клиентские (lib/mpRegistryModel.mjs).
+
+// Шапка таблицы: [ключ сортировки, подпись, вправо]. Первая колонка — «ID» и «Сделка» отдельными кликами.
+const HEAD = [
+  ['product_label', 'Услуга'], ['agency', 'Агентство'], ['advertiser', 'Рекламодатель'], ['brand', 'Бренд'],
+  ['period', 'Период'], ['amount_gross', 'Сумма', true], ['sales_rep', 'Продавец'], ['account_manager', 'Аккаунт'],
+  ['payer', 'Плательщик'], ['deal_code', 'Сделка · стадия'], ['updated_at', 'Обновлён'], [null, 'Действия', true],
 ]
-const GRID = COLS.map(c => c.w).join(' ')
+const capHead = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' }
+const EMPTY_SEL = { agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] }
+
 const periodOptions = () => {
   const now = new Date(); const out = []
   for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; out.push({ value: v, label: v }) }
@@ -49,20 +44,27 @@ export default function MpRegistry() {
   const [perms, setPerms] = useState({})
   const [isAdmin, setIsAdmin] = useState(false)
   const [vpop, setVpop] = useState(null)
-  const [editTitleId, setEditTitleId] = useState(null)
-  const [titleDraft, setTitleDraft] = useState('')
   const [pdfBusy, setPdfBusy] = useState(null)
   const [downloading, setDownloading] = useState(false)   // оверлей 1c на время выгрузки
 
-  // тулбар: поиск / период / фильтры / сортировка
+  // тулбар: поиск / период / фильтры; над таблицей — этап, «Мои», порядок, группы; внизу — страницы
   const [search, setSearch] = useState('')
   const [searchFocus, setSearchFocus] = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [periodOpen, setPeriodOpen] = useState(false)
-  const [sel, setSel] = useState({ deal_stage: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] })
+  const [sel, setSel] = useState(EMPTY_SEL)
+  const [bucket, setBucket] = useState('all')
+  const [mine, setMine] = useState(false)
   const [sortKey, setSortKey] = useState('id')
   const [sortDir, setSortDir] = useState('desc')
+  const [grouped, setGrouped] = useState(true)
+  const [toggled, setToggled] = useState({})     // месяц → свёрнут/развёрнут вопреки умолчанию
+  const [size, setSize] = useState(100)
+  const [page, setPage] = useState(0)
+  const [openRows, setOpenRows] = useState({})   // id → раскрыта
+  const [details, setDetails] = useState({})     // id → { status, data } — план для расхлопа, грузится один раз
+  const [meta, setMeta] = useState({ own_only: false, can_edit_locked: false, buckets: [] })
 
   // справочники для пикеров
   const [agencies, setAgencies] = useState([])
@@ -83,7 +85,10 @@ export default function MpRegistry() {
   const load = useCallback(({ quiet = false } = {}) => {
     if (!quiet) setLoading(true)
     api.get('/sales/media-plans', auth())
-      .then(r => { setItems(r.data.items || []); setErr('') })
+      .then(r => {
+        setItems(r.data.items || []); setErr('')
+        setMeta({ own_only: !!r.data.own_only, can_edit_locked: !!r.data.can_edit_locked, buckets: r.data.buckets || [] })
+      })
       .catch(e => { if (!isAuth(e)) setErr(errText(e)) })
       .finally(() => setLoading(false))
   }, [])
@@ -116,53 +121,68 @@ export default function MpRegistry() {
     items.forEach(it => { if (it[idKey] != null) m.set(it[idKey], it[labelKey] || '—') })
     return [...m].map(([value, label]) => ({ value, label })).sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru'))
   }
-  // Фильтр по стадии сделки: состояние плана это состояние его сделки, и фильтровать
-  // реестр планов имеет смысл именно по ней. План без сделки — своя строка списка.
-  const stageOpts = useMemo(() => [...new Set(items.map(i => i.deal_stage || '— без сделки'))]
-    .map(v => ({ value: v, label: v })), [items])
+  // «Стадия сделки» из тулбара ушла в чипы этапов над таблицей (хендофф §1).
   const DROPS = [
-    ['deal_stage', 'Стадия сделки', stageOpts],
     ['agency_id', 'Агентство', distinct('agency_id', 'agency')],
     ['advertiser_id', 'Рекламодатель', distinct('advertiser_id', 'advertiser')],
     ['brand_id', 'Бренд', distinct('brand_id', 'brand')],
     ['sales_rep_id', 'Продавец', distinct('sales_rep_id', 'sales_rep')],
     ['account_manager_id', 'Аккаунт', distinct('account_manager_id', 'account_manager')],
   ]
-  const activeFilters = Object.values(sel).some(a => a.length) || dateFrom || dateTo || search.trim()
+  const filters = useMemo(() => ({ q: search, from: dateFrom, to: dateTo, sel, bucket, mine }), [search, dateFrom, dateTo, sel, bucket, mine])
+  const activeFilters = Object.values(sel).some(a => a.length) || dateFrom || dateTo || search.trim() || bucket !== 'all' || mine
+  const counts = useMemo(() => bucketCounts(items, filters), [items, filters])
+  const mineCount = useMemo(() => items.filter(i => i.mine).length, [items])
+  const rows = useMemo(() => filterRows(items, filters), [items, filters])
+  const current = monthMsk()
+  const isClosed = (k) => (toggled[k] != null ? toggled[k] : closedByDefault(k, current))
+  const view = pageView(rows, { grouped, current, sortKey, dir: sortDir, page, size, isClosed })
 
-  const view = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    let out = items.filter(it => {
-      if (q) {
-        const hay = [it.id, it.title, it.agency, it.advertiser, it.brand, it.period, it.payer, it.sales_rep, it.account_manager].map(v => String(v ?? '').toLowerCase()).join(' ')
-        if (!hay.includes(q)) return false
-      }
-      if (dateFrom && String(it.period || '') < dateFrom) return false
-      if (dateTo && String(it.period || '') > dateTo) return false
-      for (const [k] of DROPS) {
-        const v = k === 'deal_stage' ? (it.deal_stage || '— без сделки') : it[k]
-        if (sel[k].length && !sel[k].some(x => String(x) === String(v))) return false
-      }
-      return true
-    })
-    const val = (it) => {
-      if (sortKey === 'amount_gross' || sortKey === 'id') return it[sortKey] || 0
-      if (sortKey === 'deal_code') return it.deal_code || ''
-      return String(it[sortKey] ?? '')
-    }
-    out = [...out].sort((a, b) => {
-      const va = val(a), vb = val(b)
-      const c = typeof va === 'number' ? va - vb : va.localeCompare(vb, 'ru')
-      return sortDir === 'desc' ? -c : c
-    })
-    return out
-  }, [items, search, dateFrom, dateTo, sel, sortKey, sortDir])
+  // Любая смена набора или порядка — на первую страницу: иначе человек остаётся на «странице 4» другого списка.
+  useEffect(() => { setPage(0) }, [search, dateFrom, dateTo, sel, bucket, mine, sortKey, sortDir, grouped, size])
+  // Выпадашка периода закрывается кликом вне неё (портал и триггер помечены data-pop-root).
+  useEffect(() => {
+    if (!periodOpen) return undefined
+    const off = (e) => { if (!e.target.closest('[data-pop-root]')) setPeriodOpen(false) }
+    document.addEventListener('mousedown', off)
+    return () => document.removeEventListener('mousedown', off)
+  }, [periodOpen])
 
   const onSort = (k) => { if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
-  const resetFilters = () => { setSel({ deal_stage: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] }); setDateFrom(''); setDateTo(''); setSearch('') }
+  const resetFilters = () => { setSel(EMPTY_SEL); setDateFrom(''); setDateTo(''); setSearch(''); setBucket('all'); setMine(false) }
+
+  // Видимая ширина таблицы — для расхлопа и заголовков месяцев, которые держатся на месте при прокрутке вбок.
+  // `100cqw` включает полосу прокрутки, и они уезжали на её ширину; меряем `clientWidth`.
+  const scroller = useRef(null)
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || typeof ResizeObserver === 'undefined') return undefined
+    const put = () => el.style.setProperty('--mpr-vw', `${el.clientWidth}px`)
+    put()
+    const ro = new ResizeObserver(put)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const loadDetail = (id) => {
+    setDetails(d => ({ ...d, [id]: { status: 'loading' } }))
+    api.get(`/sales/media-plans/${id}`, auth())
+      .then(r => setDetails(d => ({ ...d, [id]: { status: 'ok', data: r.data } })))
+      .catch(() => setDetails(d => ({ ...d, [id]: { status: 'error' } })))
+  }
+  const toggleRow = (id) => {
+    setOpenRows(o => ({ ...o, [id]: !o[id] }))
+    if (!details[id] || details[id].status === 'error') loadDetail(id)
+  }
 
   const patchCell = async (id, patch, localApply) => {
-    try { await api.patch(`/sales/media-plans/${id}`, patch, auth()); setItems(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
+    try {
+      await api.patch(`/sales/media-plans/${id}`, patch, auth())
+      setItems(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x))
+      // Раскрытый план показывает шапку — перечитать, иначе в расхлопе осталось бы старое значение.
+      if (openRows[id]) loadDetail(id); else setDetails(d => { const n = { ...d }; delete n[id]; return n })
+      return true
+    }
     catch (e) { alert(detailText(e, 'Не удалось сохранить')); return false }
   }
   const lbl = (opts, v) => (opts || []).find(o => String(o.value) === String(v))?.label
@@ -199,10 +219,7 @@ export default function MpRegistry() {
     setVpop({ rect, dealLabel: `МП #${it.id}`, ...cfg })
   }
 
-  const saveTitle = async (id) => {
-    const t = titleDraft.trim(); setEditTitleId(null)
-    if (t && t !== (items.find(x => x.id === id)?.title || '')) await patchCell(id, { title: t }, { title: t })
-  }
+  const saveTitle = (id, t) => patchCell(id, { title: t }, { title: t })
 
   /* Название медиаплана собирается ТЕМ ЖЕ модулем, что имя сделки (lib/dealTitle.js), и
      той же кнопкой. Раньше имя плана собирал только конструктор, по своей маске — без
@@ -232,121 +249,128 @@ export default function MpRegistry() {
     try { await downloadMp(it, 'pdf') } finally { setPdfBusy(null); setDownloading(false) }
   }
 
-  const act = { padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 11.5, color: 'var(--text-secondary)' }
-  const clip = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-  // Ячейка-грид с клик-редактированием (пикер у места клика), как в реестре сделок.
-  // Кликабельна ВСЯ ячейка, а не строка текста: по ширине грид-элемент растягивается
-  // сам, по высоте нет — вертикальные отступы с обратными полями добирают высоту строки.
-  // Без этого у пустого поля мишенью был один прочерк.
-  const EditCell = ({ it, field, mono, children }) => (
-    <span onClick={canEdit ? (e) => openPicker(field, it, e) : undefined}
-      style={{ ...clip, display: 'block', boxSizing: 'border-box', borderRadius: 6,
-        padding: '8px 4px', margin: '-8px -4px', width: 'calc(100% + 8px)',
-        cursor: canEdit ? 'pointer' : 'default', fontFamily: mono ? MONO : undefined,
-        fontSize: mono ? 12 : undefined, color: children ? 'var(--text-primary)' : 'var(--text-faint)' }}>
-      {children || '—'}</span>
-  )
+  const headCell = (key, label, right) => {
+    const on = key && sortKey === key
+    return (
+      <span key={label} onClick={key ? () => onSort(key) : undefined} title={key ? `Сортировать: ${label.toLowerCase()}` : undefined}
+        className={key ? 'mpr-sort' : undefined}
+        style={{ ...capHead, display: 'flex', alignItems: 'center', justifyContent: right ? 'flex-end' : 'flex-start', gap: 4, height: '100%',
+          color: on ? 'var(--accent-fg)' : 'var(--text-cap)', cursor: key ? 'pointer' : 'default', background: 'var(--bg-card)' }}>
+        {label}<span style={{ fontSize: 10 }}>{on ? (sortDir === 'desc' ? '↓' : '↑') : ''}</span>
+      </span>
+    )
+  }
+  const countLabel = rows.length !== items.length ? `${rows.length} / ${items.length}` : String(items.length)
+  const tb = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 13px', boxSizing: 'border-box', background: 'var(--bg-card)',
+    border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }
 
   return (
     <>
       <Head><title>Медиапланы · Аккаунты | SIMB-AD ERP</title></Head>
       {downloading && <DownloadOverlay />}
       <Navbar active="" />
-      <style>{`.d2-row:hover{background:var(--bg-subtle)!important}`}</style>
-      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Медиапланы</h1>
-          <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{view.length}{view.length !== items.length ? ` / ${items.length}` : ''}</span>
+      {/* Строки и липкая первая колонка: фон наследует строку — обычная, под курсором и раскрытая. */}
+      <style>{`
+        .mpr-row, .mpr-row .mpr-stick { background: var(--bg-card); transition: background 150ms ease }
+        .mpr-row:hover, .mpr-row:hover .mpr-stick, .mpr-open, .mpr-open .mpr-stick { background: var(--bg-subtle) }
+        .mpr-row .mpr-gen { display: none } .mpr-row:hover .mpr-gen { display: inline-flex }
+        .mpr-sort:hover { color: var(--accent-fg) !important }
+        @keyframes mprOpen { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }
+        @keyframes mprPulse { 0%, 100% { opacity: .55 } 50% { opacity: 1 } }
+        @media (prefers-reduced-motion: reduce) { .mpr-row, .mpr-row * { animation-duration: 1ms !important; transition: none !important } }
+      `}</style>
+      {/* Таблица занимает остаток окна и прокручивается сама — так держатся её шапка и низ со страницами (хендофф §7). */}
+      <div style={{ height: 'calc(100vh - var(--navbar-h))', boxSizing: 'border-box', padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 12,
+        background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em', margin: 0, color: 'var(--text-primary)' }}>Медиапланы</h1>
+          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-faint)' }}>{countLabel}</span>
           {canCreate && <button onClick={() => router.push('/accounts/mp/new')} style={{ ...primaryBtn, marginLeft: 'auto' }}>+ Новый медиаплан</button>}
         </div>
 
-        {/* ── Тулбар: поиск · период · фильтры · сброс ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 160, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
+        {/* Тулбар: поиск · период · фильтры · сброс — как на проде */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 160, display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, boxSizing: 'border-box',
+            border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 10px',
+            transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>⌕</span>
             <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
-              placeholder="поиск: название, контрагент, продавец…" style={{ flex: 1, minWidth: 0, width: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 12.5, color: 'inherit', fontFamily: UI }} />
+              placeholder="поиск: название, код, контрагент…" style={{ flex: 1, minWidth: 0, width: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 12.5, color: 'inherit', fontFamily: UI }} />
           </div>
-
-          <div style={{ position: 'relative' }}>
-            <div onClick={() => setPeriodOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${(dateFrom || dateTo || periodOpen) ? 'var(--accent)' : 'var(--border-card)'}`, background: (dateFrom || dateTo) ? 'var(--accent-tint)' : 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontFamily: MONO, fontSize: 11, color: (dateFrom || dateTo) ? 'var(--accent)' : 'var(--text-muted)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+          <span data-pop-root style={{ display: 'inline-flex' }}>
+            <button type="button" onClick={() => setPeriodOpen(o => !o)}
+              style={{ ...tb, fontFamily: MONO, fontSize: 11.5, borderColor: (dateFrom || dateTo || periodOpen) ? 'var(--accent)' : 'var(--border-card)',
+                background: (dateFrom || dateTo) ? 'var(--accent-tint)' : 'var(--bg-card)', color: (dateFrom || dateTo) ? 'var(--accent-fg)' : 'var(--text-muted)' }}>
               {(dateFrom || dateTo) ? `${dateFrom || '…'} — ${dateTo || '…'}` : 'период'} ▾
-            </div>
-            {periodOpen && (<>
-              <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setPeriodOpen(false)} />
-              <div style={{ position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: Z.dropdown + 1, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 230 }}>
+            </button>
+            <PortalPopover open={periodOpen} minWidth={250}>
+              <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <MonthInput clearable value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                   <span style={{ color: 'var(--text-muted)' }}>—</span>
                   <MonthInput clearable value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                 </div>
-                {(dateFrom || dateTo) && <div onClick={() => { setDateFrom(''); setDateTo('') }} style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer' }}>Сбросить период</div>}
+                {(dateFrom || dateTo) && <div onClick={() => { setDateFrom(''); setDateTo('') }} style={{ fontSize: 12, color: 'var(--accent-fg)', cursor: 'pointer' }}>Сбросить период</div>}
               </div>
-            </>)}
-          </div>
-
+            </PortalPopover>
+          </span>
           {DROPS.map(([k, label, opts]) => (
             <MultiDrop key={k} label={label} options={opts} selected={sel[k]} onChange={v => setSel(s => ({ ...s, [k]: v }))} />
           ))}
-
-          {activeFilters && <div onClick={resetFilters} title="Сбросить фильтры" style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>Сбросить ✕</div>}
+          {activeFilters && <button type="button" onClick={resetFilters} title="Сбросить фильтры" style={{ ...tb, color: 'var(--text-muted)' }}>Сбросить ✕</button>}
         </div>
 
-        {!!err && <div style={{ marginBottom: 12 }}><LoadError text={err} onRetry={() => load()} /></div>}
-        {loading ? <div style={{ color: 'var(--text-muted)', padding: 20 }}>Загрузка…</div> : (
-          <div style={{ ...card, padding: '12px 16px', overflowX: 'auto' }}>
-            <div style={{ minWidth: 1180 }}>
-              {/* шапка */}
-              <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, padding: '0 8px 10px', borderBottom: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-                {COLS.map(c => c.key === 'actions'
-                  ? <span key="actions" style={{ textAlign: 'right' }}>Действия</span>
-                  : <span key={c.key} onClick={() => onSort(c.key)} style={{ textAlign: c.right ? 'right' : 'left', cursor: 'pointer', userSelect: 'none', color: sortKey === c.key ? 'var(--accent)' : 'var(--text-faint)' }}>
-                    {c.label}{sortKey === c.key ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
+        {/* Этапы и «Мои» | порядок и группы */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <StageChips buckets={meta.buckets} counts={counts} value={bucket} onPick={setBucket} />
+          {/* У роли с областью «свои» переключатель не нужен — у неё и так только свои. */}
+          {!meta.own_only && <Toggle on={mine} label="Мои" n={mineCount} title="Планы, где вы продавец, аккаунт или трафик" onClick={() => setMine(m => !m)} />}
+          <SortBlock sortKey={sortKey} dir={sortDir} onSort={k => { if (k !== sortKey) { setSortKey(k); setSortDir('desc') } }}
+            onDir={() => setSortDir(d => (d === 'desc' ? 'asc' : 'desc'))} />
+          <Toggle on={grouped} label="По месяцам" title="Разбить список по месяцу периода размещения" onClick={() => setGrouped(g => !g)} />
+        </div>
+
+        {!!err && <LoadError text={err} onRetry={() => load()} />}
+        <div style={{ ...card, flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div ref={scroller} style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', containerType: 'inline-size' }}>
+            <div style={{ minWidth: TABLE_MIN_W }}>
+              {/* шапка — липкая сверху; первая колонка — липкая слева */}
+              <div style={{ position: 'sticky', top: 0, zIndex: 4, display: 'grid', gridTemplateColumns: GRID, alignItems: 'center', gap: '0 10px', height: 40,
+                paddingRight: 14, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-inner)', boxShadow: '0 1px 0 var(--border-inner)' }}>
+                <span style={{ ...capHead, position: 'sticky', left: 0, zIndex: 2, display: 'flex', alignItems: 'center', gap: 8, height: '100%', paddingLeft: 14,
+                  paddingRight: 10, background: 'var(--bg-card)', boxShadow: '1px 0 0 var(--border-inner)', color: 'var(--text-cap)' }}>
+                  <span style={{ flex: '0 0 14px' }} />
+                  <span style={{ flex: '0 0 64px', display: 'flex' }}>{headCell('id', 'ID')}</span>
+                  {headCell('title', 'Сделка')}
+                </span>
+                {HEAD.map(([k, label, right]) => headCell(k, label, right))}
               </div>
-              {/* строки */}
-              {view.map(it => {
-                return (
-                  <div key={it.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)' }}>
-                    <span style={{ ...clip, fontFamily: MONO, color: 'var(--text-muted)' }}>{it.id}<span style={{ fontSize: 10, color: 'var(--text-faint)' }}> v{it.version}</span></span>
-                    {editTitleId === it.id
-                      ? <input autoFocus value={titleDraft} onChange={e => setTitleDraft(e.target.value)}
-                        onBlur={() => saveTitle(it.id)} onKeyDown={e => { if (e.key === 'Enter') saveTitle(it.id); if (e.key === 'Escape') setEditTitleId(null) }}
-                        style={{ minWidth: 0, padding: '3px 6px', border: '1px solid var(--accent)', borderRadius: 6, fontSize: 12.5, fontFamily: UI, background: 'var(--bg-card)', color: 'inherit' }} />
-                      : <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                        <span onClick={canEdit ? () => { setEditTitleId(it.id); setTitleDraft(it.title || '') } : undefined}
-                          style={{ ...clip, flex: 1, fontWeight: 600, cursor: canEdit ? 'text' : 'default', color: it.title ? 'var(--text-primary)' : 'var(--text-faint)' }}>{it.title || 'без названия'}</span>
-                        {!!surfaceTag(it.inventory) && (
-                          <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', color: 'var(--text-faint)', flexShrink: 0 }}>{surfaceTag(it.inventory)}</span>
-                        )}
-                        {canEdit && <GenTitleBtn onClick={() => genTitle(it)} size={22} />}
-                      </span>}
-                    <EditCell it={it} field="agency">{it.agency}</EditCell>
-                    <EditCell it={it} field="advertiser">{it.advertiser}</EditCell>
-                    <EditCell it={it} field="brand">{it.brand}</EditCell>
-                    <EditCell it={it} field="period" mono>{it.period}</EditCell>
-                    <span style={{ ...clip, fontFamily: MONO, fontWeight: 700, textAlign: 'right' }}
-                      title={`с НДС ${fmtFull(it.amount_gross)}\nдо НДС ${fmtFull(it.amount_net)}`}>{fmtMoney(it.amount_gross)}</span>
-                    <EditCell it={it} field="seller">{it.sales_rep}</EditCell>
-                    <EditCell it={it} field="account">{it.account_manager}</EditCell>
-                    <EditCell it={it} field="payer">{it.payer}</EditCell>
-                    <span style={clip}>{it.deal_code
-                      ? <a href={`/sales/deals/${it.deal_code}`} onClick={e => e.stopPropagation()}
-                          title={it.deal_stage || ''}
-                          style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{it.deal_code}</a>
-                      : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>без сделки</span>}</span>
-                    <span style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
-                      <button onClick={() => router.push(`/accounts/mp/${it.id}`)} style={act}>Открыть</button>
-                      <button onClick={() => exportXlsx(it)} style={act}>Excel</button>
-                      <button onClick={() => downloadPdf(it)} disabled={pdfBusy === it.id} style={act}>{pdfBusy === it.id ? '…' : 'PDF'}</button>
-                      {canDelete && <button onClick={() => del(it)} style={{ ...act, color: 'var(--danger)', borderColor: 'var(--danger-tint)' }}>✕</button>}
-                    </span>
+
+              {loading ? (
+                <div style={{ position: 'sticky', left: 0, width: 'var(--mpr-vw, 100cqw)', padding: 40, boxSizing: 'border-box', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
+              ) : view.entries.map(e => (e.type === 'group'
+                ? <GroupHead key={`g${e.key}${e.continued ? 'c' : ''}`} g={e} buckets={meta.buckets}
+                    onToggle={() => setToggled(t => ({ ...t, [e.key]: !isClosed(e.key) }))} />
+                : (
+                  <div key={e.item.id}>
+                    <RegistryRow it={e.item} open={!!openRows[e.item.id]} onToggle={() => toggleRow(e.item.id)}
+                      cellsOpen={cellsOpen(e.item, meta.can_edit_locked)} canEditLocked={meta.can_edit_locked}
+                      canEdit={canEdit} canDelete={canDelete} pdfBusy={pdfBusy === e.item.id}
+                      onPick={openPicker} onSaveTitle={t => saveTitle(e.item.id, t)} onGenTitle={() => genTitle(e.item)}
+                      onOpenPlan={() => router.push(`/accounts/mp/${e.item.id}`)} onExcel={() => exportXlsx(e.item)}
+                      onPdf={() => downloadPdf(e.item)} onDelete={() => del(e.item)} />
+                    {!!openRows[e.item.id] && <RowDetail it={e.item} detail={details[e.item.id]} onRetry={() => loadDetail(e.item.id)} />}
                   </div>
-                )
-              })}
-              {!view.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{err && !items.length ? 'Реестр не загрузился — см. сообщение выше' : items.length ? 'Ничего не найдено — измените фильтры' : 'Медиапланов нет — нажмите «+ Новый медиаплан»'}</div>}
+                )))}
+              {!loading && !rows.length && (
+                <div style={{ position: 'sticky', left: 0, width: 'var(--mpr-vw, 100cqw)', padding: '40px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+                  {err && !items.length ? 'Реестр не загрузился — см. сообщение выше' : items.length ? 'Ничего не найдено — измените фильтры' : 'Медиапланов нет — нажмите «+ Новый медиаплан»'}
+                </div>
+              )}
             </div>
           </div>
-        )}
+          <RegistryFooter view={view} size={size} onSize={setSize} onPage={setPage} />
+        </div>
       </div>
 
       {vpop && <ValuePopover anchor={vpop.rect} title={vpop.title} dealLabel={vpop.dealLabel} options={vpop.options} value={vpop.value} clearLabel={vpop.clearLabel} onAddNew={vpop.onAddNew}

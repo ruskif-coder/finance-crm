@@ -74,7 +74,7 @@ const TargetingPreview = ({ t }) => {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
         <span style={{ ...CAP, marginBottom: 0 }}>Таргетинги</span>
         <span style={{ fontSize: 11.5, fontWeight: 700,
-          color: t.enabled ? 'var(--income-fg)' : 'var(--warning-text)' }}>
+          color: t.enabled ? 'var(--ok-fg)' : 'var(--warning-text)' }}>
           {t.enabled ? 'будут поставлены' : 'выключены настройкой dsp_targeting_enabled'}</span>
       </div>
       {line('Источники', `${(t.sources || []).join(', ')} · ставка ${t.source_bid}`)}
@@ -117,15 +117,15 @@ const ExtResult = ({ wb, result }) => {
     <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
       {!!tg && (
         <div style={{ fontSize: 12.5, color: tg.skipped ? 'var(--text-muted)'
-          : (tg.failed?.length ? 'var(--warning-text)' : 'var(--income-fg)') }}>
+          : (tg.failed?.length ? 'var(--warning-text)' : 'var(--ok-fg)') }}>
           Таргетинги: {tg.skipped ? 'не отправлялись (ждут решения по настройкам)'
             : `поставлено ${tg.done?.length || 0}${tg.failed?.length
               ? ` · отказов ${tg.failed.length}: ${tg.failed.map(f => `${f.what} — ${f.error}`).join('; ')}` : ''}`}
         </div>
       )}
       <div style={{ padding: '10px 12px', borderRadius: 9, fontWeight: 700,
-        background: failed.length ? 'var(--warning-tint)' : 'var(--income-tint)',
-        color: failed.length ? 'var(--warning-text)' : 'var(--income-fg)' }}>
+        background: failed.length ? 'var(--warning-tint)' : 'var(--ok-tint)',
+        color: failed.length ? 'var(--warning-text)' : 'var(--ok-fg)' }}>
         {wb ? 'Пикселей получено' : 'Креативов заведено'}: {done.length}
         {failed.length ? ` · отказов: ${failed.length}` : ' · без отказов'}
       </div>
@@ -664,7 +664,7 @@ export default function TrafficDashboard() {
     { label: 'Площадок крутит', value: `${k.placements_on ?? 0} / ${k.placements ?? 0}`,
       color: 'var(--blue)', hint: 'запущенных из подключённых' },
     { label: 'Требует внимания', value: String(k.attention ?? 0), unit: 'РК',
-      color: k.attention ? 'var(--danger)' : 'var(--text-primary)',
+      color: k.attention ? 'var(--signal-num)' : 'var(--text-primary)',      // NAVY: «действуй сейчас» — оранжевый
       hint: 'без плана, без площадок, недокрут' },
     { label: 'Креативы на проверке', value: String(qb.waiting ?? 0), unit: 'в очереди',
       color: 'var(--blue)',
@@ -682,7 +682,7 @@ export default function TrafficDashboard() {
     <>
       <Head><title>Дашборд · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
-      <div style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 28px 60px', fontFamily: UI }}>
+      <div className="tp-dash" style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 28px 60px', fontFamily: UI }}>
 
         <DashHeader data={data} scope={scope} onScope={setScope} archive={archive} onArchive={() => setArchive(v => !v)}
           mayEdit={mayEdit} isAdmin={isAdmin} noFact={noFact} total={all.length} verifier={verifier} wbBusy={wbBusy}
@@ -692,7 +692,8 @@ export default function TrafficDashboard() {
         {!!msg && <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--danger)' }}>{msg}</div>}
         {!!note && <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--blue)' }}>{note}</div>}
 
-        <div style={{ marginBottom: 14 }}><KpiRow items={KPI} /></div>
+        {/* NAVY (17.11.2026): полоса показателей — «стекло», ночью светлая зона; в прежних темах атрибуты ничего не меняют */}
+        <div className="navy-glass" data-tone="light" style={{ marginBottom: 14 }}><KpiRow items={KPI} /></div>
 
         {/* аналитика: свёрнута — строка-итог, развёрнута — виновники и стена дней одной высоты (v2, 17.11.2026) */}
         {!widgets && !!data && (
@@ -707,7 +708,7 @@ export default function TrafficDashboard() {
             {/* «Площадки-виновники» — компонент хендоффа (05.11.2026) на том же ответе, что отчёт «Площадки × РК»:
                 один запрос кормит и виджет, и экран, числа не расходятся. */}
             {platData ? (
-              <div style={{ minWidth: 0, overflowX: 'auto' }}><CulpritsWidget data={platData}
+              <div data-tone="dark" style={{ minWidth: 0, overflowX: 'auto', borderRadius: 18 }}><CulpritsWidget data={platData}
                 onOpenReport={code => router.push(`/traffic/platforms?scope=${encodeURIComponent(scope || data?.scope || 'mine')}${code ? `&p=${encodeURIComponent(code)}` : ''}`)}
                 onOpenRk={code => router.push(`/traffic/dashboard?open=${encodeURIComponent(code)}`, undefined, { shallow: true })}
                 onExcel={() => downloadFile(`/traffic-dashboard/platforms.xlsx?scope=${encodeURIComponent(scope || data?.scope || 'mine')}`)} /></div>
@@ -716,12 +717,10 @@ export default function TrafficDashboard() {
                 Площадки-виновники · {platErr || 'загрузка…'}</div>
             )}
 
-            {/* Высоту ряда задают виновники; стена встаёт в ту же высоту, строки — прокруткой внутри (владелец 17.11.2026). */}
-            <div style={{ position: 'relative', minWidth: 0, minHeight: 360 }}>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
-                <DayWallV2 fill wall={data?.wall || []} rows={all} activeId={open}
-                  onPick={id => { if (open !== id) toggle(id); else alignRow(id) }} />
-              </div>
+            {/* Ряд — по высоте большего виджета; при «ещё N ▾» оба растут вниз, без прокрутки внутри (владелец 17.11.2026, вечер) */}
+            <div data-tone="dark" style={{ minWidth: 0, display: 'flex', flexDirection: 'column', borderRadius: 18 }}>
+              <DayWallV2 fill wall={data?.wall || []} rows={all} activeId={open}
+                onPick={id => { if (open !== id) toggle(id); else alignRow(id) }} />
             </div>
           </div>
         )}
@@ -753,7 +752,7 @@ export default function TrafficDashboard() {
                   onStart={() => startCampaign(r)} onPause={() => setCampaignStatus(r, 'пауза')}
                   onStop={() => setCampaignStatus(r, 'остановлена')} />
 
-                {/* Расхлоп v2 (17.11.2026): пульт одной строкой, площадки слева, аналитика 680px справа — липкая */}
+                {/* Расхлоп v2 (17.11.2026): пульт одной строкой, площадки слева, аналитика справа — тёмной половиной на всю высоту (NAVY: не липкая) */}
                 {open === r.id && (
                   <div>
                     <RkPult rk={r} d={d} sum={sumOf(r)} mayEdit={mayEdit} mayReport={mayReport} reps={data?.reps}
@@ -768,7 +767,7 @@ export default function TrafficDashboard() {
                           onAdd={note => addNote(r, note)} onClose={() => toggleLog(r)} />
                       </div>
                     )}
-                    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'stretch' }}>
                       <div style={{ flex: '1 1 auto', minWidth: 0, borderRight: '1px solid var(--border-card)' }}>
                         <SitesPanel rk={r} d={d} mayEdit={mayEdit} tgt={tgt} filterNoShows={!!noShows[r.id]}
                           onClearNoShows={() => setNoShows(x => ({ ...x, [r.id]: false }))}
@@ -781,7 +780,7 @@ export default function TrafficDashboard() {
                             downloadCreatives: () => downloadDealCreatives(r.deal_id, fail),
                           }} />
                       </div>
-                      <div style={{ flex: `0 0 ${ANALYTICS_W}px`, width: ANALYTICS_W, boxSizing: 'border-box', position: 'sticky', top: 'var(--navbar-h, 66px)', alignSelf: 'flex-start' }}>
+                      <div data-tone="dark" style={{ flex: `0 0 ${ANALYTICS_W}px`, width: ANALYTICS_W, boxSizing: 'border-box', borderRadius: '0 0 18px 0' }}>
                         <RkAnalytics rk={r} d={d} st={stat[r.id]} grain={grain[r.id] || 'day'} range={range[r.id] || null}
                           onGrain={g => { setGrain(x => ({ ...x, [r.id]: g })); setRange(x => ({ ...x, [r.id]: null })); loadStat(r.id, g) }}
                           onRange={win => { setRange(x => ({ ...x, [r.id]: win })); loadStat(r.id, grain[r.id] || 'day', win || undefined) }}

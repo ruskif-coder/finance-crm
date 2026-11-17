@@ -12,7 +12,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Cube } from '@/components/LogoLoader';
-import { MONO, VERDICT, nf, minus, stripOf, Strip, VerdictPill, Legend, Segmented, Cap, PlatformRks, platformSay, culpritsSummary } from './reportKit';
+import { MONO, VERDICT, nf, minus, stripOf, Strip, VerdictPill, Legend, Segmented, Cap, PlatformRks, platformSay, culpritsSummary, plural } from './reportKit';
 
 const COLS = '12px 170px 200px minmax(220px,1fr) 130px 96px';
 
@@ -47,6 +47,8 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
   const [open, setOpen] = useState(null);
   const rkByCode = useMemo(() => Object.fromEntries(data.rks.map(r => [r.code, r])), [data.rks]);
   const [sort, setSort] = useState({ key: 'under', dir: -1 });
+  // как у «Стены дней»: первые площадки, остальные — по «ещё N площадок ▾», без прокрутки внутри (владелец 17.11.2026)
+  const [expanded, setExpanded] = useState(false);
   const onSort = k => setSort(s => (s.key === k ? { key: k, dir: -s.dir } : { key: k, dir: SORTS[k].text ? 1 : -1 }));
   const list = useMemo(() => {
     const get = SORTS[sort.key].get;
@@ -61,7 +63,7 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
   const { under: total, systemic: sys, wrSystemic: wr } = culpritsSummary(data);
 
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '16px 20px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '16px 20px 12px', display: 'flex', flexDirection: 'column', gap: 8, height: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Cap style={{ fontSize: 10 }}>Площадки-виновники</Cap>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>поперёк всех видимых РК · недокрут в показах</span>
@@ -87,14 +89,14 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
       </div>
 
       {list.length === 0 ? (
-        <span style={{ padding: '16px 8px', fontSize: 12.5, color: 'var(--income-fg)', fontWeight: 600 }}>Площадок с недокрутом или расхождением с Weborama нет.</span>
+        <span style={{ padding: '16px 8px', fontSize: 12.5, color: 'var(--ok-fg)', fontWeight: 600 }}>Площадок с недокрутом или расхождением с Weborama нет.</span>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: '0 14px', padding: '6px 8px', borderBottom: '1px solid var(--border-inner)' }}>
             <span />{Object.keys(SORTS).map(k => <SortCap key={k} k={k} sort={sort} onSort={onSort} />)}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 352, overflow: 'auto' }}>
-            {list.map(p => {
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {(expanded ? list : list.slice(0, SHOWN)).map(p => {
               const isOpen = open === p.code, s = p.stats;
               return (
                 <div key={p.code} style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid var(--border-row)' }}>
@@ -109,7 +111,7 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
                     <Strip cells={stripOf(p, metric, rkByCode)} metric={metric} size={8} height={12} />
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }}>
                       <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700 }}>{minus(s.under_total)}</span>
-                      <span style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border-inner)', display: 'flex', justifyContent: 'flex-end' }}><span style={{ width: `${Math.round(s.under_total / maxUnder * 100)}%`, height: 4, borderRadius: 2, background: 'var(--warning)' }} /></span>
+                      <span style={{ width: '100%', height: 3, borderRadius: 2, background: 'var(--bg-subtle)', display: 'flex', justifyContent: 'flex-end' }}><span style={{ width: `${Math.round(s.under_total / maxUnder * 100)}%`, height: 3, borderRadius: 2, background: 'var(--warning)' }} /></span>
                     </span>
                     <span style={{ fontFamily: MONO, fontSize: 12, textAlign: 'right', color: p.wr_systemic ? 'var(--danger-fg)' : 'var(--text-secondary)' }}>{s.wr_measured ? `${s.wr_over} / ${s.wr_measured}` : '—'}</span>
                   </div>
@@ -124,8 +126,16 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
               );
             })}
           </div>
+          {list.length > SHOWN && (
+            <span role="button" tabIndex={0} onClick={() => setExpanded(v => !v)} onKeyDown={e => e.key === 'Enter' && setExpanded(v => !v)}
+              style={{ padding: '10px 8px 2px', fontSize: 11.5, fontWeight: 700, color: 'var(--accent-fg)', cursor: 'pointer' }}>
+              {expanded ? `свернуть до ${SHOWN} первых ▴` : `ещё ${plural(list.length - SHOWN, 'площадка', 'площадки', 'площадок')} ▾`}
+            </span>
+          )}
         </>
       )}
     </div>
   );
 }
+
+const SHOWN = 7;

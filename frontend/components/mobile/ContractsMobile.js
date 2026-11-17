@@ -109,7 +109,7 @@ function CtForm({ initial, editId, counterparties, onClose, onSave, saving }) {
   const sortedCp = [...counterparties].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
   return (
     <BottomSheet open onClose={onClose} title={editId ? 'Редактирование' : 'Новый договор'}
-      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
+      footer={<button onClick={() => onSave(f, editId)} disabled={saving} style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Создать'}</button>}>
       <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{editId ? `Договор #${editId}` : 'Новый договор'}</div>
 
       <div style={fieldRow}><span style={lbl}>Контрагент *</span>

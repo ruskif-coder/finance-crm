@@ -81,8 +81,8 @@ const CreativeSection = ({ g, goal, mayEdit, tgt, h }) => {
             <span style={VAL}><span style={LBL}>CTR </span><b style={CTR_STYLE[tone]}>{pct2(g.ctr)}</b></span>
             <CtrBar ctr={g.ctr} tone={tone} width={54} height={6} goal={goal} />
             <span style={{ display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 7px', borderRadius: 6,
-              background: 'var(--income-tint)', border: '1px solid var(--income-border)', fontSize: 10.5, fontWeight: 700,
-              color: 'var(--income-fg)', visibility: g.best ? 'visible' : 'hidden' }}>лучший</span>
+              background: 'var(--ok-tint)', border: '1px solid var(--ok-border)', fontSize: 10.5, fontWeight: 700,
+              color: 'var(--ok-fg)', visibility: g.best ? 'visible' : 'hidden' }}>лучший</span>
           </span>
           <span title="Площадок, где креатив заведён в DSP"
             style={{ ...VAL, fontWeight: 700, color: g.live ? 'var(--accent-fg)' : 'var(--text-faint)' }}>

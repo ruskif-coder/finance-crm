@@ -463,9 +463,12 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         return sh, ck
 
     def reach(site_days: dict, d_from, d_to) -> float:
-        """Охват таблицы за дни [d_from, d_to] — сумма охватов площадок-дней (4-е число `site_days`)."""
-        return sum((v[3] if len(v) > 3 else 0) or 0 for days in site_days.values() for d, v in days.items()
-                   if d_from <= d <= d_to)
+        """Охват таблицы за дни [d_from, d_to] — сумма охватов площадок-дней (4-е число `site_days`), не меньше
+        «показы ÷ частота МП»: частота недели не выше заложенной в медиаплане (17.11.2026, `report_coef.week_reach`)."""
+        from app.ad.report_coef import week_reach
+        cells = [v for days in site_days.values() for d, v in days.items() if d_from <= d <= d_to]
+        return week_reach(sum((v[3] if len(v) > 3 else 0) or 0 for v in cells), sum(v[0] or 0 for v in cells),
+                          h.get("mp_freq"))
 
     def triple(rr, col, sh, ck, num, fmt_num=NUM):
         put(rr, col, sh, num, fmt_num)

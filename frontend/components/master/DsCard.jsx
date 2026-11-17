@@ -72,7 +72,7 @@ function Kit({ k, rows, rate, doc, code, onPick, setErr, basis, busy, onBasis, c
   )
 }
 
-export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove, doc, code, onPick, basis, busy, onBasis, canEdit, onDone, atStart = false }) {
+export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove, doc, code, onPick, basis, busy, onBasis, canEdit, onDone, onRefresh, mayRefresh = false, atStart = false }) {
   const [err, setErr] = useState('')
   const rate = (vat || 0) / 100
   const all = ds.groups.flatMap(g => g.rows)
@@ -87,7 +87,6 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{doc?.number || `ДС № ${ds.no}`}</span>
         {!!doc && !doc.edo_link && <SignBadge s={sign || 'none'} />}      {/* «уже в ЭДО» — свой статус ниже */}
-        {canEdit && !!doc && <SignActions code={code} target={{ annex_id: doc.annex_id }} sign={doc.sign} onDone={onDone} setErr={setErr} />}
         <span style={{ display: 'inline-flex', alignItems: 'center', background: bg, color: fg, borderRadius: 7, padding: '3px 9px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'center' }}>{label}</span>
         {!!doc?.services?.length && (
           <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center' }}>
@@ -109,6 +108,13 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
           <Link href={`/directory/annexes/${doc.annex_id}`} data-noexp onClick={e => e.stopPropagation()}
             style={{ ...lineBtn({ tone: 'accent', size: 'sm' }), alignSelf: 'center', textDecoration: 'none' }}>
             {doc.confirmed ? 'Открыть в конструкторе →' : 'Править ДС →'}</Link>
+        )}
+        {/* пересобрать ДС и комплекты по текущим данным — с «было → станет»; до «ждём 1С» включительно, дальше через возврат стадии (17.11.2026) */}
+        {canEdit && !!doc?.confirmed && !!onRefresh && (
+          <button type="button" data-noexp disabled={!mayRefresh} onClick={e => { e.stopPropagation(); onRefresh() }}
+            title={mayRefresh ? 'ДС и комплекты — по текущим данным сделок и справочников (бренд, реквизиты); сначала покажет, что поменяется'
+              : 'Обновить можно до «ждём 1С» включительно. Сначала «Вернуть стадию» на «ждём 1С», потом «Обновить»'}
+            style={{ ...lineBtn({ tone: 'secondary', size: 'sm' }), alignSelf: 'center', opacity: mayRefresh ? 1 : 0.45, cursor: mayRefresh ? 'pointer' : 'not-allowed' }}>Обновить</button>
         )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
           <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em' }}>{rub2(ds.net)}</span>
@@ -177,6 +183,12 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
           </div>
         )}
       </div>
+      {/* ответ клиента по ДС — в правом нижнем углу карточки (владелец 17.11.2026) */}
+      {canEdit && !!doc && !!doc.sign?.next?.length && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <SignActions code={code} target={{ annex_id: doc.annex_id }} sign={doc.sign} onDone={onDone} setErr={setErr} />
+        </div>
+      )}
     </div>
   )
 }

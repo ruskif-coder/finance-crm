@@ -20,6 +20,19 @@ from app.master_deal import doc_sign as DSG
 from app.master_deal import status as ST
 
 TARGETS = (ST.AGREE, ST.WAIT_1C, ST.ISSUE, ST.WAIT_PAY)
+# «Обновить» из карточки ДС — до «ждём 1С» включительно (владелец 17.11.2026: «на выставлении уже не доступно»); с «выставления»
+# документы у клиента — сначала явный возврат стадии на «ждём 1С», потом «Обновить».
+REFRESH_FROM = (ST.AGREE, ST.WAIT_CLOSE, ST.WAIT_1C)
+
+
+def may_refresh(m) -> bool:
+    return m.status in REFRESH_FROM
+
+
+def refresh_refusal(m) -> str:
+    """Почему «Обновить» нельзя и что делать (владелец 17.11.2026: «потом — через возврат на ждём 1С»)."""
+    return (f"Пакет на «{m.status}» — обновить можно до «{ST.WAIT_1C}» включительно. Сначала «Вернуть стадию» на «{ST.WAIT_1C}», "
+            "потом «Обновить»")
 EVENT = "возврат стадии"          # событие подписи документа, не состояние
 
 
@@ -129,12 +142,17 @@ def _kits_of(db: Session, m, annex_id: int) -> list:
 def refresh(db: Session, m, user) -> dict:
     """«Обновить из сделки»: ДС и комплекты пакета — по текущим данным сделок и справочников, номера ДС, даты и номера УПД
     прежние; правленные руками основания остаются. Только на «согласовании». → {ds: [номера]}."""
+    if m.status != ST.AGREE:
+        raise RevertError(409, "Обновить из сделки можно на «согласовании» — сначала верните пакет на эту стадию")
+    return _rebuild_all(db, m, user)
+
+
+def _rebuild_all(db: Session, m, user) -> dict:
+    """Пересборка ДС и комплектов пакета по текущим данным — без проверки стадии: её делают `refresh` и `preview`."""
     from app.annex_tpl import document as tpl_doc
     from app.master_deal import layout as LY
     from app.master_deal import to_annex as TA
     from app.models import Contract
-    if m.status != ST.AGREE:
-        raise RevertError(409, "Обновить из сделки можно на «согласовании» — сначала верните пакет на эту стадию")
     lay = LY.layout(db, m, with_src=True)
     own = _own_annexes(db, m)
     if len(own) != len(lay["ds"]) or any((a.kind == "addons") != (ds["kind"] == "addons") for a, ds in zip(own, lay["ds"])):
@@ -162,6 +180,37 @@ def refresh(db: Session, m, user) -> dict:
         done.append(a.number or f"ДС id {a.id}")
     db.flush()
     return {"ds": done}
+
+
+def _snapshot(db: Session, m) -> tuple:
+    """Печатаемое пакета: замороженные модели своих ДС и комплекты с основанием (копии — сравниваются после пересборки)."""
+    import copy
+    from app.master_deal import to_annex as TA
+    return ({a.id: (a.number, copy.deepcopy(a.blocks)) for a in _own_annexes(db, m)}, copy.deepcopy(TA.upds_of(db, m)))
+
+
+def preview(db: Session, m, user) -> dict:
+    """«Обновить из сделки» вхолостую (владелец 17.11.2026: показывать, что поменяется): пересборка в точке сохранения и откат.
+    → {changes: [{doc, where, was, now}], need_back: пакет не на «согласовании» — обновление вернёт его туда}."""
+    from app.annex_tpl import frozen_diff as FD
+    if not may_refresh(m):
+        raise RevertError(409, refresh_refusal(m))
+    before_ds, before_kits = _snapshot(db, m)
+    sp = db.begin_nested()
+    try:
+        _rebuild_all(db, m, user)
+        db.flush()
+        after_ds, after_kits = _snapshot(db, m)
+    except RevertError:
+        sp.rollback()
+        raise
+    sp.rollback()
+    changes = []
+    for aid, (number, model) in after_ds.items():
+        was = before_ds.get(aid, (number, None))[1]
+        changes += [{"doc": number or f"ДС id {aid}", **c} for c in FD.model_changes(was, model)]
+    changes += [{"doc": "Закрывающие", **c} for c in FD.kit_changes(before_kits, after_kits)]
+    return {"changes": changes, "need_back": m.status != ST.AGREE, "status": m.status}
 
 
 def agreed(db: Session, m, user=None) -> None:

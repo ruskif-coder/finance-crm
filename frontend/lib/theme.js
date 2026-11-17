@@ -11,6 +11,9 @@ export const THEMES = [
   { key: 'graphite', label: 'Графит', swatch: '#121314' },
   { key: 'pink', label: 'Розовая', swatch: '#F7ECF1' },
   { key: 'japandi', label: 'Джапанди', swatch: '#EEE7DA' },
+  // NAVY (хендофф docs/navy_theme.zip, 17.11.2026) — рядом с прежними, токены в styles/navy.css
+  { key: 'navy', label: 'Navy день', swatch: '#D8E1EA' },
+  { key: 'navy-dark', label: 'Navy ночь', swatch: '#2D3E50' },
 ]
 // Переключатель для всех (владелец 22.10.2026: «выложи переключатель тем»); до того был только в next dev.
 // Флаг оставлен, чтобы тему можно было снова спрятать одной строкой.
@@ -25,4 +28,11 @@ export function applyTheme(theme) {
   if (!THEME_ON) return
   document.documentElement.setAttribute('data-theme', theme)
   try { localStorage.setItem(THEME_KEY, theme) } catch { /* приватный режим — тема до перезагрузки */ }
+}
+
+/** Выбрать тему: сразу на странице и у пользователя на сервере (users.theme) — одна функция для меню профиля и переключателя
+ *  «День / Ночь» дашборда трафика (NAVY, 17.11.2026). Не сохранилось на сервере — в этом браузере тема всё равно останется. */
+export function saveTheme(theme) {
+  applyTheme(theme)
+  import('@/lib/http').then(({ default: api, auth }) => api.put('/auth/me/theme', { theme }, auth())).catch(() => {})
 }

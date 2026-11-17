@@ -129,7 +129,7 @@ const PlanCell = ({ p }) => (
   </span>
 )
 
-const BAR_BG = { act: 'var(--income)', ok: 'var(--income)', lag: 'var(--warning)', over: 'var(--accent)' }
+const BAR_BG = { act: 'var(--ok)', ok: 'var(--ok)', lag: 'var(--warning)', over: 'var(--accent)' }
 
 const ExecCell = ({ p, grp, flight }) => {
   const has = p.plan_show && p.fact_shows != null

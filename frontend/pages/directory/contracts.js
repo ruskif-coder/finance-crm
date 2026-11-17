@@ -115,7 +115,7 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
               <input value={newName} onChange={e => setNewName(e.target.value)}
                 style={{ flex: 1, padding: '5px 8px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '13px', outline: 'none' }} />
               <button onClick={handleCreate}
-                style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '13px', cursor: 'pointer' }}>Создать</button>
+                style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: '13px', cursor: 'pointer' }}>Создать</button>
             </div>
           )}
         </div>

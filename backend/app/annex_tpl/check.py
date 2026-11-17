@@ -135,6 +135,13 @@ def check(blocks) -> List[dict]:
             if len(b["text"]) > MAX_TEXT:
                 issues.append({"id": b["id"], "where": where, "text": f"текст длиннее {MAX_TEXT} знаков"})
             continue
+        if b.get("sys") == "table" and b.get("columns") is not None:
+            from app.annex_tpl import table_cols as TC
+            try:
+                TC.normalize(b["columns"])
+            except ValueError as e:
+                issues.append({"id": b["id"], "where": "Таблица МП · ", "text": str(e)})
+            continue
         if b.get("sys"):
             continue
         t = b.get("text")

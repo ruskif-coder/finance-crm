@@ -342,7 +342,7 @@ def get_me(current_user: User = Depends(get_current_user_any), db: Session = Dep
 
 
 class _ThemeIn(BaseModel):
-    theme: Literal["light", "dark", "graphite", "pink", "japandi"]
+    theme: Literal["light", "dark", "graphite", "pink", "japandi", "navy", "navy-dark"]   # NAVY — 17.11.2026
 
 
 @router.put("/me/theme")

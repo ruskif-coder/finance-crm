@@ -17,7 +17,7 @@ import { groupOf } from '@/lib/sitesModel.mjs'
 export const GROUPS = [
   { key: 'act', label: 'Требуют действия', bg: 'var(--warning)' },
   { key: 'lag', label: 'Отстают', bg: 'var(--warning-border)' },
-  { key: 'ok', label: 'В темпе', bg: 'var(--income-border)' },
+  { key: 'ok', label: 'В темпе', bg: 'var(--ok-border)' },
   { key: 'over', label: 'План выбран', bg: 'var(--accent-border)' },
 ]
 
@@ -51,7 +51,7 @@ export function underSource(placements, rkUnder) {
   return { total, mix, top, diverges }
 }
 
-const LEVEL_BG = { bad: 'var(--warning)', warn: 'var(--warning-border)', ok: 'var(--income-border)' }
+const LEVEL_BG = { bad: 'var(--warning)', warn: 'var(--warning-border)', ok: 'var(--ok-border)' }
 const LEVEL_TOP = { bad: 'var(--warning)', warn: 'var(--warning-border)', ok: 'var(--text-faint)' }
 
 /** «Расхождение с Weborama»: площадки по уровню сервера и топ-5 по модулю расхождения. */

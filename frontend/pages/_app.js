@@ -1,4 +1,5 @@
 import '../styles/globals.css'
+import '../styles/navy.css'      // темы «Navy день / ночь» (хендофф docs/navy_theme.zip, 17.11.2026) — после основных токенов
 import localFont from 'next/font/local'
 import Head from 'next/head'
 import { useEffect, useState, useRef } from 'react'

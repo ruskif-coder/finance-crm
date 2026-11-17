@@ -236,7 +236,7 @@ export default function Agencies() {
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <IconBtn title="Сбросить поиск" onClick={() => setSearch('')}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
             {mayEdit && (
-              <button style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}
+              <button style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '8px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}
                 onClick={() => formOpen ? cancelForm() : setShowForm(true)}>
                 {formOpen ? 'Отмена' : '+ Агентство'}
               </button>

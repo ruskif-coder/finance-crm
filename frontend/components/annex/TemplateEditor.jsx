@@ -9,6 +9,7 @@ import {
   SUBS, SUB_GROUPS, SUB_INFO, PROTECTED_GROUPS, PRE_DEFAULT, HEAD_DEFAULT, PLACE_DEFAULT, isKnownSub, numbering, zoneAt, canMove,
 } from '@/lib/annexTemplate.mjs'
 import { Segs } from '@/components/annex/TemplateSheet'
+import TableColumnsEditor from '@/components/annex/TableColumnsEditor'
 
 const CAP = { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ZN = {
@@ -43,13 +44,13 @@ function BlockRow({ b, i, blocks, num, on, onPick, onMove }) {
   const down = canMove(blocks, i, 1)
   const hint = 'через таблицу МП и системные блоки не перескакивает'
   return (
-    <div onClick={() => (!b.sys || SYS_TEXT[b.sys]) && onPick(b.id)}
-         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys && !SYS_TEXT[b.sys] ? 'default' : 'pointer' }}>
+    <div onClick={() => (!b.sys || SYS_TEXT[b.sys] || b.sys === 'table') && onPick(b.id)}
+         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 6px 6px 8px', borderRadius: 9, background: on ? 'var(--accent-tint)' : b.sys ? 'var(--bg-subtle)' : 'transparent', border: `1px solid ${on ? 'var(--accent-border)' : 'transparent'}`, cursor: b.sys && !SYS_TEXT[b.sys] && b.sys !== 'table' ? 'default' : 'pointer' }}>
       <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: b.sys ? 'var(--text-disabled)' : 'var(--accent)', flex: '0 0 28px' }}>{b.sys ? '—' : num[b.id]}</span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' }}>
         <span style={{ fontSize: 12, fontWeight: on ? 700 : 600, color: b.sys ? 'var(--text-faint)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.req ? '🔒 ' : ''}{b.title}</span>
         <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: b.sys ? 'var(--text-faint)' : zone === 'acc' ? 'var(--accent-fg)' : 'var(--violet-fg)' }}>
-          {b.sys ? (b.sys === 'table' ? 'граница зон' : SYS_TEXT[b.sys] ? (b.text ? 'текст шаблона' : 'стандартная · править') : 'системный') : ZN[zone][0]}
+          {b.sys ? (b.sys === 'table' ? (b.columns?.length ? 'граница зон · свои колонки' : 'граница зон · колонки') : SYS_TEXT[b.sys] ? (b.text ? 'текст шаблона' : 'стандартная · править') : 'системный') : ZN[zone][0]}
         </span>
       </span>
       {!b.sys && (
@@ -168,6 +169,7 @@ export function PointEditor({ blocks, sel, onPatch, onRemove }) {
   const i = blocks.findIndex(b => b.id === sel)
   const b = blocks[i]
   if (b && SYS_TEXT[b.sys]) return <SysTextEditor key={b.id} b={b} onPatch={onPatch} />
+  if (b && b.sys === 'table') return <TableColumnsEditor key={b.id} b={b} onPatch={onPatch} />
   if (!b || b.sys) {
     return <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Выберите текстовый пункт слева</div>
   }

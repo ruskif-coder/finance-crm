@@ -41,7 +41,7 @@ export const num = (v) => (v == null ? DASH : grp(v))
 export function pctTone(pct, pace) {
   if (pct == null) return 'var(--border-inner)'
   const exp = (pace || 0) * 100
-  if (pct >= exp - 8) return 'var(--income)'
+  if (pct >= exp - 8) return 'var(--ok)'
   if ((pace || 0) >= 1) return 'var(--danger)'
   if (pct >= exp - 20) return 'var(--warning-text)'
   return 'var(--danger)'
@@ -152,7 +152,7 @@ export const TONE = {
   // РК
   'ожидает сборки': ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--border-card)'],
   'готова': ['var(--bg-card)', 'var(--blue)', 'var(--blue)'],
-  'запущена': ['var(--income)', 'var(--on-accent)', 'var(--income)'],
+  'запущена': ['var(--ok)', 'var(--on-accent)', 'var(--ok)'],
   'пауза': ['var(--blue)', 'var(--on-accent)', 'var(--blue)'],
   'остановлена': ['var(--danger-tint)', 'var(--danger)', 'var(--danger-border)'],
   'окончена': ['var(--bg-subtle)', 'var(--text-primary)', 'var(--border-card)'],
@@ -164,8 +164,8 @@ export const TONE = {
   'ждёт сборки': ['var(--bg-subtle)', 'var(--text-muted)', 'var(--border-card)'],
   'у трафика': ['var(--bg-card)', 'var(--blue)', 'var(--blue)'],
   'у площадки': ['var(--bg-card)', 'var(--warning-text)', 'var(--warning-text)'],
-  'ждёт запуска': ['var(--bg-card)', 'var(--income)', 'var(--income)'],
-  'запущен': ['var(--income)', 'var(--on-accent)', 'var(--income)'],
+  'ждёт запуска': ['var(--bg-card)', 'var(--ok)', 'var(--ok)'],
+  'запущен': ['var(--ok)', 'var(--on-accent)', 'var(--ok)'],
   'завершена': ['var(--bg-subtle)', 'var(--text-primary)', 'var(--border-card)'],
 }
 
@@ -240,7 +240,8 @@ export const IcoBtn = ({ title, tone, disabled, onClick, children, size = 26, la
   <button type="button" onClick={disabled ? undefined : onClick} title={title} disabled={disabled} aria-label={label}
     style={{ width: size, height: size, flex: `0 0 ${size}px`, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center',
       justifyContent: 'center', borderRadius: 8, background: 'var(--bg-card)',
-      border: `1px solid ${disabled ? 'var(--border-inner)' : tone}`,
+      // обводка — как у соседней «Отчёт по РК» (владелец 17.11.2026), цвет действия — только у значка
+      border: `1px solid ${disabled ? 'var(--border-inner)' : 'var(--border-card)'}`,
       color: disabled ? 'var(--text-disabled)' : tone,
       cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1, padding: 0 }}>
     {children}
@@ -248,8 +249,8 @@ export const IcoBtn = ({ title, tone, disabled, onClick, children, size = 26, la
 )
 
 /* Кнопки «старт / пауза» и «стоп» — ОДНИ на весь трафик: строка РК, пульт РК, площадка, креатив, внешний запуск
-   (владелец 17.11.2026: «привести все кнопки пауза/стоп к единообразию»). Вид — обводка цветом действия и значок:
-   старт и пауза синие, стоп красный. Свою кнопку с «II» текстом или заливкой рядом не заводить. */
+   (владелец 17.11.2026: «привести все кнопки пауза/стоп к единообразию»). Вид — обводка как у «Отчёт по РК», цвет действия
+   у значка: старт и пауза синие, стоп красный. Свою кнопку с «II» текстом или заливкой рядом не заводить. */
 const GLYPH = { pause: 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z', play: 'M8 5v14l11-7z', stop: 'M6 6h12v12H6z' }
 const Glyph = ({ d }) => <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={d} /></svg>
 
@@ -366,7 +367,7 @@ const CARD_SKIN = {
    а не две карточки: две разошлись бы по числу строк на первой же правке. */
 // Цвет расхождения с Weborama — одна карта на дашборд трафика и карточку сделки.
 // Уровень считает сервер (`stat_sources.mismatch_level`), экран только красит.
-export const MISMATCH_FG = { ok: 'var(--income-fg)', warn: 'var(--warning-fg)', bad: 'var(--danger-fg)' }
+export const MISMATCH_FG = { ok: 'var(--ok-fg)', warn: 'var(--warning-fg)', bad: 'var(--danger-fg)' }
 
 const DayCardBody = ({ b, label }) => {
   const past = !!b.days_past

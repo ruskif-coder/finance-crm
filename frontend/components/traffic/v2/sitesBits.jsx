@@ -19,12 +19,12 @@ export const pct1 = (v) => (v == null ? DASH : `${Number(v).toFixed(1).replace('
 
 /** Цвет и насыщенность CTR против цели РК (8.2): не ниже цели — зелёным жирно, ниже 0,75 цели — жёлтым жирно. */
 export const CTR_STYLE = {
-  good: { color: 'var(--income-fg)', fontWeight: 700 },
+  good: { color: 'var(--ok-fg)', fontWeight: 700 },
   low: { color: 'var(--warning-fg)', fontWeight: 700 },
   mid: { color: 'var(--text-secondary)', fontWeight: 400 },
   none: { color: 'var(--text-disabled)', fontWeight: 400 },
 }
-export const CTR_BAR = { good: 'var(--income)', low: 'var(--warning)', mid: 'var(--text-faint)', none: 'transparent' }
+export const CTR_BAR = { good: 'var(--ok)', low: 'var(--warning)', mid: 'var(--text-faint)', none: 'transparent' }
 
 export const ctrTitle = (ctr, goal, empty = 'показов нет') => {
   if (ctr == null) return empty
@@ -41,8 +41,8 @@ export const Seg = ({ items, value, onPick }) => (
       return (
         <span key={key} onClick={() => onPick(key)} title={title}
           style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 8,
-            background: on ? 'var(--bg-card)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
-            color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: on ? 700 : 600,
+            background: on ? 'var(--hot)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
+            color: on ? 'var(--hot-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: on ? 700 : 600,
             cursor: 'pointer', whiteSpace: 'nowrap' }}>{label}</span>
       )
     })}
@@ -52,9 +52,9 @@ export const Seg = ({ items, value, onPick }) => (
 // Точка + слово статуса (8.2). Слова — боевые статусы площадки и креатива, цвета — по смыслу: крутит, мы
 // остановили, мяч у площадки, ещё не дошло, отключено.
 const DOT = {
-  'запущен': ['var(--income)', 'var(--text-secondary)'],
-  'согласован': ['var(--income)', 'var(--text-secondary)'],
-  'ждёт запуска': ['var(--income)', 'var(--text-secondary)'],
+  'запущен': ['var(--ok)', 'var(--text-secondary)'],
+  'согласован': ['var(--ok)', 'var(--text-secondary)'],
+  'ждёт запуска': ['var(--ok)', 'var(--text-secondary)'],
   'пауза': ['var(--accent)', 'var(--accent-fg)'],
   'у трафика': ['var(--accent)', 'var(--accent-fg)'],
   'у площадки': ['var(--warning)', 'var(--warning-fg)'],
@@ -114,8 +114,8 @@ export const SysCell = ({ s }) => (
     <span style={{ display: 'inline-flex', gap: 2 }}>
       {s.marks.map(m => (
         <span key={m.l} style={{ width: 5, height: 12, borderRadius: 1.5, boxSizing: 'border-box',
-          background: m.tone === 'ok' ? 'var(--income)' : m.tone === 'wait' ? 'var(--warning-tint)' : 'transparent',
-          border: `1px solid ${m.tone === 'ok' ? 'var(--income)' : m.tone === 'bad' ? 'var(--danger)'
+          background: m.tone === 'ok' ? 'var(--ok)' : m.tone === 'wait' ? 'var(--warning-tint)' : 'transparent',
+          border: `1px solid ${m.tone === 'ok' ? 'var(--ok)' : m.tone === 'bad' ? 'var(--danger)'
             : s.empty ? 'var(--text-disabled)' : 'var(--warning)'}` }} />
       ))}
     </span>

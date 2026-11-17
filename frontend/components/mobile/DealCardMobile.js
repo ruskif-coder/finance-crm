@@ -66,7 +66,7 @@ export default function DealCardMobile({
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={onBack} style={{ height: 34, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: UI }}>‹ Назад</button>
           {canEdit && (
-            <button onClick={onMove} style={{ height: 34, padding: '0 12px', borderRadius: 10, border: 'none', background: 'var(--income, #1F7D5E)', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Изменить стадию</button>
+            <button onClick={onMove} style={{ height: 34, padding: '0 12px', borderRadius: 10, border: 'none', background: 'var(--income, #1F7D5E)', color: 'var(--on-accent)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Изменить стадию</button>
           )}
         </div>
 

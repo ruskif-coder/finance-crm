@@ -270,7 +270,7 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
         model = jsonable_encoder(live(db, contract, version, annex, deal_ids)) if version else None
         live_model = True
     if not model:
-        return with_words({**doc, "kind": fixed_kind(annex, contract, None)})
+        return with_table(db, with_words({**doc, "kind": fixed_kind(annex, contract, None)}), None)
     texts = [b.get("text") for b in model.get("blocks", []) if not b.get("sys")]
     doc["body"] = texts[0] if texts else ""
     # Основание для закрывающих документов — в тот же словарь: файл «для клиента» печатает его после ДС (одним документом на согласование).
@@ -292,7 +292,19 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     for key, field in (("head", "head_text"), ("place", "place_text")):
         b = model.get(key) or {}
         doc[field] = DK.text_of(b, kind).strip() if b.get("custom") and (b.get("text") or "").strip() else None
-    return with_words(doc)
+    return with_table(db, with_words(doc), model)
+
+
+def with_table(db: Session, doc: dict, model: Optional[dict]) -> dict:
+    """Таблица МП для печати — колонками шаблона (17.11.2026), ячейки готовые: Word и PDF только рисуют (`table_cols.view`)."""
+    from app.annex_tpl import table_cols as TC
+    cols = TC.of_blocks((model or {}).get("blocks"))
+    names = TC.deal_names(db, doc.get("rows")) if any(c["key"] in TC.NAMED for c in cols) else {}
+    t = TC.view(db, doc, cols, names)
+    # колонки и имена — в документ: Word пересчитывает таблицу из ТЕХ ЖЕ строк, что лежат в документе (`annex_docx._table`)
+    doc["table_view"], doc["table_columns"], doc["table_names"] = t, cols, names
+    doc["missing"] = list(doc.get("missing") or []) + [m for m in t["missing"] if m not in (doc.get("missing") or [])]
+    return doc
 
 
 MP_MISMATCH = "сумма приложения "

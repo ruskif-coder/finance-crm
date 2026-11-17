@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { isAdmin as isAdminFn } from '@/lib/auth'
-import { num as mpNum, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
+import MpReadView, { CampaignParams, planLines } from '@/components/mediaplan/MpReadView'
 import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
@@ -10,7 +10,7 @@ import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import BriefFiles from '@/components/deal/BriefFiles'
 import MasterDocs, { masterDocsCount } from '@/components/deal/MasterDocs'
 import { dm, grp0 } from '@/lib/salesFormat'
-import { periodEnd } from '@/lib/dates'
+import { fmtDate, periodEnd } from '@/lib/dates'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import StageRequirements from '@/components/sales/StageRequirements'
@@ -432,8 +432,6 @@ function ordFacts(a) {
     ordEridFact(a.creatives),
   ]
 }
-const num = (v) => (v == null ? '—' : v.toLocaleString('ru-RU'))
-const dec = (v) => v.toFixed(2).replace('.', ',')
 const initials = (name) => (name ? name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() : '—')
 
 // время события в московском времени (UTC+3), как в Журнале действий
@@ -476,31 +474,7 @@ const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-car
 const CAPS = { fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const SUBCAPS = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }
 const MONEY_LBL = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
-/* Подписи инвентаря — дословно из конструктора медиаплана (INV_LABEL там же): одно
-   значение, названное на двух экранах по-разному, читается как два разных. */
-const INV_LABEL = { web: 'Web', app: 'IN-App', cross: 'Кросс-девайс' }
-
-/* Инвентарь стоит третьим, как в конструкторе. Он не украшение: у еФарма веб и
-   приложение идут ПО РАЗНОЙ ЦЕНЕ, и по нему же подставляются площадки на сборке
-   креативов — строка без него не проверяема. */
-const PL_GRID = '1.6fr 0.8fr 0.75fr 0.55fr 0.95fr 0.85fr 0.6fr 1.15fr 1.15fr'
-/* Пятнадцать колонок прогноза — ровно те же, что в конструкторе медиаплана.
-   Первая колонка ФИКСИРОВАННАЯ, а не долевая: при долевой имя строки забирало тем
-   больше места, чем шире экран, и цифрам его переставало хватать первыми. Ширина
-   посчитана под доступные ~1174 px левой колонки карточки (1520 − 280 правая − 14
-   зазор − 52 поля карточки): 130 + 15×62 + 15 зазоров по 7 = 1165. */
-const FC_GRID = '130px repeat(15, minmax(0, 1fr))'
-const FC_GAP = 7
-/* Единица измерения — в ЗАГОЛОВКЕ, а не в каждой ячейке. Повторённые в пятнадцати
-   строках «₽» и «%» съедали по два знака в колонке (≈13 px), из-за чего таблица не
-   помещалась и уезжала под прокрутку. В заголовке единица названа один раз и читается
-   так же однозначно. */
-const FC_HEADS = ['Частота', 'Охват', 'Показы', 'CTR %', 'Клики', 'CPM ₽', 'CPC ₽',
-                  'CPU ₽', 'CR %', 'Чеки', 'CPO ₽', 'Цена ₽', 'Доход ₽', 'ROI %', 'SOV %']
-/* Цифра не переносится: при нехватке места строка «1 234 567» ломалась пополам и
-   таблица начинала «дышать» по высоте. Лучше горизонтальная прокрутка на узком
-   экране, чем два яруса в каждой ячейке. */
-const FC_NUM = { fontFamily: MONO, fontSize: 11, textAlign: 'right', whiteSpace: 'nowrap' }
+// Таблицы медиаплана (размещение, прогноз, доп. услуги, таргетинг) — components/mediaplan/MpReadView.
 
 export default function DealCard() {
   const router = useRouter()
@@ -704,48 +678,14 @@ export default function DealCard() {
 
   const mpRows = (mp && mp.rows) || []
   const hasMp = mpRows.length > 0
-  const lines = mpRows.map(r => {
-    // Сумма и показы — общей арифметикой строки (lib/mpRow), не своей копией: у Фикса
-    // и Пакета в объёме лежат штуки закупки, и показы туда не годятся.
-    const net = rowNet(r.model, r.volume, r.unit_price, r.discount)
-    const fc = r.forecast || {}
-    const nn = mpNum          // понимает десятичную запятую: аккаунт вводит «0,8»
-    const imp = rowImp(r.model, r.volume, fc)
-    const freq = nn(fc.freq)
-    const reach = freq > 0 ? imp / freq : 0
-    const clicks = rowClicks(r.model, r.volume, fc)
-    return {
-      position: r.position, format: r.format, model: r.model,
-      volume: r.volume || 0, imp,
-      inventory: r.inventory,
-      unit: r.unit_price || 0, discount: r.discount || 0,
-      net, gross: withVat(net), freq, reach, clicks,
-      // Вторая половина прогноза — та, что раньше на карточку не доезжала. Формулы
-      // повторяют конструктор МП дословно (components/mediaplan/MediaPlanBuilder.jsxx,
-      // блок «Прогнозные показатели»): расхождение в них означало бы, что карточка и
-      // медиаплан показывают разный прогноз по одним и тем же данным.
-      cr: nn(fc.cr) / 100,
-      checks: clicks * (nn(fc.cr) / 100),
-      price: nn(fc.price),
-      sov: nn(fc.sov),
-    }
-  })
-  const withRoi = (r) => {
-    const revenue = r.checks * r.price
-    const gross = r.gross
-    return { revenue, roi: gross > 0 ? (revenue - gross) / gross : NaN }
-  }
+  // Строки и прогноз — общей функцией с расхлопом реестра МП (components/mediaplan/MpReadView): формулы прогноза
+  // повторяют конструктор, и копия здесь была бы третьим местом, где они могут разойтись.
+  const lines = planLines(mp, VAT)
   const tVol = lines.reduce((a, r) => a + r.volume, 0)      // объём: показы, штуки, клики
   const tImp = lines.reduce((a, r) => a + (r.imp || 0), 0)  // только показы
   const tNet = lines.reduce((a, r) => a + r.net, 0)
   const mpExtras = (mp && mp.extras) || []
   const extrasTotal = mpExtras.reduce((a, e) => a + (e.total || 0), 0)
-  const MODE_LBL = { full: '100 %', half: '50 %', bonus: 'бонус', fix: 'фикс ₽' }
-  // Таргетинг МП: {группа: [значения]} → плоские строки для вывода
-  const TG_TITLES = { audience: 'Аудитория', buys: 'Покупают', interests: 'Интересы', behavior: 'Поведение', competitors: 'Конкуренты' }
-  const mpTargeting = Object.entries((mp && mp.targeting) || {})
-    .map(([g, arr]) => ({ group: TG_TITLES[g] || g, value: (arr || []).map(v => (typeof v === 'string' ? v : v && v.value)).filter(Boolean).join(' · ') }))
-    .filter(x => x.value)
 
   const wrap = { minHeight: 'calc(100vh - 56px)', boxSizing: 'border-box', padding: '26px 32px 40px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'flex-start', fontFamily: UI, color: 'var(--text-primary)' }
 
@@ -765,7 +705,8 @@ export default function DealCard() {
   const meta = [d.agency, svc, d.period, d.account_manager && `аккаунт ${d.account_manager}`, d.sales_rep && `продавец ${d.sales_rep}`].filter(Boolean).join(' · ')
   const metaShort = [d.agency, svc, d.period].filter(Boolean).join(' · ')
   const stageDays = daysInStage(d.stage_since)
-  const dateVal = (x) => (x ? String(x).slice(0, 10) : '')
+  // Старт — стоп РК текстом: на карточке ничего не правится, поля ввода «только для чтения» читались как редактируемые.
+  const rkDates = d.period_from ? `${fmtDate(d.period_from)} — ${fmtDate(periodEnd(d.period_from, d.period_to))}` : null
 
   // Цепочка стадий = все нетерминальные стадии каталога по порядку этапов.
   // Терминалы («не случилась» / «сорвалась») в цепочку не входят — они её обрывают.
@@ -1109,40 +1050,16 @@ export default function DealCard() {
                 {() => (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
-              {/* параметры кампании */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <span style={CAPS}>Параметры кампании</span>
-                  <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <span style={SUBCAPS}>Старт — стоп РК</span>
-                    <input type="date" defaultValue={dateVal(d.period_from)} readOnly style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)', outline: 'none' }} />
-                    <span style={{ color: 'var(--border-hover)' }}>→</span>
-                    <input type="date" defaultValue={dateVal(d.period_to)} readOnly style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)', outline: 'none' }} />
-                  </span>
-                </div>
-                {/* Сводка сделки — плашкой, как «Услуги от» справа: те же подложка,
-                    рамка и скругление. Это реквизиты, а не сам медиаплан, и без визуальной
-                    границы они читались как первые строки размещения. */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'repeat(2,auto)', gridAutoFlow: 'column', gap: '0 28px',
-                  background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
-                  borderRadius: 12, padding: '4px 14px 8px' }}>
-                  {params.map(([label, value], i) => (
-                    <span key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '6px 0', borderTop: i % 2 ? '1px solid var(--border-row)' : 'none' }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
-                      <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 600, textAlign: 'right', color: value ? 'var(--text-primary)' : 'var(--text-faint)' }}>{value || '—'}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-
               {/* Медиаплана нет — вся зона медиаплана становится кнопкой создания.
-                  Есть МП — обычный блок размещения из его строк. */}
+                  Есть МП — те же блоки, что в расхлопе реестра медиапланов, одним компонентом. */}
               {!mp && mpFailed ? (
                 <div style={{ padding: '14px 0', color: 'var(--danger-fg)', fontSize: 13 }}>
                   Медиаплан сделки не загрузился — обновите страницу. Создавать новый не нужно:
                   он у сделки есть.
                 </div>
               ) : !mp ? (
+              <>
+              <CampaignParams params={params} dates={rkDates} />
                 <div onClick={canEdit ? () => router.push(`/accounts/mp/new?deal=${d.id}`) : undefined}
                   title={canEdit ? 'Создать медиаплан — реквизиты и бриф подставятся из сделки' : 'Медиаплана нет'}
                   style={{
@@ -1165,140 +1082,10 @@ export default function DealCard() {
                       : 'Размещение и прогноз появятся, когда его создадут'}
                   </span>
                 </div>
+              </>
               ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7, padding: '14px 0', borderTop: '1px solid var(--border-card)', borderBottom: '1px solid var(--border-card)' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-                  {/* Только заголовок: реквизиты, версия, статус, гео и период уже стоят
-                      выше — в шапке блока и в плашке параметров. Дубль читался как
-                      отдельная информация, хотя ничего не добавлял. */}
-                  <span style={CAPS}>Размещение</span>
-                  <a href={`/accounts/mp/${mp.id}`} style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>Открыть МП →</a>
-                </div>
-                {!hasMp && <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '6px 0' }}>В медиаплане пока нет строк размещения.</div>}
-                {hasMp && (
-                <div style={{ overflowX: 'auto' }}>
-                  <div style={{ minWidth: 640 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, paddingBottom: 7, borderBottom: '1px solid var(--border-card)', ...SUBCAPS }}>
-                      <span>Позиция</span><span>Формат</span><span>Инвентарь</span><span>Модель</span><span style={{ textAlign: 'right' }}>Объём</span><span style={{ textAlign: 'right' }}>Цена/ед.</span><span style={{ textAlign: 'right' }}>Скидка</span><span style={{ textAlign: 'right' }}>До НДС</span><span style={{ textAlign: 'right' }}>С НДС</span>
-                    </div>
-                    {lines.map((l, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25 }}>{l.position}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{l.format}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 10.5,
-                          color: l.inventory ? 'var(--text-secondary)' : 'var(--text-faint)',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {INV_LABEL[l.inventory] || '—'}
-                        </span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>{l.model}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>{num(l.volume)}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{dec(l.unit)} ₽</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>{Math.round((l.discount || 0) * 100)} %</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, textAlign: 'right' }}>{rub(l.net)}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textAlign: 'right' }}>{rub(l.gross)}</span>
-                      </div>
-                    ))}
-                    <div style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, alignItems: 'center', paddingTop: 7 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого</span>
-                      <span /><span /><span />
-                      <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, textAlign: 'right' }}>{num(tVol)}</span>
-                      <span /><span />
-                      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, textAlign: 'right' }}>{rub(tNet)}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)', textAlign: 'right' }}>{rub(withVat(tNet))}</span>
-                    </div>
-                  </div>
-                </div>
-                )}
-              </div>
-              )}
-
-              {/* прогнозные показатели — из медиаплана */}
-              {hasMp && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-                  <span style={CAPS}>Прогнозные показатели</span>
-                  <span style={SUBCAPS}>гарантируются показы и CPM</span>
-                </div>
-                {/* Прокрутка осталась страховкой для узких экранов, но минимум опущен
-                    до реально нужного: на мониторе, под который свёрстана карточка,
-                    таблица помещается целиком и полоса не появляется. */}
-                <div style={{ overflowX: 'auto' }}>
-                  <div style={{ minWidth: 1165 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: FC_GAP, paddingBottom: 7, borderBottom: '1px solid var(--border-card)', ...SUBCAPS }}>
-                      <span>Строка</span>
-                      {FC_HEADS.map(h => (
-                        <span key={h} style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{h}</span>
-                      ))}
-                    </div>
-                    {lines.map((r, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: FC_GAP, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
-                        <span title={r.position} style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25, overflow: 'hidden' }}>{r.position}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.freq ? num(r.freq) : '—'}</span>
-                        <span style={FC_NUM}>{r.reach ? num(Math.round(r.reach)) : '—'}</span>
-                        {/* ПОКАЗЫ (r.imp), а не объём строки: у Фикса и Пакета объём это
-                            штуки закупки — CPM от них выходил в миллионы рублей. */}
-                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{r.imp ? num(r.imp) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.imp && r.clicks ? dec(r.clicks / r.imp * 100) : '—'}</span>
-                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{r.clicks ? num(Math.round(r.clicks)) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.imp ? dec(r.net / r.imp * 1000) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.clicks ? dec(r.net / r.clicks) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.reach ? dec(r.net / r.reach) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.cr ? dec(r.cr * 100) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.checks ? num(Math.round(r.checks)) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.checks ? dec(r.net / r.checks) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.price ? dec(r.price) : '—'}</span>
-                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{withRoi(r).revenue ? dec(withRoi(r).revenue) : '—'}</span>
-                        <span style={{ ...FC_NUM, fontWeight: 700,
-                          color: withRoi(r).roi >= 0 ? 'var(--income)' : 'var(--dot-overdue)' }}>
-                          {Number.isFinite(withRoi(r).roi)
-                            ? `${withRoi(r).roi >= 0 ? '+' : '−'}${Math.abs(withRoi(r).roi * 100).toFixed(0)}` : '—'}
-                        </span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.sov ? dec(r.sov) : '—'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              )}
-
-              {/* доп. услуги — из медиаплана */}
-              {mpExtras.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 14, borderTop: '1px solid var(--border-card)' }}>
-                <span style={CAPS}>Дополнительные услуги</span>
-                {mpExtras.map((e, i) => (
-                  <span key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 14, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 600 }}>{e.name || '—'}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{e.period || ''}{e.mode ? ` · ${MODE_LBL[e.mode] || e.mode}` : ''}</span>
-                    <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)', textDecoration: (e.total || 0) < (e.price || 0) ? 'line-through' : 'none' }}>{rub(e.price || 0)}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--income)', minWidth: 96, textAlign: 'right' }}>{rub(e.total || 0)}</span>
-                    {/* цена с НДС — от «итого» (что в счёте), а не от прайса */}
-                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(withVat(e.total || 0))}</span>
-                  </span>
-                ))}
-                <span style={{ display: 'flex', alignItems: 'baseline', gap: 12, paddingTop: 7 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого доп. услуги · входят в сумму сделки</span>
-                  <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--income)' }}>{rub(extrasTotal)}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(withVat(extrasTotal))}</span>
-                </span>
-              </div>
-              )}
-
-              {/* бриф · таргетинг — из медиаплана */}
-              {mpTargeting.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 14, borderTop: '1px solid var(--border-card)' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-                  <span style={CAPS}>Бриф · таргетинг</span>
-                  <span style={{ marginLeft: 'auto', ...SUBCAPS }}>из медиаплана</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
-                  {mpTargeting.map((t, i) => (
-                    <span key={i} style={{ display: 'flex', gap: 12, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
-                      <span style={{ flex: '0 0 84px', fontFamily: MONO, fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', lineHeight: 1.45 }}>{t.group}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{t.value}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
+                <MpReadView plan={mp} vatPct={VAT != null ? VAT * 100 : null} params={params} dates={rkDates}
+                  openHref={`/accounts/mp/${mp.id}`} />
               )}
                 </div>
                 )}

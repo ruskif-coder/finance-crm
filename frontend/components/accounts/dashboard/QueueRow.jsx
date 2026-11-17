@@ -72,7 +72,7 @@ function Cta({ row, canEdit, onAction }) {
 
 const URGENCY_HINT = { overdue: 'Просрочено', today: 'Срок — сегодня' }
 
-export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAction, onSnooze, onUnsnooze, copyCode = false }) {
+export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAction, onSnooze, onUnsnooze, copyCode = false, joined = false }) {
   const tone = ROW_TONE[r.urgency] || ROW_TONE.normal
   const startIn = r.period_from && today ? daysBetween(r.period_from, today) : null
   const endIn = r.period_to && today ? daysBetween(r.period_to, today) : null
@@ -86,7 +86,13 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
   return (
     <div onClick={() => onToggle(r)}
       style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center', boxSizing: 'border-box',
-        padding: '7px 10px', borderBottom: '1px solid var(--border-row)', borderRadius: 9, cursor: 'pointer',
+        padding: '7px 10px', cursor: 'pointer',
+        // Раскрытая строка и расхлоп — один блок (владелец 17.11.2026: «расхлоп продолжением строки, а не отдельный бабл»):
+        // у строки рамка и верхние скругления, низ продолжает расхлоп (`DealNow`, layout row)
+        // `joined` — только «Мои сделки»; старый дашборд рисует под строкой свою карточку
+        border: open && joined ? '1px solid var(--border-card)' : '1px solid transparent',
+        borderBottom: open && joined ? 'none' : '1px solid var(--border-row)',
+        borderRadius: open && joined ? '12px 12px 0 0' : 9,
         // Строку не красим (дизайн 22.10.2026) — срочность квадратом у кода, как в дашборде трафика.
         background: open ? 'var(--bg-tint)' : 'transparent',
         transition: 'background-color 150ms ease' }}>

@@ -1,0 +1,182 @@
+/* Темы NAVY — «Navy день» (data-theme="navy") и «Navy ночь» (data-theme="navy-dark"), хендофф docs/navy_theme.zip
+   (17.11.2026; владелец: добавить рядом с прежними пятью, а не вместо «Дня» и «Ночи»). Блоки хендоффа ДОСЛОВНО, только
+   селекторы перенесены с :root / html[data-theme="dark"] на свои темы — прежние темы не задеваются. Подключается после
+   globals.css (pages/_app.js). Правила ролей цвета — в архиве, RULES_NAVY.md.
+   Палитра: Blue Black #101820 · Steel Navy #2D3E50 · Cool Blue Gray #7C8EA3 · Pale Steel #D8E1EA · Cloud White #F7FAFC */
+
+/* Роли NAVY во ВСЕХ темах (17.11.2026, дашборд трафика по хендоффу design_handoff_traffic_navy): экран пишет роли (`--ok`, `--hot`,
+   `--signal`…), а в прежних пяти темах они указывают на их же цвета — там вид не меняется. Темы NAVY ниже переопределяют их своими. */
+:root {
+  --ok:var(--income); --ok-tint:var(--income-tint); --ok-border:var(--income-border); --ok-fg:var(--income-fg);
+  --attn:var(--warning); --attn-tint:var(--warning-tint); --attn-border:var(--warning-border); --attn-fg:var(--warning-fg);
+  --bad:var(--danger); --bad-tint:var(--danger-tint); --bad-border:var(--danger-border); --bad-fg:var(--danger-fg);
+  --money:var(--income); --money-tint:var(--income-tint); --money-border:var(--income-border); --money-fg:var(--income-fg);
+  --hot:var(--bg-card); --hot-hover:var(--bg-subtle); --hot-fg:var(--accent-fg);
+  --signal:var(--warning); --signal-hover:var(--warning); --signal-fg:var(--on-accent); --signal-num:var(--warning-fg);
+  --signal-tint:var(--warning-tint); --signal-border:var(--warning-border); --signal-text:var(--warning-fg);
+}
+
+/* Роли графиков (17.11.2026: бары и графики ДДС не слушались тем — красились хексами lib/tokens.js). В прежних темах — те же цвета,
+   что были в T: поступления --income, списания нейтральный серый, факт --accent, прогноз --accent-soft. */
+:root { --chart-in:var(--income); --chart-out:#8B93A6; --chart-fact:var(--accent); --chart-forecast:var(--accent-soft) }
+[data-theme="navy"] { --chart-in:var(--money); --chart-out:#7C8EA3; --chart-fact:var(--accent); --chart-forecast:var(--accent-border) }
+[data-theme="navy-dark"] { --chart-in:var(--money); --chart-out:#A2B1C1; --chart-fact:var(--accent); --chart-forecast:var(--accent-border) }
+
+/* Наш слой совместимости: токены кода, которых в хендоффе нет, — по ролям NAVY (как сделано для ночи и графита в globals.css) */
+[data-theme^="navy"] {
+  --warning-bg:var(--attn-tint); --danger-bg:var(--bad-tint); --income-bg:var(--money-tint); --warning-text:var(--attn-fg);
+  --success:var(--money); --empty-bg:var(--attn-tint); --empty-border:var(--attn-border); --empty-text:var(--attn-fg);
+  --blue:var(--accent); --blue-soft:var(--accent-border); --blue-tint:var(--accent-tint); --accent-solid:var(--hot);
+  --accent-soft:var(--accent-border); --accent-wash:var(--bg-tint); --accent-mid:#7C8EA3; --accent-pale:#B4C2D0;
+  --bg-header:var(--bg-card); --bg-pick:var(--accent-tint); --bg-dim:var(--bg-subtle);
+  --dot-income:var(--money); --dot-overdue:var(--bad); --dot-current-dz:var(--attn);
+}
+[data-theme="navy-dark"] {
+  --accent-mid:#A2B1C1; --accent-pale:#557089; --violet:#B7A6EE; --violet-fg:#CFC3F5; --violet-tint:#3E3A5C; --violet-border:#5C557F;
+  --traffic:#7FD3D0; --traffic-tint:#2B4E52; --traffic-soft:#3F6E72; --expense:#A2B1C1; --mixed:#B7A6EE; --mixed-tint:#3E3A5C;
+  --muted-fill:#557089; --dot-wait:#4A5F76; --dot-expense:#AFC0D1; --empty-num:#8CC0E8;
+  --cell-fact:#2C5248; --cell-mid:#3A4E64; --cell-low:#5A3832;
+  --scrim:rgba(8,14,20,.6); --overlay:var(--scrim); --shadow-float:0 10px 30px rgba(8,14,20,.45);
+  --shadow-modal:0 1px 3px rgba(8,14,20,.45), 0 24px 64px rgba(8,14,20,.5);
+  --logo: image-set(url(/nav/logo-night-h16.png) 1x, url(/nav/logo-night-h32.png) 2x, url(/nav/logo-night-h48.png) 3x);
+}
+
+/* ── дальше — хендофф ── */
+[data-theme="navy"] {
+  --bg-canvas:#DCE3EA; --bg-card:#F7FAFC; --bg-subtle:#EDF2F6; --bg-tint:#EEF2F7; --border-card:#D3DCE5; --border-inner:#E1E8EE;
+  --border-row:#E9EEF3; --border-hover:#A9B7C6; --text-primary:#101820; --text-secondary:#2D3E50; --text-muted:#5E6F82;
+  --text-faint:#7C8EA3; --text-cap:#5E6F82; --text-disabled:#B4C0CD; --accent:#2D3E50; --accent-hover:#101820; --accent-tint:#D8E1EA;
+  --accent-border:#B4C2D0; --accent-fg:#2D3E50; --ok:#6A8299; --ok-tint:#E7EDF3; --ok-border:#CBD7E2; --ok-fg:#2D3E50;
+  --attn:#3F7FB0; --attn-tint:#E0ECF6; --attn-border:#BCD4E9; --attn-fg:#215A86; --bad:#E0664F; --bad-tint:#FBE6E1;
+  --bad-border:#F2C6BC; --bad-fg:#A33C2A; --money:#2F8C74; --money-tint:#DDF0EA; --money-border:#B8DFD2; --money-fg:#1F6653;
+  --hot:#101820; --hot-hover:#2D3E50; --hot-fg:#F7FAFC; --signal:#F5821F; --signal-hover:#E3700F; --signal-fg:#101820;
+  --signal-num:#E06A0C; --signal-tint:#FDEBDA; --signal-border:#F5C59A; --signal-text:#9A4A08; --shadow-card:0 1px 2px rgba(16,24,32,.05), 0 10px 28px rgba(16,24,32,.07);
+  --glass-bg:rgba(247,250,252,.6); --glass-bd:rgba(255,255,255,.75); --page-bg:linear-gradient(160deg, #EEF2F6 0%, #D8E1EA 45%, #C9D4DF 100%);
+  /* совместимость со старым каноном — старые имена ссылаются на новые роли */
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+  --warning:var(--attn); --warning-tint:var(--attn-tint); --warning-border:var(--attn-border); --warning-fg:var(--attn-fg);
+  --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
+  color-scheme:light;
+}
+[data-theme^="navy"] [data-tone="dark"] {
+  --bg-card:#16202B; --bg-subtle:#1E2A36; --bg-tint:#1B2631; --border-card:#2A3744; --border-inner:#263340; --border-row:#212D39;
+  --border-hover:#425366; --text-primary:#F7FAFC; --text-secondary:#D8E1EA; --text-muted:#9DACBC; --text-faint:#7C8EA3;
+  --text-cap:#8B9BAC; --text-disabled:#495A6B; --accent:#D8E1EA; --accent-hover:#F7FAFC; --accent-tint:#2D3E50; --accent-border:#45586D;
+  --accent-fg:#D8E1EA; --ok:#3B5068; --ok-tint:#1E2A36; --ok-border:#2F3F50; --ok-fg:#B3C2D2; --attn:#5E9AC8; --attn-tint:#172A3B;
+  --attn-border:#24425E; --attn-fg:#9CC4E4; --bad:#EE7E69; --bad-tint:#3A211C; --bad-border:#5A3229; --bad-fg:#F5A797;
+  --money:#4FB797; --money-tint:#163129; --money-border:#22493C; --money-fg:#8AD6BD; --hot:#F7FAFC; --hot-hover:#D8E1EA;
+  --hot-fg:#101820; --signal:#FF8A2A; --signal-hover:#FF9C4A; --signal-fg:#101820; --signal-num:#FF9A45; --signal-tint:#3E2814;
+  --signal-border:#6E4421; --signal-text:#FFBE85; --shadow-card:0 1px 2px rgba(0,0,0,.25), 0 12px 30px rgba(16,24,32,.28);
+  /* совместимость со старым каноном — старые имена ссылаются на новые роли */
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+  --warning:var(--attn); --warning-tint:var(--attn-tint); --warning-border:var(--attn-border); --warning-fg:var(--attn-fg);
+  --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
+}
+
+/* NAVY Dark */
+[data-theme="navy-dark"] {
+  --bg-canvas:#1B2733; --bg-card:#2A3A4B; --bg-subtle:#34465A; --bg-tint:#304254; --border-card:#3D5065; --border-inner:#394B5F;
+  --border-row:#33455A; --border-hover:#7C8EA3; --text-primary:#F7FAFC; --text-secondary:#E3EAF1; --text-muted:#B7C4D1;
+  --text-faint:#A2B1C1; --text-cap:#B0BECB; --text-disabled:#6A7D91; --accent:#F7FAFC; --accent-hover:#FFFFFF; --accent-tint:#4A5F76;
+  --accent-border:#8FA3B8; --accent-fg:#F7FAFC; --ok:#AFC0D1; --ok-tint:#3A4E64; --ok-border:#557089; --ok-fg:#E3EAF1;
+  --attn:#8CC0E8; --attn-tint:#2F5373; --attn-border:#4D7699; --attn-fg:#CFE5F6; --bad:#F59A86; --bad-tint:#5A3832;
+  --bad-border:#80514A; --bad-fg:#FFD0C5; --money:#7FD3B6; --money-tint:#2C5248; --money-border:#467A6A; --money-fg:#C9F0E2;
+  --hot:#F7FAFC; --hot-hover:#D8E1EA; --hot-fg:#101820; --signal:#FF8A2A; --signal-hover:#FF9C4A; --signal-fg:#101820;
+  --signal-num:#FF9A45; --signal-tint:#3E2814; --signal-border:#6E4421; --signal-text:#FFBE85; --shadow-card:0 1px 2px rgba(0,0,0,.18), 0 12px 30px rgba(8,14,20,.22);
+  --glass-bg:rgba(216,225,234,.12); --glass-bd:rgba(247,250,252,.18); --page-bg:linear-gradient(160deg, #3A4C5F 0%, #26364A 45%, #182330 100%);
+  /* совместимость со старым каноном — старые имена ссылаются на новые роли */
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+  --warning:var(--attn); --warning-tint:var(--attn-tint); --warning-border:var(--attn-border); --warning-fg:var(--attn-fg);
+  --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
+  color-scheme:dark;
+}
+[data-theme="navy-dark"] [data-tone="dark"] {
+  --bg-card:#16202B; --bg-subtle:#1E2A36; --bg-tint:#1B2631; --border-card:#2A3744; --border-inner:#263340; --border-row:#212D39;
+  --ok:#4A6280; --accent:#D8E1EA; --accent-tint:#2D3E50; --accent-border:#45586D;
+  /* совместимость со старым каноном — старые имена ссылаются на новые роли */
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+  --warning:var(--attn); --warning-tint:var(--attn-tint); --warning-border:var(--attn-border); --warning-fg:var(--attn-fg);
+  --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
+}
+[data-theme="navy-dark"] [data-tone="light"] {
+  --bg-card:#E3EAF1; --bg-subtle:#D8E1EA; --bg-tint:#DCE4EC; --border-card:#C3CFDB; --border-inner:#CBD6E0; --border-row:#D2DCE5;
+  --border-hover:#8FA3B8; --text-primary:#101820; --text-secondary:#2D3E50; --text-muted:#4E6074; --text-faint:#6A7D91;
+  --text-cap:#4E6074; --text-disabled:#9FB0C2; --accent:#2D3E50; --accent-hover:#101820; --accent-tint:#C9D5E1; --accent-border:#9FB0C2;
+  --accent-fg:#2D3E50; --ok:#4A6280; --ok-tint:#D2DCE6; --ok-border:#B4C3D2; --ok-fg:#2D3E50; --attn:#2F6E9E; --attn-tint:#CFE1EF;
+  --attn-border:#A9C8E2; --attn-fg:#1D4E74; --bad:#C9533D; --bad-tint:#F3D9D2; --bad-border:#E5B6AB; --bad-fg:#8E3523;
+  --money:#2F8C74; --money-tint:#DDF0EA; --money-border:#B8DFD2; --money-fg:#1F6653; --hot:#101820; --hot-hover:#2D3E50;
+  --hot-fg:#F7FAFC; --signal:#F5821F; --signal-hover:#E3700F; --signal-fg:#101820; --signal-num:#E06A0C; --signal-tint:#FDEBDA;
+  --signal-border:#F5C59A; --signal-text:#9A4A08; --glass-bg:rgba(227,234,241,.94); --glass-bd:rgba(255,255,255,.55);
+  /* совместимость со старым каноном — старые имена ссылаются на новые роли */
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+  --warning:var(--attn); --warning-tint:var(--attn-tint); --warning-border:var(--attn-border); --warning-fg:var(--attn-fg);
+  --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
+}
+
+/* общее для обеих схем */
+[data-theme^="navy"] body { background:var(--page-bg) fixed; color:var(--text-primary) }
+[data-theme^="navy"] [data-tone] { background:var(--bg-card); color:var(--text-primary) }
+[data-theme^="navy"] .navy-glass { background:var(--glass-bg); -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); border:1px solid var(--glass-bd); box-shadow:var(--shadow-card); border-radius:20px }
+[data-theme^="navy"] .navy-glass > * { background:transparent !important; border:none !important; box-shadow:none !important }   /* своя карточка внутри стекла — прозрачна (дашборд трафика, 17.11.2026) */
+[data-theme^="navy"], [data-theme^="navy"] body { transition:background-color 300ms ease }
+[data-theme="navy-dark"] input, [data-theme="navy-dark"] select, [data-theme="navy-dark"] textarea { background:var(--bg-subtle); color:var(--text-primary) }
+
+/* Маячок у плашки «данные устарели» (дашборд трафика, 17.11.2026); без анимации при «уменьшить движение» */
+@keyframes tp-beacon { 0%, 100% { box-shadow:0 0 0 0 var(--signal-border) } 50% { box-shadow:0 0 0 4px transparent } }
+.tp-beacon { animation:tp-beacon 1.6s ease-in-out infinite }
+@media (prefers-reduced-motion: reduce) { .tp-beacon { animation:none } [data-theme^="navy"], [data-theme^="navy"] body { transition:none } }
+[data-theme^="navy"] .tp-widgets-sum { border-radius:999px }   /* свёрнутые виджеты дашборда трафика — тёмная «пилюля» (17.11.2026) */
+
+/* Текст на заливке акцентом — контрастный к акценту в каждой зоне (17.11.2026: в «Navy ночь» акцент светлый, и белый текст
+   кнопок сливался с заливкой — «+ Новая операция» в Операциях). */
+[data-theme="navy"] { --on-accent:#F7FAFC }
+[data-theme^="navy"] [data-tone="dark"] { --on-accent:#101820 }
+[data-theme="navy-dark"] { --on-accent:#101820 }
+[data-theme="navy-dark"] [data-tone="dark"] { --on-accent:#101820 }
+[data-theme="navy-dark"] [data-tone="light"] { --on-accent:#F7FAFC }
+
+/* Дашборд трафика (макет design_handoff_traffic_navy): денег на экране нет, «норма» — сталь. Макет так и делает: `--income` =
+   роль «ок» на всём экране и в его тёмных/светлых блоках. Общие части (ячейки темпа, плашки статусов) поэтому не дают зелёный. */
+[data-theme^="navy"] .tp-dash, [data-theme^="navy"] .tp-dash [data-tone] {
+  --income:var(--ok); --income-tint:var(--ok-tint); --income-border:var(--ok-border); --income-fg:var(--ok-fg);
+}
+
+/* Флажки — своим видом, а не системным синим браузера (17.11.2026, галочки «скрины» в таблице площадок дашборда трафика;
+   владелец: «вот такого оттенка, как плашка „запущена“, с белой пиктограммой»): заливка --ok, галочка — цветом текста на ней
+   (днём белая, ночью тёмная — как подпись «запущена»). Для всех экранов в темах NAVY; переключатели — цветом --ok. */
+[data-theme^="navy"] input[type="radio"] { accent-color:var(--ok) }
+[data-theme^="navy"] input[type="checkbox"] {
+  -webkit-appearance:none; appearance:none; flex:0 0 auto; width:16px; height:16px; margin:0; box-sizing:border-box;
+  display:inline-grid; place-content:center; vertical-align:middle; cursor:pointer;
+  border:1px solid var(--border-hover); border-radius:4px; background:var(--bg-card); transition:background-color 120ms ease, border-color 120ms ease;
+}
+[data-theme^="navy"] input[type="checkbox"]::before {
+  content:""; width:10px; height:10px; background:var(--navy-check-fg, #F7FAFC); transform:scale(0); transition:transform 120ms ease;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.6 2.4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.6 2.4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+[data-theme^="navy"] input[type="checkbox"]:checked { background:var(--ok); border-color:var(--ok) }
+[data-theme^="navy"] input[type="checkbox"]:checked::before { transform:scale(1) }
+[data-theme^="navy"] input[type="checkbox"]:indeterminate { background:var(--ok); border-color:var(--ok) }
+[data-theme^="navy"] input[type="checkbox"]:indeterminate::before { transform:scale(1); -webkit-mask:none; mask:none; height:2px; border-radius:1px }
+[data-theme^="navy"] input[type="checkbox"]:disabled { opacity:.5; cursor:default }
+[data-theme^="navy"] input[type="checkbox"]:focus-visible { outline:2px solid var(--accent-border); outline-offset:1px }
+/* цвет галочки = цвет подписи на плашке «запущена» (dashboardKit: заливка --ok, текст --on-accent) */
+[data-theme="navy"] { --navy-check-fg:#F7FAFC }
+[data-theme="navy-dark"] { --navy-check-fg:#101820 }
+[data-theme^="navy"] [data-tone="dark"] { --navy-check-fg:#F7FAFC }
+[data-theme="navy-dark"] [data-tone="light"] { --navy-check-fg:#F7FAFC }
+/* На дашборде трафика флажок стоит в ряду с кнопками старт/пауза/стоп — тот же размер и рамка, что у них (IcoBtn: 26 px, 8 px,
+   рамка --border-card; 17.11.2026) */
+[data-theme^="navy"] .tp-dash input[type="checkbox"] { width:26px; height:26px; border-radius:8px; border-color:var(--border-card) }
+[data-theme^="navy"] .tp-dash input[type="checkbox"]:checked { border-color:var(--ok) }
+[data-theme^="navy"] .tp-dash input[type="checkbox"]::before { width:12px; height:12px }
+
+/* «Операции»: фон строки таблицы — переменной, ею же красятся закреплённые ячейки левой группы (страница ставит её строке
+   по выделению/правке, наведение — .op-row:hover). Значение по умолчанию — карточка. */
+.op-row { --op-row:var(--bg-card) }
+
+/* Ссылки без своего цвета (17.11.2026: коды РК и «все … РК в сводном отчёте» у виновников были синими браузера) — как в макетах NAVY:
+   акцентом, без подчёркивания, подчёркивание при наведении. :where() — нулевой вес: любая ссылка со своим цветом (класс, style) сильнее. */
+:where([data-theme^="navy"]) a { color:var(--accent); text-decoration:none }
+:where([data-theme^="navy"]) a:hover { color:var(--accent-hover); text-decoration:underline }

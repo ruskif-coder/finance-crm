@@ -164,7 +164,7 @@ function CheckCard({ c, mayEdit, mayDelete, onPreview, onDelete }) {
         borderTop: '1px solid var(--border-inner)' }}>
         <button type="button" disabled={!c.sandbox_url} onClick={() => onPreview(c)}
           title={c.sandbox_url ? 'Посмотреть баннер в песочнице' : 'Песочница не настроена'}
-          style={{ ...ACT, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700,
+          style={{ ...ACT, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700,
             opacity: c.sandbox_url ? 1 : 0.5 }}>
           <Icon><circle cx="12" cy="12" r="3" /><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /></Icon>
           Посмотреть
@@ -341,7 +341,7 @@ export default function CreativeCheck() {
                   title={!file ? 'Выберите файл' : !title.trim() ? 'Укажите название' : undefined}
                   style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, height: 38,
                     padding: '0 18px', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700,
-                    color: '#fff', fontFamily: UI, whiteSpace: 'nowrap',
+                    color: 'var(--on-accent)', fontFamily: UI, whiteSpace: 'nowrap',
                     background: canSubmit ? 'var(--accent)' : 'var(--text-disabled)',
                     cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
                   {busy && <Cube variant="spinner" size={18} />}

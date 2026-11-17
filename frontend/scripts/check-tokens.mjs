@@ -21,9 +21,9 @@ import { join, relative } from 'node:path'
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const DIRS = ['pages', 'components', 'lib']
 
-// Объявления берём из globals.css. Сначала вырезаем УПОТРЕБЛЕНИЯ `var(--x`, иначе они
-// сами попадут в список объявленных, и гейт станет всегда зелёным.
-const css = readFileSync(join(ROOT, 'styles/globals.css'), 'utf8')
+// Объявления берём из globals.css и navy.css (роли NAVY и их запасные значения для прежних тем — 17.11.2026). Сначала
+// вырезаем УПОТРЕБЛЕНИЯ `var(--x`, иначе они сами попадут в список объявленных, и гейт станет всегда зелёным.
+const css = ['styles/globals.css', 'styles/navy.css'].map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n')
 const declared = new Set(
   [...css.replace(/var\(\s*--[\w-]+/g, '').matchAll(/(--[\w-]+)\s*:/g)].map(m => m[1])
 )

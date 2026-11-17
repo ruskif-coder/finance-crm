@@ -66,6 +66,8 @@ export default function RkRow({ r, open, mayEdit, mayReport, onToggle, onStart, 
     <div id={`rk-row-${r.id}`} onClick={onToggle} title={`${open ? 'Свернуть РК' : 'Развернуть РК'} · трафик: ${r.traffic || 'не назначен'}`}
       style={{ display: 'grid', gridTemplateColumns: RK_GRID, gap: 12, alignItems: 'center', boxSizing: 'border-box', height: 50,
         padding: '0 14px 0 18px', cursor: 'pointer', background: open ? 'var(--bg-tint)' : 'var(--bg-card)',
+        // раскрытая карточка без overflow:hidden (поповеры), поэтому верхние углы строки скругляем сами — как у карточки
+        borderRadius: '18px 18px 0 0',
         borderBottom: `1px solid ${open ? 'var(--border-card)' : 'transparent'}` }}>
       <span style={{ fontSize: 8, color: 'var(--text-faint)' }}>{open ? '▴' : '▾'}</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)' }}
@@ -78,8 +80,9 @@ export default function RkRow({ r, open, mayEdit, mayReport, onToggle, onStart, 
         <span style={{ display: 'flex', gap: 5, overflow: 'hidden' }}>
           {chipsOf(r, tone).map(c => (
             <span key={c.t} title={c.hint} style={{ display: 'inline-flex', alignItems: 'center', height: 16, padding: '0 6px', borderRadius: 5,
-              background: c.danger ? 'var(--danger-tint)' : 'var(--warning-tint)', border: `1px solid ${c.danger ? 'var(--danger-border)' : 'var(--warning-border)'}`,
-              fontSize: 10, fontWeight: 600, color: c.danger ? 'var(--danger-fg)' : 'var(--warning-fg)', whiteSpace: 'nowrap' }}>{c.t}</span>
+              background: c.signal ? 'var(--signal-tint)' : c.danger ? 'var(--bad-tint)' : 'var(--attn-tint)',
+              border: `1px solid ${c.signal ? 'var(--signal-border)' : c.danger ? 'var(--bad-border)' : 'var(--attn-border)'}`,
+              fontSize: 10, fontWeight: 600, color: c.signal ? 'var(--signal-text)' : c.danger ? 'var(--bad-fg)' : 'var(--attn-fg)', whiteSpace: 'nowrap' }}>{c.t}</span>
           ))}
         </span>
       </span>

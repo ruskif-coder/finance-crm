@@ -10,6 +10,11 @@
 4. на показы поправок нет.
 5. (16.11.2026) расчётный охват: ещё два числа дня из диапазонов настроек — повторные заходы в рамках недели и пересечение
    аудитории площадок, %; фиксируются так же разово. Охват дня = уники × (1 − повторы) × (1 − пересечение).
+6. (17.11.2026) частота из медиаплана — потолок: в МП «до 3х» на флайт, а отчёт по неделям показывал 4,4 (база настроек 4 ± 30 %).
+   База частоты дня у РК с частотой в МП — доля FLIGHT_SHARE от неё (`day_base`); число дня выбирается и ФИКСИРУЕТСЯ так же
+   разово (владелец: «посчитались и лежат») — выгрузка только читает. Дни, зафиксированные до правки от базы 4,0, переписаны
+   один раз скриптом `scripts/2026-11-17_report_coef_freq_from_mp.py` с сохранением их поправки. Страховкой охват недели
+   не меньше «показы ÷ частота МП» (`week_reach`). Нет частоты в МП — база настроек, как раньше.
 """
 from __future__ import annotations
 
@@ -21,6 +26,22 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 Key = Tuple[int, date]
+
+# База частоты дня — доля частоты флайта из МП. Неделя ≈ частота дня ÷ (1 − повторы)(1 − пересечение); при худших
+# значениях настроек (база +30 %, повторы 16 %, пересечение 8 %) 0,55 × 1,3 ÷ 0,773 = 0,93 — ниже частоты МП.
+FLIGHT_SHARE = 0.55
+
+
+def day_base(settings: dict, mp_freq) -> float:
+    """База частоты дня: частота МП × FLIGHT_SHARE; нет частоты в МП — база настроек SIMB ID."""
+    f = float(mp_freq or 0)
+    return round(f * FLIGHT_SHARE, 4) if f > 0 else float(settings.get("freq_base") or 0)
+
+
+def week_reach(reach: float, shows: float, mp_freq) -> float:
+    """Охват периода не меньше «показы ÷ частота МП»: частота в отчёте не выше заложенной в медиаплане."""
+    f = float(mp_freq or 0)
+    return max(float(reach or 0), float(shows or 0) / f) if f > 0 else float(reach or 0)
 
 
 def _pick(base: float, dev_pct: float, digits: int) -> float:
@@ -46,8 +67,9 @@ def _row(r) -> dict:
             "repeat_pct": float(r[4]) if r[4] is not None else None, "overlap_pct": float(r[5]) if r[5] is not None else None}
 
 
-def ensure(db: Session, keys: Iterable[Key], settings: dict) -> Dict[Key, dict]:
-    """Коэффициенты для пар-дней: недостающие выбираются и фиксируются, имеющиеся — как есть.
+def ensure(db: Session, keys: Iterable[Key], settings: dict, mp_freq=None) -> Dict[Key, dict]:
+    """Коэффициенты для пар-дней: недостающие выбираются и фиксируются, имеющиеся — как есть. `mp_freq` — частота МП
+    сделки: база частоты новых дней (`day_base`); уже зафиксированные дни она не трогает.
     Возвращает {(креатив, день): {freq, ctr_pct, repeat_pct, overlap_pct}}."""
     keys = sorted(set(keys))
     if not keys:
@@ -64,7 +86,7 @@ def ensure(db: Session, keys: Iterable[Key], settings: dict) -> Dict[Key, dict]:
             VALUES (:c, :d, :f, :t, :r, :o, now())
             ON CONFLICT ON CONSTRAINT uq_report_coef_day DO NOTHING"""),
             [{"c": cid, "d": day,
-              "f": max(0.01, _pick(settings["freq_base"], settings["freq_dev_pct"], 2)),
+              "f": max(0.01, _pick(day_base(settings, mp_freq), settings["freq_dev_pct"], 2)),
               "t": max(0.0, _pick(settings["ctr_base"], settings["ctr_dev_pct"], 4)),
               "r": _range(settings, "repeat_min", "repeat_max"), "o": _range(settings, "overlap_min", "overlap_max")}
              for cid, day in missing])
@@ -85,7 +107,7 @@ def ensure(db: Session, keys: Iterable[Key], settings: dict) -> Dict[Key, dict]:
 
 
 def derive(shows: int, coef: dict) -> dict:
-    """Производные от реальных показов пары за день."""
+    """Производные от реальных показов пары за день — от зафиксированных чисел, ничего не пересчитывая."""
     shows = int(shows or 0)
     uniques = round(shows / coef["freq"]) if coef["freq"] else 0
     return {"uniques": uniques, "clicks": round(shows * coef["ctr_pct"] / 100),

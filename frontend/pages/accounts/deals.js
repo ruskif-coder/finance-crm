@@ -154,7 +154,7 @@ export default function MyDeals() {
     setSortKey(null); setSortDir('asc')
   }
 
-  const rowProps = { today: data?.today, canEdit, onToggle: toggleRow, onAction: runAction, onSnooze: setSnoozeFor, onUnsnooze: unsnooze, copyCode: true }
+  const rowProps = { today: data?.today, canEdit, onToggle: toggleRow, onAction: runAction, onSnooze: setSnoozeFor, onUnsnooze: unsnooze, copyCode: true, joined: true }
   // Расхлоп — по экранам 03–05 хендоффа v5: «Сейчас» с виджетом стадии, «История», «Медиаплан и документы» + «Деньги».
   const renderDetail = (r) => (
     <DealNow row={r} deal={detail?.id === r.id ? detail.deal : null} canEdit={canEdit} onAction={runAction} onSnooze={setSnoozeFor} onReload={load} />)

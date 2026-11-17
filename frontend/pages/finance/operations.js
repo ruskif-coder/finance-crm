@@ -1,10 +1,10 @@
 import MonthInput from '@/components/MonthInput'
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import { pageAccess } from '@/lib/pageGuard'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover, Z, UnderlineTabs } from '@/components/salesTableKit'
+import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover, Z, UnderlineTabs, btn, primaryBtn } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const OperationsMobile = dynamic(() => import('@/components/mobile/OperationsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -19,6 +19,8 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import PayPlanSummary, { DupTag, FilterChip } from '@/components/operations/PayPlanSummary'
 import OperationPanelHost from '@/components/operations/OperationPanelHost'
+import OpsSummary, { QUICK_LABEL } from '@/components/operations/OpsSummary'
+import { RegistryFooter } from '@/components/accounts/mpRegistry/controls'
 import { downloadFile } from '@/lib/download'
 import useLatest from '@/lib/useLatest'
 import { shortAnnexNumber } from '@/lib/annexNumber'
@@ -28,7 +30,7 @@ const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТ�
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 const BANK_COLOR = { 'АльфаБанк': 'var(--bank-alfa)', 'ОПТ Банк': 'var(--bank-opt)', 'Совкомбанк': 'var(--bank-sovkom)', 'Наличные': 'var(--bank-cash)' }
 const VAT_OPTIONS = [0, 5, 7, 10, 20, 22]
-const PAGE_SIZES = [50, 100, 300, 500]
+const PAGE_SIZES = [100, 300, 500]          // хендофф «Операции · NAVY»: по умолчанию 100
 // «Незаполненные» — как в реестре сделок: выбранные дыры складываются по ИЛИ,
 // потому что человек ищет, что дозаполнить, а не строку без всего сразу.
 const GAP_FIELDS = [
@@ -38,13 +40,14 @@ const GAP_FIELDS = [
   { value: 'bank', label: 'нет банка' },
 ]
 // статус-чип: фон / текст / точка
+// фон / текст / точка / рамка — по хендоффу «Операции · NAVY» (17.11.2026): оплачено — деньги, планы — нейтральные, ожидает — внимание
 const STATUS_CHIP = {
-  'ОПЛАЧЕНО': ['#E6F5EF', '#1F7D5E', 'var(--income)'],
-  'ПЛАН ОПЛАТ': ['#EEF1FE', '#3A50BE', 'var(--dot-expense)'],
-  'ПЛАН ПОСТУПЛЕНИЙ': ['var(--warning-tint)', T.warningText, 'var(--dot-current-dz)'],
-  'ОЖИДАЕТ': ['var(--warning-tint)', T.warningText, 'var(--dot-current-dz)'],
+  'ОПЛАЧЕНО': ['var(--money-tint)', 'var(--money-fg)', 'var(--money)', 'var(--money-border)'],
+  'ПЛАН ОПЛАТ': ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)', 'var(--border-card)'],
+  'ПЛАН ПОСТУПЛЕНИЙ': ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--accent)', 'var(--border-card)'],
+  'ОЖИДАЕТ': ['var(--attn-tint)', 'var(--attn-fg)', 'var(--attn)', 'var(--attn-border)'],
 }
-const statusChip = (s) => STATUS_CHIP[s] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)']
+const statusChip = (s) => STATUS_CHIP[s] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)', 'var(--border-card)']
 
 const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '')
 // с копейками (для сумм выбранного): всегда 2 знака
@@ -101,6 +104,8 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
 // Единый набор полей формы (создание/редактирование)
 // Обводка иконок. На модульном уровне, а не внутри Operations2: её использует и
 // OpFields, объявленный здесь же снаружи, — из компонента он её не видит.
+// Кнопки шапки и форм — кит (17.11.2026, «привести все кнопки к единому стилю»): высота 32, как у кнопок-значков рядом
+const HEAD_BTN = { height: 32, padding: '0 14px', display: 'inline-flex', alignItems: 'center', boxSizing: 'border-box', whiteSpace: 'nowrap' }
 const IcoStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
 const DOC_ICON = <svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
@@ -126,7 +131,7 @@ function DocCell({ op, open, onToggle, onOpenFile }) {
   const link = op.document_link
   const files = op.files || []
   const total = (link ? 1 : 0) + files.length
-  if (!total) return <span style={{ color: '#C3C9D8' }}>—</span>
+  if (!total) return <span style={{ color: 'var(--text-disabled)' }}>—</span>
 
   // Ссылка остаётся ссылкой: средний щелчок, «открыть в новой вкладке» и копирование
   // адреса работают только у настоящего <a>. Проверка схемы та же, что была: адрес в
@@ -290,18 +295,38 @@ const fmtSize = (n) => !n ? '' : n < 1024 ? n + ' Б' : n < 1024 * 1024 ? Math.r
 // Четвёртый элемент — ключ сортировки на сервере (см. _sort_map в operations.py).
 // Он есть у каждой колонки, кроме «Действий»: там сортировать нечего. «ДЗ» сортируется
 // по сроку оплаты — метка (просрочка/текущая/план) это и есть возраст долга.
+// Хендофф «Операции · NAVY» (17.11.2026): одна «Сумма» со знаком вместо «Поступления» и «Списания»; «Контрагент» — сразу за ней
+// (единственная перестановка); левая группа до «Контрагента» включительно закреплена при прокрутке вбок (`STICKY`).
 const COLS = [
-  ['sel', '26px', ''], ['date', '78px', 'Дата', 'date'], ['status', '112px', 'Статус', 'status'], ['dz', '36px', 'ДЗ', 'dz'],
-  ['income', '98px', 'Поступление', 'income'], ['expense', '98px', 'Списание', 'expense'], ['bank', '96px', 'Банк', 'bank'],
-  ['period', '78px', 'Период', 'period'], ['article', '122px', 'Статья', 'article'], ['counterparty', '1.2fr', 'Контрагент', 'counterparty'],
-  ['vat', '46px', 'НДС', 'vat_rate'], ['vat_amount', '84px', 'НДС сумма', 'vat_fact'], ['ds_num', '92px', '№ ДС', 'ds_num'], ['invoice', '112px', '№ счёта', 'invoice'],
-  ['invoice_date', '88px', 'Дата счёта', 'invoice_date'], ['doc', '32px', 'Док', 'doc'], ['description', '0.9fr', 'Описание', 'description'], ['actions', '72px', 'Действия'],
+  ['sel', '16px', ''], ['date', '74px', 'Дата', 'date'], ['status', '136px', 'Статус', 'status'], ['dz', '22px', 'ДЗ', 'dz'],
+  ['amount', '118px', 'Сумма', 'amount'], ['counterparty', '260px', 'Контрагент', 'counterparty'],
+  ['bank', '110px', 'Банк', 'bank'], ['period', '80px', 'Период', 'period'], ['article', '120px', 'Статья', 'article'],
+  ['vat', '48px', 'НДС', 'vat_rate'], ['vat_amount', '92px', 'НДС сумма', 'vat_fact'], ['ds_num', '104px', '№ ДС', 'ds_num'], ['invoice', '96px', '№ счёта', 'invoice'],
+  ['invoice_date', '82px', 'Дата счёта', 'invoice_date'], ['doc', '40px', 'Док', 'doc'], ['description', 'minmax(180px,1fr)', 'Описание', 'description'], ['actions', '88px', 'Действия'],
 ]
-const GRID = COLS.map(c => c[1]).join(' ')
-const RIGHT = new Set(['income', 'expense', 'vat', 'vat_amount'])
+const STICKY = ['sel', 'date', 'status', 'dz', 'amount', 'counterparty']
+const GAP = 10
+const ROW_PAD = 8
+const RIGHT = new Set(['amount', 'vat', 'vat_amount'])
 // Клик по строке открывает боковую панель операции (владелец 09.11.2026); эти ячейки живут своими кликами
 const NO_PANEL = new Set(['sel', 'doc', 'actions'])
-const PAD_LEFT = { ds_num: 14 }       // колонка после прижатой вправо суммы — отступ и у шапки, и у ячейки
+const PAD_LEFT = { counterparty: 6, ds_num: 14 }       // колонка после прижатой вправо суммы — отступ и у шапки, и у ячейки
+
+/** ДЗ планового поступления (хендофф «Операции · NAVY»): в срок — пустое кольцо, срок прошёл (в пределах GRACE_DAYS) — точка
+ *  внимания с ореолом, просрочка — точка провала с ореолом. Правила — receivables.py; подсказка — по сроку с сервера. */
+const DZ_LOOK = { future: ['var(--ok)', false], current: ['var(--attn)', true], overdue: ['var(--bad)', true] }
+function DzMark({ status, due }) {
+  const look = DZ_LOOK[status]
+  if (!look) return <span style={{ color: 'var(--text-disabled)' }}>—</span>
+  const d = due ? new Date(`${String(due).slice(0, 10)}T00:00:00`) : null
+  const days = d ? Math.round((d - new Date(new Date().toDateString())) / 86400000) : null
+  const dd = due ? `${String(due).slice(8, 10)}.${String(due).slice(5, 7)}` : ''
+  const tip = days == null ? '' : status === 'future' ? `в срок · до ${dd} · ${days} дн`
+    : status === 'current' ? `срок был ${dd} · ${-days} дн назад, до просрочки ${30 + days} дн` : `просрочено ${-days} дн · срок был ${dd}`
+  const [c, filled] = look
+  return <span title={tip} style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', boxSizing: 'border-box',
+    background: filled ? c : 'transparent', border: `1.5px solid ${c}`, boxShadow: filled ? `0 0 0 3px color-mix(in srgb, ${c} 22%, transparent)` : 'none' }} />
+}
 
 export default function Operations2() {
   const router = useRouter()
@@ -344,7 +369,9 @@ export default function Operations2() {
   const [updatedAt, setUpdatedAt] = useState('')
 
   const [page, setPage] = useState(0)
-  const [pageSize, setPageSize] = useState(300)
+  const [pageSize, setPageSize] = useState(100)
+  const [quick, setQuick] = useState(null)            // плитка итогов: in | out | over | empty
+  const [summary, setSummary] = useState(null)
   const [sortCol, setSortCol] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -390,16 +417,31 @@ export default function Operations2() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [docMenu])
+  // Своя прокрутка таблицы (хендофф, раздел 3): карточка занимает оставшуюся высоту окна, прокручивается таблица, а не страница
+  const scrollRef = useRef(null)
+  const [tableH, setTableH] = useState(480)
+  useLayoutEffect(() => {
+    const fit = () => { const el = scrollRef.current; if (el) setTableH(Math.max(320, window.innerHeight - el.getBoundingClientRect().top - 52 - 28)) }
+    fit()
+    window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
+  })
   const toggleCol = (k) => setHidden(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); localStorage.setItem('ops2_hidden', JSON.stringify([...n])); return n })
   const visibleCols = COLS.filter(([k]) => !hidden.has(k))
   const gridT = visibleCols.map(c => c[1]).join(' ')
+  const stickLeft = {}
+  { let x = ROW_PAD; for (const [k, w] of visibleCols) { if (!STICKY.includes(k)) break; stickLeft[k] = x; x += parseInt(w, 10) + GAP } }
+  const lastStick = visibleCols.filter(([k]) => k in stickLeft).slice(-1)[0]?.[0]
+  const stick = (k, bg) => (k in stickLeft ? { position: 'sticky', left: stickLeft[k], zIndex: 1, background: bg,
+    // фон ячейки закрывает и зазор справа — под закреплённой группой не просвечивает прокрученное; у последней — разделитель
+    boxShadow: k === lastStick ? '1px 0 0 0 var(--border-card)' : `${GAP}px 0 0 0 ${bg}` } : null)
 
   const tok = () => localStorage.getItem('token')
 
   useEffect(() => {
     if (!tok()) { router.push('/login'); return }
     try { setPerms(getPermissions()) } catch (e) {}
-    try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h)) } catch (e) {}
+    try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h.flatMap(k => (k === 'income' || k === 'expense' ? (h.includes('income') && h.includes('expense') ? ['amount'] : []) : [k])))) } catch (e) { /* нет настройки — все колонки */ }
     // Справочники формы. Один `.catch(() => {})` на оба обнулял ОБА списка при
     // падении любого: выпадашки пустели, и это читалось как «в базе ничего нет».
     Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
@@ -439,6 +481,10 @@ export default function Operations2() {
       if (focusOp) params.append('ids', focusOp)
       if (payPlan) params.append('pay_plan', 'true')
       if (payPlan && planF) planF.ids.forEach(id => params.append('ids', id))
+      // итоги — по тем же фильтрам, без плитки (числа плиток не прыгают, когда одна нажата); список — с плиткой
+      const sumParams = new URLSearchParams(params); ['skip', 'limit', 'sort_col', 'sort_dir', 'ids'].forEach(k => sumParams.delete(k))
+      if (!focusOp) api(tok()).get(`/operations/summary?${sumParams}`).then(r => { if (fresh()) setSummary(r.data) }).catch(() => { if (fresh()) setSummary(null) })
+      if (quick) params.append('quick', quick)
       if (payPlan) api(tok()).get('/operations/pay-plan/summary').then(r => { if (fresh()) setPlanSum(r.data) }).catch(() => {})
       const res = await api(tok()).get(`/operations/?${params}`)
       if (!fresh()) return
@@ -457,7 +503,7 @@ export default function Operations2() {
   // делал только фильтр «Незаполненные»: на третьей странице выбранный статус с сорока
   // строками запрашивал skip=600 и показывал пустую таблицу при «40 записей», а
   // выделение переживало фильтр и «Удалить» задевало невидимые строки (6.M1, 6.M2).
-  const filtersKey = JSON.stringify([fStatus, fBank, fArticle, fCp, fPeriod, fOpType, fGaps, dateFrom, dateTo, planF && [planF.kind, planF.value]])
+  const filtersKey = JSON.stringify([fStatus, fBank, fArticle, fCp, fPeriod, fOpType, fGaps, dateFrom, dateTo, planF && [planF.kind, planF.value], quick])
   const lastFilters = useRef(filtersKey)
   useEffect(() => {
     if (!tok()) return
@@ -481,7 +527,7 @@ export default function Operations2() {
   const panelAt = rows.findIndex(o => o.id === panelId)
 
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
-  const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setFGaps([]); setPage(0) }
+  const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setFGaps([]); setQuick(null); setPage(0) }
 
   // Приведение формы к типам бэкенда: пустые строки в id/датах → null, иначе
   // pydantic (Optional[int]/Optional[date]) отвергает '' → 422 «ошибка сохранения».
@@ -527,6 +573,7 @@ export default function Operations2() {
       fOpType.forEach(t => params.append('op_type', t))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
       if (payPlan) params.append('pay_plan', 'true')
+      if (quick) params.append('quick', quick)            // плитка итогов — файл совпадает с экраном
       const res = await api(tok()).get(`/operations/export?${params}`, { responseType: 'blob' })
       const url = URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
@@ -662,8 +709,6 @@ export default function Operations2() {
   }
   const title = `${payPlan ? 'План оплат' : 'Операции'} · Финансы | SIMB-AD ERP`
 
-  const pageIncome = rows.reduce((s, o) => s + (o.income || 0), 0)
-  const pageExpense = rows.reduce((s, o) => s + (o.expense || 0), 0)
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const cpName = Object.fromEntries(counterparties.map(c => [c.id, c.name]))
   const artName = Object.fromEntries(articles.map(a => [a.id, a.name]))
@@ -678,11 +723,12 @@ export default function Operations2() {
     switch (key) {
       case 'sel': return <input type="checkbox" checked={!!sel[o.id]} onClick={e => toggleSel(o, e.shiftKey)} onChange={() => {}} title="Shift — выбрать диапазон" style={{ width: 14, height: 14, cursor: 'pointer' }} />
       case 'date': return <span style={{ fontFamily: MONO }}>{fmtDate(o.date) || '—'}</span>
-      case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}{!payPlan && o.pay_plan && <span title="В плане оплат" style={{ marginLeft: 4, color: 'var(--accent)' }}>· в плане</span>}</span> }
-      case 'dz': { const rs = o.receivable_status; const meta = { overdue: ['Просрочка', 'var(--dot-overdue)'], current: ['Текущая', 'var(--dot-current-dz)'], future: ['План', 'var(--accent)'] }[rs]; return meta ? <span title={meta[0]} style={{ width: 10, height: 10, borderRadius: '50%', background: meta[1], display: 'inline-block' }} /> : <span style={{ color: '#C3C9D8' }}>—</span> }
-      case 'income': return o.income ? <span title={fmt2(o.income) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--income)' }}>{fmt(o.income)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
-      case 'expense': return o.expense ? <span title={fmt2(o.expense) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(o.expense)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
-      case 'bank': return o.bank ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: BANK_COLOR[o.bank] || 'var(--text-faint)' }} />{o.bank}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'status': { const [bg, fg, dot, bd] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, border: `1px solid ${bd}`, borderRadius: 8, padding: '2px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}{!payPlan && o.pay_plan && <span title="В плане оплат" style={{ marginLeft: 4, color: 'var(--accent)' }}>· в плане</span>}</span> }
+      case 'dz': return <DzMark status={o.receivable_status} due={o.receivable_due} />
+      case 'amount': return o.income ? <span title={`поступление ${fmt2(o.income)} ₽`} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--money-fg)' }}>+{fmt(o.income)}</span>
+        : o.expense ? <span title={`списание ${fmt2(o.expense)} ₽`} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>−{fmt(o.expense)}</span>
+        : <span style={{ color: 'var(--text-disabled)' }}>—</span>
+      case 'bank': return o.bank ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: BANK_COLOR[o.bank] || 'var(--text-faint)' }} />{o.bank}</span> : <span style={{ color: 'var(--text-disabled)' }}>—</span>
       case 'period': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.period || '—'}</span>
       case 'article': return <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artName[o.article_id] || o.article || '—'}</span>
       case 'counterparty': {
@@ -700,13 +746,16 @@ export default function Operations2() {
                 <svg width="12" height="12" viewBox="0 0 24 24" style={IcoStroke}><path d="M7 17 17 7" /><path d="M9 7h8v8" /></svg>
               </a>
             ) : null}
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: payPlan && planSum?.stub_ids?.includes(o.id) ? 'var(--danger-fg)' : undefined }}>{cpn}</span>
+            {o.no_counterparty
+              // контрагент-заглушка «ПЛАН» или пусто — «без контрагента»; такие операции в плитке «Незаполненные» (хендофф NAVY)
+              ? <span title="Нет контрагента — операция в «Незаполненных»" style={{ fontWeight: 600, fontStyle: 'italic', color: 'var(--attn-fg)' }}>без контрагента</span>
+              : <span title={cpn} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: payPlan && planSum?.stub_ids?.includes(o.id) ? 'var(--danger-fg)' : undefined }}>{cpn}</span>}
             {payPlan && <DupTag tag={planSum?.tags?.[o.id]} />}
           </span>
         )
       }
-      case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
-      case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: 'var(--text-disabled)' }}>—</span>}</span>
+      case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: 'var(--text-disabled)' }}>—</span>
       // отступ слева: правый край «НДС сумма» иначе упирается в номер ДС (владелец 09.11.2026: «всё сливается»)
       case 'ds_num': return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, paddingLeft: PAD_LEFT.ds_num }}>
         <span style={{ fontFamily: MONO, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o.ds_num || ''}>{shortAnnexNumber(o.ds_num) || '—'}</span>
@@ -779,44 +828,48 @@ export default function Operations2() {
         onClose={() => setBulkPwd(null)} onDone={() => { setBulkPwd(null); setSel({}); loadOps() }} />}
       <style>{`
         @keyframes opRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        .op-row:hover { background: var(--bg-subtle) !important; }
+        .op-row:hover { --op-row: var(--bg-subtle) !important; }
         .op-ico { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:7px; cursor:pointer; }
         .op-ico:hover { background: var(--accent-tint); color: var(--accent) !important; }
-        .op-ico-w:hover { background: var(--warning-tint); color: #B26A0C !important; }
-        .op-ico-d:hover { background: var(--danger-tint); color: #C93A3E !important; }
+        .op-ico-w:hover { background: var(--warning-tint); color: var(--warning-text) !important; }
+        .op-ico-d:hover { background: var(--danger-tint); color: var(--danger-fg) !important; }
         @media (prefers-reduced-motion: reduce){ [style*="animation"]{ animation:none !important } }
       `}</style>
 
       <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* Шапка */}
+        {/* заголовок, счётчик и вкладки — одной строкой (владелец 17.11.2026: «сэкономим место») */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: '-0.02em', margin: 0, color: 'var(--text-primary)' }}>Операции</h1>
             <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)} записей{updatedAt ? ` · обновлено ${updatedAt}` : ''}</span>
+            <span style={{ marginLeft: 10 }}>
+              <UnderlineTabs line={false} value={creditTab ? 'credit' : payPlan ? 'plan' : 'all'} onChange={setTab}
+                tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }].concat(canCredit ? [{ key: 'credit', label: 'Кредиты' }] : [])} />
+            </span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {canCreate && <button onClick={() => setCreateOpen(o => !o)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Новая операция</button>}
-            {canCreate && <button onClick={downloadTemplate} style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Шаблон</button>}
+            {canCreate && <button onClick={() => setCreateOpen(o => !o)} style={{ ...primaryBtn, ...HEAD_BTN }}>+ Новая операция</button>}
+            {canCreate && <button onClick={downloadTemplate} style={{ ...btn(false), ...HEAD_BTN }}>Шаблон</button>}
             {canImport && <IconBtn title="Импорт из файла" onClick={() => router.push('/finance/import')}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 15V3" /><path d="M7 8l5-5 5 5" /><path d="M5 21h14" /></svg></IconBtn>}
             <IconBtn title="Выгрузить в Excel (с учётом фильтров)" onClick={downloadExport}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg></IconBtn>
           </div>
         </div>
-        <UnderlineTabs value={creditTab ? 'credit' : payPlan ? 'plan' : 'all'} onChange={setTab}
-          tabs={[{ key: 'all', label: 'Операции' }, { key: 'plan', label: 'План оплат' }].concat(canCredit ? [{ key: 'credit', label: 'Кредиты' }] : [])} />
         {creditTab ? <CreditLines /> : <>
         {payPlan && <PayPlanSummary data={planSum} filter={planF} onFilter={setPlanF} />}
+        {!focusOp && <OpsSummary s={summary} quick={quick} onQuick={q => { setQuick(q); setPage(0) }} />}
 
         {/* Форма создания */}
         {createOpen && canCreate && (
-          <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid #D7DEFA', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
+          <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid var(--accent-border)', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
             <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
             <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create"
               files={pendingAsFiles} busyFiles={filesBusy}
               onAttach={list => setNewFiles(prev => [...prev, ...list])}
               onRemoveFile={(fl, i) => setNewFiles(prev => prev.filter((_, k) => k !== i))} /></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: '#FBFCFE', borderTop: '1px solid var(--border-inner)' }}>
-              <button onClick={saveCreate} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Добавить операцию</button>
-              <button onClick={() => setCreateOpen(false)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'var(--bg-subtle)', borderTop: '1px solid var(--border-inner)' }}>
+              <button onClick={saveCreate} disabled={saving} style={{ ...primaryBtn, ...HEAD_BTN }}>Добавить операцию</button>
+              <button onClick={() => setCreateOpen(false)} style={{ ...btn(false), ...HEAD_BTN }}>Отмена</button>
               <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>сумма НДС считается автоматически по ставке · обязательны статус, дата, банк, статья, сумма</span>
             </div>
           </div>
@@ -828,7 +881,7 @@ export default function Operations2() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 10px', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>
               <MonthInput clearable value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
-              <span style={{ color: '#C3C9D8' }}>—</span>
+              <span style={{ color: 'var(--text-disabled)' }}>—</span>
               <MonthInput clearable value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? monthEnd(e.target.value) : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
             </span>
             <MultiDrop label="Статус" options={STATUSES.map(s => ({ value: s, label: s }))} selected={fStatus} onChange={setFStatus} />
@@ -838,6 +891,11 @@ export default function Operations2() {
             <MultiDrop label="Период" options={periodOptions.map(p => ({ value: p, label: p }))} selected={fPeriod} onChange={setFPeriod} />
             <MultiDrop label="Тип операции" options={[{ value: 'income', label: 'Поступления' }, { value: 'expense', label: 'Списания' }]} selected={fOpType} onChange={setFOpType} />
             <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={fGaps} onChange={v => { setFGaps(v); setPage(0) }} />
+            {!!quick && (
+              <span role="button" tabIndex={0} onClick={() => { setQuick(null); setPage(0) }} onKeyDown={e => e.key === 'Enter' && setQuick(null)} title="Снять фильтр плитки"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 11px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                  background: 'var(--signal-tint)', border: '1px solid var(--signal-border)', color: 'var(--signal-text)' }}>{QUICK_LABEL[quick]} ✕</span>
+            )}
             {focusOp && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 11px', borderRadius: 20, background: 'var(--accent-tint)', color: 'var(--accent)', fontSize: 12 }}>
                 Показана одна операция #{focusOp}
@@ -866,12 +924,12 @@ export default function Operations2() {
               можно в любом месте списка, и панель не уезжает вместе с ним. В потоке
               страницы она оставалась у начала таблицы, то есть за экраном. */}
           {canEdit && selIds.length > 0 && (
-              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: 'var(--shadow-float)', background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
-                <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
+              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: 'var(--shadow-float)', background: 'var(--bg-tint)', border: '1px solid var(--accent-border)', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                <div style={{ minWidth: 150, borderRight: '1px solid var(--accent-border)', paddingRight: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-fg)', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: T.expense }} />−{fmt2(selExpense)} ₽</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: '1px solid #DDE3F5', color: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }}><span style={{ width: 6, height: 6, borderRadius: 2, background: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }} />{(selIncome - selExpense) >= 0 ? '+' : '−'}{fmt2(Math.abs(selIncome - selExpense))} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: '1px solid var(--accent-border)', color: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }}><span style={{ width: 6, height: 6, borderRadius: 2, background: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }} />{(selIncome - selExpense) >= 0 ? '+' : '−'}{fmt2(Math.abs(selIncome - selExpense))} ₽</div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', width: 148, flexShrink: 0 }}>
                   <span style={lbl}>Дата</span>
@@ -891,10 +949,10 @@ export default function Operations2() {
                 ))}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   {payPlan
-                    ? <button onClick={outOfPlan} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 10, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Убрать из плана</button>
-                    : <button onClick={toPlan} disabled={saving} title="Поставить в план оплат" style={{ height: 38, boxSizing: 'border-box', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 10, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>В план</button>}
-                  <button onClick={applyBulk} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Применить к {selIds.length}</button>
-                  {canDelete && <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
+                    ? <button onClick={outOfPlan} disabled={saving} style={{ ...btn(false), ...HEAD_BTN, height: 38 }}>Убрать из плана</button>
+                    : <button onClick={toPlan} disabled={saving} title="Поставить в план оплат" style={{ ...btn(false), ...HEAD_BTN, height: 38 }}>В план</button>}
+                  <button onClick={applyBulk} disabled={saving} style={{ ...primaryBtn, ...HEAD_BTN, height: 38 }}>Применить к {selIds.length}</button>
+                  {canDelete && <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--danger-border)', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
                   <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>
                 </div>
               </div>
@@ -905,24 +963,17 @@ export default function Operations2() {
             <span>Показано <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, total)}</b> из <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{new Intl.NumberFormat('ru-RU').format(total)}</b>{payPlan && planF && planSum ? <> · в плане <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{planSum.count}</b></> : null}</span>
             {payPlan && <FilterChip filter={planF} onClear={() => setPlanF(null)} />}
             <span style={{ display: 'inline-flex', gap: 14 }}>
-              {[['оплачено', 'var(--income)'], ['план оплат', 'var(--dot-expense)'], ['ожидает', 'var(--dot-current-dz)']].map(([l, c]) => <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>)}
+              {[['оплачено', 'var(--money)'], ['план', 'var(--text-faint)'], ['ожидает · срок прошёл', 'var(--attn)'], ['просрочено', 'var(--bad)']].map(([l, c]) => <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>)}
             </span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
-              <IconBtn title="В начало" onClick={() => setPage(0)}>«</IconBtn>
-              <IconBtn title="Назад" onClick={() => setPage(p => Math.max(0, p - 1))}>‹</IconBtn>
-              <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 6px' }}>{page + 1} / {totalPages}</span>
-              <IconBtn title="Вперёд" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}>›</IconBtn>
-              <IconBtn title="В конец" onClick={() => setPage(totalPages - 1)}>»</IconBtn>
-            </div>
           </div>
 
           {/* таблица */}
-          <div style={{ overflowX: 'auto', margin: '10px -8px 0', padding: '0 8px' }}>
-            <div style={{ minWidth: 1580 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, padding: '0 0 10px', borderBottom: '1px solid var(--border-card)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
+          <div ref={scrollRef} style={{ overflow: 'auto', height: tableH, margin: '10px -24px 0', borderTop: '1px solid var(--border-inner)' }}>
+            <div style={{ minWidth: 1880 }}>
+              <div style={{ position: 'sticky', top: 0, zIndex: 3, display: 'grid', gridTemplateColumns: gridT, gap: GAP, alignItems: 'center', height: 38, padding: `0 ${ROW_PAD}px`, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-card)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
                 {visibleCols.map(([k, w, label, sc]) => k === 'sel'
-                  ? <span key={k}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
-                  : <span key={k} onClick={() => onSort(sc)} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', paddingLeft: PAD_LEFT[k], cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
+                  ? <span key={k} style={{ ...stick(k, 'var(--bg-card)'), height: '100%', display: 'flex', alignItems: 'center' }}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
+                  : <span key={k} onClick={() => onSort(sc)} style={{ ...stick(k, 'var(--bg-card)'), height: '100%', display: 'flex', alignItems: 'center', justifyContent: RIGHT.has(k) ? 'flex-end' : 'flex-start', paddingLeft: PAD_LEFT[k], cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
               </div>
               {/* «Нет операций по выбранным фильтрам» — утверждение о ДАННЫХ. На сбое
                   загрузки оно неверно, и подменять им причину нельзя: человек начнёт
@@ -933,13 +984,14 @@ export default function Operations2() {
                 : rows.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по выбранным фильтрам</div>
                   : rows.map(o => (
                     <Fragment key={o.id}>
-                      <div className="op-row" onClick={e => openPanel(e, o.id)} style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', cursor: 'pointer', background: panelId === o.id ? 'var(--accent-tint)' : sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'transparent') }}>
-                        {visibleCols.map(([k]) => <span key={k} data-noexp={NO_PANEL.has(k) ? '' : undefined} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
+                      {/* фон строки — переменной --op-row: ею же красятся закреплённые ячейки (и при наведении — .op-row:hover) */}
+                      <div className="op-row" onClick={e => openPanel(e, o.id)} style={{ '--op-row': panelId === o.id || sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'var(--bg-card)'), display: 'grid', gridTemplateColumns: gridT, gap: GAP, alignItems: 'center', padding: `7px ${ROW_PAD}px`, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', cursor: 'pointer', background: 'var(--op-row)' }}>
+                        {visibleCols.map(([k]) => <span key={k} data-noexp={NO_PANEL.has(k) ? '' : undefined} style={{ ...stick(k, 'var(--op-row)'), alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: RIGHT.has(k) ? 'flex-end' : 'flex-start', overflow: 'hidden', paddingLeft: PAD_LEFT[k] }}>{cell(o, k)}</span>)}
                       </div>
                       {/* Правка раскрывается под своей строкой — форма стоит там, где
                           пользователь только что кликнул, и список не теряет место. */}
                       {editing?.id === o.id && canEdit && (
-                        <div style={{ background: '#FFFCF7', border: '1px solid #F0D7AE', borderRadius: 14, padding: '18px 20px', margin: '2px 0 10px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                        <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 14, padding: '18px 20px', margin: '2px 0 10px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                             <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: T.warningText, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
                             <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
@@ -956,8 +1008,8 @@ export default function Operations2() {
                             onChanged={() => { setEditing(null); loadOps() }} />
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
                             <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
-                            <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>
-                            <button onClick={() => setEditing(null)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+                            <button onClick={saveEdit} disabled={saving} style={{ ...primaryBtn, ...HEAD_BTN }}>Сохранить изменения</button>
+                            <button onClick={() => setEditing(null)} style={{ ...btn(false), ...HEAD_BTN }}>Отмена</button>
                           </div>
                         </div>
                       )}
@@ -966,16 +1018,10 @@ export default function Operations2() {
             </div>
           </div>
 
-          {/* подвал */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, marginTop: 6, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>выделено <b style={{ color: 'var(--text-primary)' }}>{selIds.length}</b> операций</span>
-            <span>итого на странице: поступления <b style={{ color: 'var(--income)', fontFamily: MONO }}>{fmt(pageIncome)} ₽</b> · списания <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{fmt(pageExpense)} ₽</b></span>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>строк на странице</span>
-              <div style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3 }}>
-                {PAGE_SIZES.map(n => <button key={n} onClick={() => { setPageSize(n); setPage(0) }} style={{ border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontFamily: MONO, fontSize: 12, background: pageSize === n ? 'var(--accent-tint)' : 'transparent', color: pageSize === n ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: pageSize === n ? 700 : 600 }}>{n}</button>)}
-              </div>
-            </div>
+          {/* подвал — страницы (хендофф «Операции · NAVY», раздел 3): всегда виден, смена размера — на первую страницу */}
+          <div style={{ margin: '0 -24px -14px' }}>
+            <RegistryFooter view={{ page, pages: totalPages, total, from: total ? page * pageSize + 1 : 0, to: Math.min((page + 1) * pageSize, total) }}
+              size={pageSize} sizes={PAGE_SIZES} onSize={n => { setPageSize(n); setPage(0) }} onPage={setPage} />
           </div>
         </div>
         </>}

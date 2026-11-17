@@ -30,31 +30,9 @@ HEADER_FILL = "4472C4"      # синяя шапка — как в образце
 TOTAL_FILL = "D9E2F3"
 BORDER = "000000"           # рамки чёрные (владелец 21.10.2026, просьба бухгалтерии; до того — белые, решение 05.09.2026)
 
-COLS = ["Место\nразмещения", "Позиция", "Гео", "Формат", "Девайс",
-        "Тип ротации\n(для медийных\nформатов)", "Модель\nзакупки", "Объем размещения",
-        "Период", "Стоимость\nза единицу\nзакупки", "Стоимость\nразмещения",
-        "НДС {rate}%", "Стоимость\nразмещения\nс учетом НДС"]
-
-# Доли колонок, а не сантиметры. Числа в сантиметрах уже разошлись с полосой набора:
-# python-docx создаёт документ размером Letter (27,9 × 21,6), а не A4, и таблица на
-# 27,7 см выехала за правое поле — в Word это видно сразу, а в коде не видно вовсе.
-# Поэтому размер страницы задаётся явно, а ширины считаются ОТ ПОЛОСЫ: поменяются поля
-# или формат — таблица останется внутри.
-# Доли подобраны по САМОМУ ДЛИННОМУ содержимому колонки, а не по длине заголовка.
-# Денежные считаны из «12 345 678,90»: тринадцать знаков кеглем 7,5 pt Times — это
-# ~1,7 см плюс поля ячейки. Замер 05.09.2026: НДС при доле 1,5 давал 1,44 см, и
-# «90 163,97» переносилось ПОСЛЕ ЗАПЯТОЙ (разряды и так неразрывные) — на бумаге это
-# читается как другое число. Сумма долей равна полосе, поэтому доля = сантиметры.
-WEIGHTS = [1.8, 3.5, 1.1, 1.5, 1.8, 2.0, 1.6, 2.2, 2.3, 1.9, 2.3, 2.2, 2.3]
-
 PAGE_W, PAGE_H = 29.7, 21.0          # A4, альбомная
 MARGIN_X, MARGIN_Y = 1.6, 1.5
-USABLE = PAGE_W - 2 * MARGIN_X       # полоса набора, см
-
-
-def _widths(usable: float = USABLE) -> list:
-    k = usable / sum(WEIGHTS)
-    return [w * k for w in WEIGHTS]
+USABLE = PAGE_W - 2 * MARGIN_X       # полоса набора, см (размер страницы явно: python-docx по умолчанию даёт Letter)
 
 _fix2 = lambda v: ("" if v is None else f"{float(v):,.2f}"          # noqa: E731
                    .replace(",", " ").replace(".", ","))
@@ -325,11 +303,16 @@ def _clause_3(d: dict) -> str:
 
 
 def _table(doc, d: dict) -> None:
-    rows = d.get("rows") or []
-    if not rows:
+    """Таблица МП — ячейками `table_cols.view` (колонки шаблона, 17.11.2026) из строк самого документа; колонки и имена
+    из справочника кладёт `document.with_table`. Документ без них — прежние 13 колонок тем же расчётом."""
+    from app.annex_tpl import table_cols as TC
+    tv = TC.view(None, d, d.get("table_columns") or TC.of_blocks(None), d.get("table_names") or {})
+    if not tv["rows"]:
         return
-    widths = _widths()
-    t = doc.add_table(rows=1, cols=len(COLS))
+    head = tv["head"]
+    k = USABLE / sum(c["w"] for c in head)
+    widths = [c["w"] * k for c in head]
+    t = doc.add_table(rows=1, cols=len(head))
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     t.autofit = False
     _fixed_layout(t)
@@ -337,7 +320,7 @@ def _table(doc, d: dict) -> None:
     for col, w in zip(t.columns, widths):
         col.width = Cm(w)
 
-    for i, (cell, title) in enumerate(zip(t.rows[0].cells, COLS)):
+    for i, (cell, c) in enumerate(zip(t.rows[0].cells, head)):
         _shade(cell, HEADER_FILL)
         cell.width = Cm(widths[i])
         cell.text = ""
@@ -345,55 +328,35 @@ def _table(doc, d: dict) -> None:
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.paragraph_format.space_before = Pt(1)
         p.paragraph_format.space_after = Pt(1)
-        for j, line in enumerate(title.format(rate=d.get("vat_rate")).split("\n")):
+        for j, line in enumerate(c["label"].split("\n")):
             if j:
                 p.add_run().add_break()
             _run(p, line, bold=True, size=7, color="FFFFFF")
 
-    total = {"volume": 0.0, "net": 0.0, "vat": 0.0, "gross": 0.0}
-    for r in rows:
+    for r in tv["rows"]:
         cells = t.add_row().cells
         for i, w in enumerate(widths):
             cells[i].width = Cm(w)
-        if r.get("group_title"):            # заголовок группы ДС мастер-сделки (бренд · услуга) — строкой на всю ширину
+        if r.get("group"):            # заголовок группы ДС мастер-сделки (бренд · услуга) — строкой на всю ширину
             cells[0].merge(cells[len(widths) - 1])
-            _cell_text(cells[0], r["group_title"], bold=True, align="left")
+            _cell_text(cells[0], r["group"], bold=True, align="left")
             continue
-        period = f"{_dm(r.get('date_from') or d.get('period_from'))} –\n" \
-                 f"{_dm(r.get('date_to') or d.get('period_to'))}"
-        _cell_text(cells[0], r.get("network") or "—", bold=True)
-        _cell_text(cells[1], r.get("doc_position") or r.get("position") or "—",
-                   italic=True, align="left")
-        _cell_text(cells[2], r.get("geo") or "—")
-        _cell_text(cells[3], r.get("format") or "—")
-        _cell_text(cells[4], r.get("device") or "—")
-        _cell_text(cells[5], r.get("rotation") or "—")
-        _cell_text(cells[6], r.get("model") or "—")
-        _cell_text(cells[7], _int(r.get("volume")) or "—", align="right")
-        _cell_text(cells[8], period)
-        # Бонус: цена за единицу, стоимость, НДС и итог — прочерки (ячейки не остаются пустыми).
-        money = (lambda v: "—") if r.get("bonus") else _fix2
-        _cell_text(cells[9], money(r.get("unit_price")), align="right")
-        _cell_text(cells[10], money(r.get("amount")), bold=True, align="right")
-        _cell_text(cells[11], money(r.get("vat")), align="right")
-        _cell_text(cells[12], money(r.get("gross")), bold=True, align="right")
-        total["volume"] += float(r.get("volume") or 0)
-        total["net"] += float(r.get("amount") or 0)
-        total["vat"] += float(r.get("vat") or 0)
-        total["gross"] += float(r.get("gross") or 0)
+        for i, (c, v) in enumerate(zip(head, r["cells"])):
+            _cell_text(cells[i], v, bold=c["style"] == "bold", italic=c["style"] == "italic", align=c["align"])
 
-    # ИТОГО считается по СТРОКАМ ТАБЛИЦЫ, а не берётся из шапки документа: колонка и её
-    # итог обязаны сходиться на бумаге, иначе расхождение заметит подписант.
+    # ИТОГО — по строкам таблицы (считает `view`): колонка и её итог обязаны сходиться на бумаге.
     cells = t.add_row().cells
     for i, w in enumerate(widths):
         cells[i].width = Cm(w)
         _shade(cells[i], TOTAL_FILL)
-    cells[0].merge(cells[6])
-    _cell_text(cells[0], "ИТОГО:", bold=True, align="right")
-    _cell_text(cells[7], _int(total["volume"]), bold=True, align="right")
-    _cell_text(cells[10], _fix2(total["net"]), bold=True, align="right")
-    _cell_text(cells[11], _fix2(total["vat"]), bold=True, align="right")
-    _cell_text(cells[12], _fix2(total["gross"]), bold=True, align="right")
+    span = tv["total"]["span"]
+    if span:
+        if span > 1:
+            cells[0].merge(cells[span - 1])
+        _cell_text(cells[0], "ИТОГО:", bold=True, align="right")
+    for i in range(span, len(head)):
+        if tv["total"]["cells"][i]:
+            _cell_text(cells[i], tv["total"]["cells"][i], bold=True, align="right")
     doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
 

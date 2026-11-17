@@ -467,7 +467,7 @@ export default function CounterpartyCard() {
                 </div>
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '0 24px 20px' }}>
                   <button onClick={() => setDefEdit(false)} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, cursor: 'pointer', fontSize: 13 }}>Отмена</button>
-                  <button onClick={saveDefaults} disabled={defSaving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: defSaving ? 'default' : 'pointer', fontSize: 13, opacity: defSaving ? 0.6 : 1 }}>
+                  <button onClick={saveDefaults} disabled={defSaving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, cursor: defSaving ? 'default' : 'pointer', fontSize: 13, opacity: defSaving ? 0.6 : 1 }}>
                     {defSaving ? 'Сохраняю…' : 'Сохранить'}
                   </button>
                 </div>
@@ -528,7 +528,7 @@ export default function CounterpartyCard() {
                   {saveErr && <div style={{ color: CT.danger, fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
                 </div>
                 <div style={{ display: 'flex', gap: 8, padding: '14px 24px', borderTop: `1px solid ${CT.border}` }}>
-                  <button onClick={handleSave} disabled={saving} style={{ background: CT.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
+                  <button onClick={handleSave} disabled={saving} style={{ background: CT.accent, color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
                   <button onClick={() => { setEditMode(false); setSaveErr('') }} style={{ border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Отмена</button>
                 </div>
               </div>

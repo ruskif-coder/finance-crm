@@ -17,7 +17,7 @@ export default function NotOnMobile({ title, backHref = '/', backLabel = 'Вер
         </span>
         <button onClick={() => router.push(backHref)} style={{
           height: 40, padding: '0 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
-          background: 'var(--accent)', color: '#fff', fontFamily: UI, fontSize: 14, fontWeight: 700,
+          background: 'var(--accent)', color: 'var(--on-accent)', fontFamily: UI, fontSize: 14, fontWeight: 700,
         }}>{backLabel}</button>
       </div>
     </div>

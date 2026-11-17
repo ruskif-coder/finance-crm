@@ -33,7 +33,6 @@ const ROOTS = ['components', 'pages']
  */
 const FROZEN = new Set([
   'components/mobile/DealCardList.js:Row',
-  'pages/accounts/mp/index.js:EditCell',
   'pages/directory/contracts.js:SortIcon',
   'pages/directory/contracts.js:Head',
   'pages/directory/counterparties/index.js:HeadCell',

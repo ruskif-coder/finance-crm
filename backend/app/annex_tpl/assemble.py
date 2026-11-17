@@ -345,7 +345,8 @@ def _blocks(blocks: list, values: dict, edits: Optional[dict] = None, defaults: 
                         "text": "".join(p["t"] for p in parts), "parts": parts})
             continue
         if b.get("sys"):
-            out.append({"id": b["id"], "sys": b["sys"], "title": b.get("title")})
+            # колонки таблицы МП (17.11.2026) замораживаются вместе с ДС: подписанное печатается теми колонками, с которыми выпущено
+            out.append({"id": b["id"], "sys": b["sys"], "title": b.get("title"), **({"columns": b["columns"]} if b.get("columns") else {})})
             continue
         zone = zone_at(blocks, i)
         edited = zone == "acc" and b["id"] in edits

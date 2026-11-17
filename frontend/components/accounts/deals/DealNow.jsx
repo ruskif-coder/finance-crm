@@ -240,8 +240,9 @@ export default function DealNow({ row, deal, canEdit, onAction, onSnooze, onRelo
     )
   }
   return (
-    <div style={{ margin: '0 4px 10px', display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.05fr)', border: '1px solid var(--border-card)',
-      borderRadius: 14, background: 'var(--bg-card)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+    // Продолжение раскрытой строки (`QueueRow`): та же ширина и рамка, верх — граница со строкой, скругления снизу (17.11.2026)
+    <div style={{ margin: '0 0 10px', display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.05fr)', border: '1px solid var(--border-card)',
+      borderTop: '1px solid var(--border-inner)', borderRadius: '0 0 12px 12px', background: 'var(--bg-card)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
       <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-inner)' }}>
         {body}
         <Team team={team} />

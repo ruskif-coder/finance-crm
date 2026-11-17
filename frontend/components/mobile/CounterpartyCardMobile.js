@@ -183,7 +183,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
           {saveErr && <div style={{ color: T.danger, fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
         </div>
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>
-          <button onClick={onSave} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
+          <button onClick={onSave} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
           <button onClick={onCancelEdit} style={{ flex: '0 0 auto', padding: '14px 20px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>
         </div>
       </div>
@@ -198,7 +198,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.name}</div>
         <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Контрагент · #{id}</div>
       </div>
-      {canEdit && <button onClick={onEdit} aria-label="Редактировать" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
+      {canEdit && <button onClick={onEdit} aria-label="Редактировать" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
     </div>
   )
 

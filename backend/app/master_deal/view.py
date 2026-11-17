@@ -62,6 +62,11 @@ def _revert_targets(db: Session, m) -> list:
     return RV.targets(db, m)
 
 
+def _may_refresh(m) -> bool:
+    from app.master_deal import revert as RV
+    return RV.may_refresh(m)
+
+
 def _unconfirmed(db: Session, m) -> int:
     from app.master_deal import revert as RV
     return RV.unconfirmed(db, m)
@@ -100,5 +105,5 @@ def card(db: Session, m, user, deals: list) -> dict:
         "issue": issue(db, m), "docs": MDOC.build(db, m), "events": MDOC.events(db, m),
         "sequence": list(MST.sequence(db, m)), "step": MST.row_step(db, m), "status_label": MST.label(db, m),
         "todo": MST.todo(db, m), "status_actions": MST.actions(db, m, user), "statuses": list(MST.STATUSES),
-        "revert_targets": _revert_targets(db, m), "unconfirmed": _unconfirmed(db, m),
+        "revert_targets": _revert_targets(db, m), "unconfirmed": _unconfirmed(db, m), "may_refresh": _may_refresh(m),
     }

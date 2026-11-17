@@ -36,6 +36,19 @@ export function Segs({ text, emptyDemo }) {
   })
 }
 
+/** Свои колонки шаблона (17.11.2026) — на образце только шапкой: значения подставит сборка ДС. */
+function MpColumns({ columns }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(0,1fr))`, border: '1px solid var(--border-card)', borderRadius: 4, overflow: 'hidden' }}>
+      {columns.map((c, i) => (
+        <span key={i} style={{ padding: '6px 6px', background: 'var(--accent-tint)', borderLeft: i ? '1px solid var(--border-card)' : 'none', fontFamily: MONO, fontSize: 8.5, letterSpacing: '.03em', textTransform: 'uppercase', color: 'var(--accent-fg)', textAlign: 'center', overflowWrap: 'anywhere' }}>
+          {c.label || c.key}{c.key === 'const' && c.value ? ` · ${c.value}` : ''}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function MpTable() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', fontFamily: 'inherit', fontSize: 11.5, border: '1px solid var(--border-card)', borderRadius: 4 }}>
@@ -83,7 +96,7 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
   const tag = b.sys === 'table' ? ['граница', 'var(--bg-subtle)', 'var(--text-muted)'] : z
   const dateBad = emptyDemo
   return (
-    <div onClick={() => edit && (!b.sys || ['pre', 'head', 'place'].includes(b.sys)) && onPick(b.id)}
+    <div onClick={() => edit && (!b.sys || ['pre', 'head', 'place', 'table'].includes(b.sys)) && onPick(b.id)}
          style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', margin: '0 -8px', borderRadius: 6, background: active ? 'var(--bg-tint)' : 'transparent', outline: active ? '1px solid var(--accent-border)' : 'none', cursor: edit && !b.sys ? 'pointer' : 'default' }}>
       {/* Заголовок и «место и дата» с текстом шаблона (05.11.2026) — как напечатает файл; без текста — стандартный вид */}
       {b.sys === 'head' && !!b.text && (
@@ -120,7 +133,7 @@ function DocBlock({ b, i, blocks, num, edit, active, emptyDemo, onPick }) {
           <b>{num[b.id]}</b> <Segs text={b.text} emptyDemo={emptyDemo} />
         </span>
       )}
-      {b.sys === 'table' && <MpTable />}
+      {b.sys === 'table' && (b.columns?.length ? <MpColumns columns={b.columns} /> : <MpTable />)}
       {b.sys === 'sign' && <Parties />}
       {!edit && tag && (
         <span style={{ position: 'absolute', top: 7, right: -120, display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 7px', borderRadius: 6, background: tag[1], color: tag[2], fontFamily: MONO, fontSize: 8.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>

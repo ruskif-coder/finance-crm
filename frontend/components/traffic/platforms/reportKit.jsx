@@ -15,9 +15,11 @@ export const toneTempo = v => (v == null ? 'none' : v >= 0.9 ? 'ok' : v >= 0.6 ?
 /** Тон расхождения с WR — порог из целей сделки (rk.wr_threshold, %). Половина порога — «близко». */
 export const toneWr = (v, thr) => (v == null ? 'none' : Math.abs(v) >= thr ? 'bad' : Math.abs(v) >= thr / 2 ? 'warn' : 'ok');
 
-export const C    = { ok: 'var(--income)',      warn: 'var(--warning)',      bad: 'var(--danger)',      none: 'var(--border-inner)' };
-export const TINT = { ok: 'var(--income-tint)', warn: 'var(--warning-tint)', bad: 'var(--danger-tint)', none: 'var(--bg-subtle)' };
-export const FG   = { ok: 'var(--income-fg)',   warn: 'var(--warning-fg)',   bad: 'var(--danger-fg)',   none: 'var(--text-disabled)' };
+// Цвета — дословно по хендоффу design_handoff_traffic_navy (17.11.2026): норма — сталь (`--ok`, не деньги), «нет данных» — `--border-card`
+export const C    = { ok: 'var(--ok)',      warn: 'var(--warning)',      bad: 'var(--danger)',      none: 'var(--border-card)' };
+export const TINT = { ok: 'var(--ok-tint)', warn: 'var(--warning-tint)', bad: 'var(--danger-tint)', none: 'var(--bg-subtle)' };
+export const FG   = { ok: 'var(--ok-fg)',   warn: 'var(--warning-fg)',   bad: 'var(--danger-fg)',   none: 'var(--text-disabled)' };
+export const BORDER = { ok: 'var(--ok-border)', warn: 'var(--warning-border)', bad: 'var(--danger-border)', none: 'var(--border-inner)' };
 
 export const VERDICT = {
   fail:   { label: 'системный провал',  tone: 'bad',  w: 5 },
@@ -75,9 +77,10 @@ export function VerdictPill({ verdict, wr }) {
   const v = VERDICT[verdict]; const none = v.tone === 'none';
   return (
     <span style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-        background: TINT[v.tone], color: none ? 'var(--text-muted)' : FG[v.tone] }}>
-        <Dot color={none ? 'var(--text-faint)' : C[v.tone]} size={6} />{v.label}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 22, boxSizing: 'border-box', padding: '0 9px', borderRadius: 7, fontSize: 11,
+        fontWeight: 700, whiteSpace: 'nowrap', background: TINT[v.tone], border: `1px solid ${BORDER[v.tone]}`, color: none ? 'var(--text-muted)' : FG[v.tone] }}>
+        {/* точечный недокрут — бледная точка, системный — полная (макет NAVY) */}
+        <Dot color={none ? 'var(--text-faint)' : verdict === 'spot' ? BORDER.warn : C[v.tone]} size={6} />{v.label}
       </span>
       {wr && <span title="WR расходится системно" style={{ padding: '2px 6px', borderRadius: 6, fontFamily: MONO, fontSize: 9.5, fontWeight: 700, background: 'var(--danger-tint)', color: 'var(--danger-fg)' }}>WR</span>}
     </span>
@@ -117,7 +120,7 @@ export function Segmented({ label, value, options, onChange }) {
         {options.map(([v, l]) => { const on = v === value; return (
           <span key={v} role="button" tabIndex={0} onClick={() => onChange(v)} onKeyDown={e => e.key === 'Enter' && onChange(v)}
             style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
-              background: on ? 'var(--bg-card)' : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>{l}</span>); })}
+              background: on ? 'var(--hot)' : 'transparent', color: on ? 'var(--hot-fg)' : 'var(--text-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>{l}</span>); })}
       </span>
     </span>
   );

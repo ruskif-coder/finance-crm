@@ -140,7 +140,8 @@ const wallCaption = (m) => {
   return m.worstDay ? `${base} · хуже всего ${m.worstDay}: ${m.worstDayBelow} РК ниже темпа` : `${base} · дней ниже темпа не было`
 }
 
-// `fill` — карточка занимает высоту ячейки, строки прокручиваются внутри: стена равна по высоте виновникам (17.11.2026).
+// `fill` — карточка занимает высоту ячейки и растёт вниз при «ещё N РК ▾», без прокрутки внутри (владелец 17.11.2026, вечер);
+// утреннее решение «строки прокручиваются внутри» снято. Было: (17.11.2026).
 export function DayWallV2({ wall, rows, onPick, activeId, fill = false }) {
   const model = useMemo(() => buildWall(wall, rows), [wall, rows])
   const [sort, setSort] = useState('worst')
@@ -169,7 +170,7 @@ export function DayWallV2({ wall, rows, onPick, activeId, fill = false }) {
         <>
           <DayBars model={model} hov={hov} onHov={setHov} />
           <AxisHead model={model} />
-          <div style={{ display: 'flex', flexDirection: 'column', ...(fill ? { flex: '1 1 auto', minHeight: 0, overflowY: 'auto' } : null) }}>
+          <div style={{ display: 'flex', flexDirection: 'column', ...(fill ? { flex: '1 1 auto' } : null) }}>
             {list.map(r => (
               <WallRow key={r.id} r={r} hov={hov} tipKey={tip?.key} active={r.id === activeId} onPick={onPick} onTip={setTip} />
             ))}
@@ -212,8 +213,9 @@ export function WidgetsSummary({ platData, wall, rows, onOpen }) {
   const model = useMemo(() => buildWall(wall, rows), [wall, rows])
   const cul = platData ? culpritsSummary(platData) : null
   return (
+    // NAVY (17.11.2026): свёрнутые виджеты — тёмной строкой, как сами виджеты; в прежних темах атрибут ничего не меняет
     <div role="button" tabIndex={0} onClick={() => onOpen?.()} onKeyDown={e => e.key === 'Enter' && onOpen?.()}
-      title="Развернуть виджеты"
+      title="Развернуть виджеты" data-tone="dark" className="tp-widgets-sum"
       style={{ ...CARD, display: 'flex', alignItems: 'center', gap: 22, padding: '9px 18px', cursor: 'pointer' }}>
       {cul && (
         <>

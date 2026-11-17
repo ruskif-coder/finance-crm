@@ -394,7 +394,7 @@ const Source = ({ rk, d, st, onRealloc }) => {
         <span title={total.title} style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
           color: total.fg }}>{total.val}</span>
         <button type="button" onClick={onRealloc} title="Перераспределить объём отстающих площадок между теми, кто в темпе"
-          style={{ ...accentBtn(false), marginLeft: 4 }}><ReallocIcon />Перераспределить</button>
+          style={{ ...accentBtn(false), marginLeft: 4, background: 'var(--signal)', color: 'var(--signal-fg)' }}><ReallocIcon />Перераспределить</button>
       </span>
       {mix.length ? (
         <>
