@@ -212,8 +212,12 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
          link: Optional[str] = None, entity_type: Optional[str] = None,
          entity_id: Optional[int] = None, actor=None, ctx: Optional[dict] = None,
          user_ids: Optional[Iterable[int]] = None, tone: Optional[str] = None,
-         facts: Optional[list] = None, code: Optional[str] = None) -> List[int]:
+         facts: Optional[list] = None, code: Optional[str] = None,
+         only_channels: Optional[Iterable[str]] = None) -> List[int]:
     """Породить событие. Возвращает id получателей, которым что-то ушло.
+
+    only_channels — внешние каналы, которыми ограничено событие поверх подписок получателя («Оповещения» экрана
+    статуса, 16.11.2026: Телеграм и/или почта). Панель в интерфейсе («app») не ограничивается никогда.
 
     user_ids — явный список получателей в обход резолверов (для случаев, где адресаты
     считаются доменной логикой). Обычный путь — оставить None и описать получателей
@@ -239,6 +243,8 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
     delivered: List[int] = []
     for uid in targets:
         chans = _channels_for(db, uid, ev)
+        if only_channels is not None:
+            chans = [c for c in chans if c == "app" or c in set(only_channels)]
         # Слова ПИСЬМА — с правками «Шаблонов писем» (аудит 23.09.2026, 5.M1): здесь у
         # события есть данные для подстановок, дальше они едут в журнале готовыми.
         # Панель и бот говорят словами события: редактор правит письма.

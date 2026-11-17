@@ -52,12 +52,20 @@ def totals(db, camp, dsp_db=None, strict: bool = False) -> Dict[int, int]:
     делит остаток как раньше, поровну, а не обнуляет лимиты (сбой чтения не должен останавливать креативы).
     `strict` — для ОТПРАВКИ лимитов в DSP (ревью 27.10.2026): деление поровну без факта поднимало лимит новому креативу,
     пока старый уже открутил почти всё, — перекрут. Там сбой чтения — исключение, и лимиты РК не трогаются."""
-    out: Dict[int, int] = {}
-    for cid, shows in db.execute(text("""
-        SELECT a.creative_id, sum(a.shows) FROM adfox_creative_stat a
+    return {rid: v[0] for rid, v in counts(db, camp, dsp_db=dsp_db, strict=strict).items()}
+
+
+def counts(db, camp, dsp_db=None, strict: bool = False) -> Dict[int, list]:
+    """{строка креатива: [показы, клики] за всю РК} — тот же сбор, что `totals`, плюс клики: расхлоп площадки на
+    дашборде трафика показывает факт, клики и CTR креатива (v2, 17.11.2026). Правила сбоя — как у `totals`."""
+    out: Dict[int, list] = {}
+    for cid, shows, clicks in db.execute(text("""
+        SELECT a.creative_id, sum(a.shows), sum(a.clicks) FROM adfox_creative_stat a
           JOIN ad_campaign_creative cr ON cr.id = a.creative_id
          WHERE cr.campaign_id = :c GROUP BY 1"""), {"c": camp.id}).all():
-        out[cid] = out.get(cid, 0) + int(shows or 0)
+        acc = out.setdefault(cid, [0, 0])
+        acc[0] += int(shows or 0)
+        acc[1] += int(clicks or 0)
     if not getattr(camp, "ms_campaign_xxhash", None):
         return out
     own = None
@@ -68,7 +76,9 @@ def totals(db, camp, dsp_db=None, strict: bool = False) -> Dict[int, int]:
                 return out
             dsp_db = own = DspSessionLocal()
         for (rid, _day), v in dsp_days(db, dsp_db, camp.id, camp.ms_campaign_xxhash).items():
-            out[rid] = out.get(rid, 0) + int(v[0] or 0)
+            acc = out.setdefault(rid, [0, 0])
+            acc[0] += int(v[0] or 0)
+            acc[1] += int(v[1] or 0)
     except Exception as e:     # аналитика — подсказка раскладке, а не условие: без неё — поровну
         log.warning("факт креативов РК %s не прочитан: %s", camp.id, e)
         if strict:

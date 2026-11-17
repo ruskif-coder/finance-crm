@@ -262,8 +262,11 @@ def check_storage(db: Session):
             by_dir.get(rel.split("/", 1)[0] if "/" in rel else "(корень)", 0) + size
     detail = " · ".join(f"{k} {v / 2**20:.0f} МБ" for k, v in
                         sorted(by_dir.items(), key=lambda x: -x[1])[:6])
-    return _check("storage", "Диск", "Хранилище файлов", "ok",
-                  f"{len(files)} файлов · {total / 2**20:.0f} МБ", detail)
+    c = _check("storage", "Диск", "Хранилище файлов", "ok",
+               f"{len(files)} файлов · {total / 2**20:.0f} МБ", detail)
+    # Разбивка по каталогам — правая колонка экрана; едет в снимке фонового прогона вместе со строкой
+    c["dirs"] = [{"name": k, "mb": round(v / 2**20)} for k, v in sorted(by_dir.items(), key=lambda x: -x[1])[:6]]
+    return c
 
 
 # Каталоги, файлы в которых НЕ являются сиротами по устройству: на них никто и не
@@ -327,50 +330,7 @@ def check_orphans(db: Session):
 
 def _last_run(db: Session, table, started="started_at", finished="finished_at",
               error_col=None, where=None):
-    """Последний прогон задания. ¨­⠪á¨á ¤ ­­®© ª®¬ ­¤ë:
-
-WHERE [/R ª ⠫®£] [/Q] [/F] [/T] 蠡«®­...
-
-¯¨ᠭ¨¥:
-    ⮡ࠦ ¥â à ᯮ«®¦¥­¨¥ 䠩«®¢, ᮢ¯ ¤ îé¨å á 蠡«®­®¬ ¯®¨᪠.
-    ® 㬮«砭¨î ¯®¨áª ¢믮«­ï¥âáï ¢ ⥪ã饬 ª ⠫®£¥ ¨ ¢ ª ⠫®£ å,
-    㪠§ ­­ëå ¢ ¯¥६¥­­®© á।ë PATH.
-
- ࠬ¥âàë:
-    /R       ¥ªãàᨢ­ë© ¯®¨áª ¨ ®⮡ࠦ¥­¨¥ 䠩«®¢, ᮮ⢥âáâ¢ãîé¨å
-             㪠§ ­­®¬ã 蠡«®­ã, ­ 稭 ï á 㪠§ ­­®£® ª ⠫®£ .
-
-    /Q       ®§¢à â ⮫쪮 ª®¤  ¢ë室  ¡¥§ ®⮡ࠦ¥­¨ï ᯨ᪠
-             ­ ©¤¥­­ëå 䠩«®¢ (â¨娩 ०¨¬)
-
-    /F       ⮡ࠦ¥­¨¥ ­ ©¤¥­­ëå 䠩«®¢ ¢ ª ¢ë窠å.
-
-    /T       ⮡ࠦ¥­¨¥ ࠧ¬¥à , ¤ âë ¨ ¢६¥­¨ ¨§¬¥­¥­¨ï ¤«ï ¢á¥å
-             ­ ©¤¥­­ëå 䠩«®¢.
-
-    蠡«®­    ¡«®­ ¯®¨᪠ ¤«ï ¨᪮¬ëå 䠩«®¢.
-              蠡«®­¥ ¬®¦­® ¨ᯮ«짮¢ âì ¯®¤á⠭®¢®ç­ë¥ §­ ª¨ * ¨ ?.
-              ª¦¥ ¬®¦­® § ¤ ¢ âì ª®­áâàãª樨 "$¯¥à:蠡«®­" ¨ "¯ãâì:蠡«®­",
-             £¤¥ "¯¥à" ¯।á⠢«ï¥â ¯¥६¥­­ãî á।ë, ¨
-             ¯®¨áª ®áãé¥á⢫ï¥âáï ¯® ¯ãâï¬, 㪠§ ­­ë¬ ¢ ¯¥६¥­­®©
-             á।ë "¯¥à". â¨ ª®­áâàãª樨 ­¥ ᫥¤ã¥â ¨ᯮ«짮¢ âì
-             á ¯ ࠬ¥â஬ /R. à¨ ¯®¨᪥ ª 蠡«®­ã ⠪¦¥
-             ¤®¡ ¢«ïîâáï à áè¨७¨ï ¨§ ¯¥६¥­­®© PATHEXT.
-
-     /?      뢮¤ á¯ࠢª¨ ¯® ¨ᯮ«짮¢ ­¨î.
-
-  ਬ¥砭¨¥. â  á«㦥¡­ ï ¯ணࠬ¬  ¢®§¢à 頥â ª®¤ ®訡ª¨ 0, ¥᫨
-              ¯®¨áª ¡ë« ãᯥè­ë¬, 1 - ¥᫨ ¡¥§ãᯥè­ë¬, ¨
-              2, ¥᫨ ¢®§­¨ª«¨ ®訡ª¨.
-
-ਬ¥àë:
-    WHERE /?
-    WHERE ¨¬ï_䠩« 1 ¨¬ï_??????.*
-    WHERE $windir:*.* 
-    WHERE /R c:\windows *.exe *.dll *.bat  
-    WHERE /Q ??.??? 
-    WHERE "c:\windows;c:\windows\system32:*.dll"
-    WHERE /F /T *.dll  — доп. условие отбора.
+    """Последний прогон задания. `where` — доп. условие отбора.
 
     Нужно затем, что СУХОЙ прогон тоже пишет строку, и без отсева экран показывал бы
     «рассылка жива» после холостого запуска, ничего не отправившего. Прибор, который
@@ -772,6 +732,69 @@ def check_dsp_journal(db_dsp_ok: bool):
                   f"{hours:.0f} ч назад", (row.error or "")[:200] or None)
 
 
+# ── ключи и сертификаты ──────────────────────────────────────────────────────
+
+# Пороги хендоффа 16.11.2026: жёлтый — меньше 14 дней, красный — меньше 3 (или уже истёк).
+KEYS_WARN_DAYS = 14
+KEYS_BAD_DAYS = 3
+
+
+def _days_word(n: int) -> str:
+    m, h = n % 10, n % 100
+    return f"{n} " + ("дней" if 11 <= h <= 14 else "день" if m == 1 else "дня" if 2 <= m <= 4 else "дней")
+
+
+def check_ssl(key: str, title: str, host: str, hurts: str):
+    """Сколько дней осталось сертификату. ЖИВАЯ проверка (соединение наружу) — только в фоновом прогоне.
+
+    Сертификаты выпускает и продлевает Caddy сам (Let's Encrypt, за 30 дней до конца), поэтому жёлтый здесь значит
+    не «пора продлить руками», а «Caddy перестал продлевать» — смотреть его лог.
+    """
+    import socket
+    import ssl
+    host = (host or "").replace("https://", "").replace("http://", "").strip("/ ")
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return _check(key, "Ключи и сертификаты", title, "idle", "не проверяется",
+                      "на стенде сертификат локальный")
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, 443), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                not_after = tls.getpeercert()["notAfter"]
+    except Exception as e:                       # noqa: BLE001
+        return _check(key, "Ключи и сертификаты", title, "bad", "не проверить", f"{host}: {str(e)[:160]}",
+                      consequence=hurts)
+    end = datetime.fromtimestamp(ssl.cert_time_to_seconds(not_after), tz=timezone.utc)
+    days = (end - datetime.now(timezone.utc)).days
+    tone = "bad" if days < KEYS_BAD_DAYS else "warn" if days < KEYS_WARN_DAYS else "ok"
+    from app import timez
+    till = timez.to_msk(end.replace(tzinfo=None)).strftime("%d.%m.%Y")
+    return _check(key, "Ключи и сертификаты", title, tone,
+                  "истёк" if days < 0 else _days_word(days),
+                  f"действует до {till} · продлевается автоматически" if tone == "ok"
+                  else f"{host} · действует до {till}",
+                  consequence=None if tone == "ok" else f"Истечёт {till} — {hurts}")
+
+
+def check_ssl_portal():
+    return check_ssl("ssl_portal", "SSL портала", os.getenv("DOMAIN") or "",
+                     "браузеры перестанут открывать портал")
+
+
+def check_ssl_cabinet():
+    from app.mail.render import cabinet_url
+    return check_ssl("ssl_cabinet", "SSL кабинета паблишера", cabinet_url("/") or "",
+                     "площадки не смогут войти в кабинет")
+
+
+# Проверки, которые ходят наружу и поэтому идут только в фоновом прогоне. При открытии экрана их строки берутся из
+# последнего снимка фонового прогона (`system_check_state.last`), а не пропадают.
+LIVE_KEYS = ("tg_live", "ssl_portal", "ssl_cabinet")
+# Обход хранилища — секунды (прод 2,2 с, стенд 5,5 с, 16.11.2026): при открытии экрана и автообновлении раз в 30 с
+# его строки тоже берутся из снимка фонового прогона (раз в 10 минут), полный обход — в фоне и по «Проверить».
+WALK_KEYS = ("storage", "orphans")
+
+
 # ── конфигурация ─────────────────────────────────────────────────────────────
 
 def check_debug_off():
@@ -827,9 +850,9 @@ def check_backup_visibility():
         return max(got, key=lambda f: os.path.getmtime(os.path.join(path, f)))
 
     DBS = (
-        ("backups", "Основная база",
+        ("backups", "Бэкап основной базы",
          lambda f: f.startswith("backup_") and not f.startswith("backup_dsp_analytics_")),
-        ("backups_dsp", "Аналитическая база (DSP)",
+        ("backups_dsp", "Бэкап аналитической базы (DSP)",
          lambda f: f.startswith("backup_dsp_analytics_")),
     )
     out = []
@@ -992,7 +1015,7 @@ def _safe_value(fn, *args, default):
         return default
 
 
-def collect(db: Session, live: bool = False) -> dict:
+def collect(db: Session, live: bool = False, walk: bool = True) -> dict:
     # ПОРЯДОК ВАЖЕН: `check_core_db` идёт первой и делает `rollback()`, если база
     # ответила ошибкой, — иначе все запросы ниже падали бы на мёртвой транзакции.
     checks = [_safe(check_core_db, db)]
@@ -1000,7 +1023,10 @@ def collect(db: Session, live: bool = False) -> dict:
     checks.append(dsp)
     checks += [_safe(check_pdf), _safe(check_cabinet),
                _safe(check_db_sizes, db), _safe(check_db_connections, db),
-               _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
+               _safe(check_disk)]
+    if walk:
+        checks += [_safe(check_storage, db), _safe(check_orphans, db)]
+    checks += [
                _safe(check_notify_dispatch, db),
                _safe(check_erid_auto, db), _safe(check_dsp_stats, db),
                _safe(check_bidder, db), _safe(check_outward_digest, db),
@@ -1014,7 +1040,7 @@ def collect(db: Session, live: bool = False) -> dict:
     # Живые запросы наружу — только по явному запросу (фоновый прогон раз в час).
     # Дёргать чужие сервисы при каждом открытии экрана — способ получить бан по частоте.
     if live:
-        checks.append(_safe(check_telegram_live))
+        checks += [_safe(check_telegram_live), _safe(check_ssl_portal), _safe(check_ssl_cabinet)]
     checks.append(_safe(check_debug_off))
     # Бэкапы отдают СПИСОК — по строке на базу (см. докстроку проверки).
     bk = _safe(check_backup_visibility)

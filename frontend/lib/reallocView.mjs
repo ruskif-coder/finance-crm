@@ -41,7 +41,7 @@ const SORT_VALUE = {
   name: (r) => r.name || '',
   pace: (r) => { const i = PACE_RANK.indexOf(r.pace); return i < 0 ? null : i },
   shows_day: (r) => r.shows_day, offered_day: (r) => r.offered_day, capacity: (r) => r.capacity,
-  need: (r) => r.need, plan: (r) => r.plan,
+  need: (r) => r.need, plan: (r) => r.plan, fact: (r) => r.fact,
   delta: (r, e) => planOf(r, e) - r.plan,
   newplan: (r, e) => planOf(r, e),
   after: (r, e, days) => needPerDay(planOf(r, e), r.fact, days),

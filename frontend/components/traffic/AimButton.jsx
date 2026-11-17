@@ -61,7 +61,8 @@ function AimModal({ setId, state, onClose }) {
   )
 }
 
-export default function AimButton({ setId, tgtState, mayEdit = true, compact = false, offWhy = '', style }) {
+// `hideWhy` — причину запрета рисует вызывающий сам (вид «по креативам» v2: в две строки, 17.11.2026).
+export default function AimButton({ setId, tgtState, mayEdit = true, compact = false, offWhy = '', hideWhy = false, style }) {
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState(undefined)
   const [msg, setMsg] = useState('')
@@ -104,7 +105,7 @@ export default function AimButton({ setId, tgtState, mayEdit = true, compact = f
           ...(offWhy ? { opacity: 0.45, color: 'var(--text-faint)' } : aimToneFor(live, tgtState)), ...style }}>
         {busy ? 'выпускаю…' : compact ? '◎ нацелить' : '◎ Нацелить на себя'}
       </button>
-      {!!offWhy && (
+      {!!offWhy && !hideWhy && (
         <span style={{ fontSize: 11, color: 'var(--text-faint)', maxWidth: 360 }} title={offWhy}>
           {offWhy.length > 70 ? `${offWhy.slice(0, 68)}…` : offWhy}
         </span>

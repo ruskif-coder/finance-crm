@@ -156,6 +156,8 @@ ACTION_LABELS = {
     "bug_report_backlog": "Из заявки заведено наблюдение",
     "maintenance_on": "Объявлено техобслуживание",
     "maintenance_off": "Техобслуживание снято",
+    "system_job_run": "Ручной запуск фонового задания",
+    "system_alerts_changed": "Изменены оповещения статуса системы",
     "ord_sync_clients": "Сверка юрлиц с ОРД",
     "ord_sync_contracts": "Сверка договоров с ОРД",
     "ord_register_final": "Договор зарегистрирован в ОРД",

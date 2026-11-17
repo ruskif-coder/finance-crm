@@ -58,12 +58,28 @@ export default function App({ Component, pageProps }) {
       .finally(() => setReady(true))
   }, [])
 
+  // «Онлайн сейчас» на экране статуса (16.11.2026): отметка открытия страницы — при загрузке и на каждом переходе.
+  // Без ожидания ответа и без ошибок на экране: это справка для администратора, а не часть работы человека.
+  useEffect(() => {
+    const mark = (url) => {
+      const token = localStorage.getItem('token')
+      const path = String(url || window.location.pathname).split('?')[0].split('#')[0]
+      if (!token || path === '/login') return
+      axios.post('/api/system/hit', { path }, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {})
+    }
+    mark(window.location.pathname)
+    router.events.on('routeChangeComplete', mark)
+    return () => router.events.off('routeChangeComplete', mark)
+  }, [router])
+
   // Загрузчик 1a «Волна» на переходах между страницами (с дебаунсом ~180мс, чтобы
   // не мигал на мгновенной клиентской навигации). Начальная загрузка — через `ready`.
   const [nav, setNav] = useState(false)
   const navTimer = useRef(null)
   useEffect(() => {
-    const start = () => { navTimer.current = setTimeout(() => setNav(true), 180) }
+    // Новый старт отменяет прежний таймер: иначе два перехода подряд (дашборд трафика с `?open=`) оставляли
+    // «осиротевший» таймер, он срабатывал после конца перехода, и заставка висела навсегда (17.11.2026).
+    const start = () => { clearTimeout(navTimer.current); navTimer.current = setTimeout(() => setNav(true), 180) }
     const stop = () => { clearTimeout(navTimer.current); setNav(false) }
     router.events.on('routeChangeStart', start)
     router.events.on('routeChangeComplete', stop)

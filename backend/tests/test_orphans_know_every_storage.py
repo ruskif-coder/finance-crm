@@ -8,7 +8,8 @@ from app.database import SessionLocal
 from app.system import status as S
 
 # `entry_path` — точка входа ВНУТРИ распакованной песочницы, не ключ файла хранилища.
-NOT_A_STORAGE_KEY = {("creative_check", "entry_path"), ("launch_prep_creative_file", "entry_path")}
+# `user_page_hit.path` — адрес страницы портала («Онлайн» на экране статуса, 16.11.2026), не файл.
+NOT_A_STORAGE_KEY = {("creative_check", "entry_path"), ("launch_prep_creative_file", "entry_path"), ("user_page_hit", "path")}
 
 
 def _cols(where):

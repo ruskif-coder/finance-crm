@@ -12,7 +12,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Cube } from '@/components/LogoLoader';
-import { MONO, VERDICT, nf, minus, stripOf, Strip, VerdictPill, Legend, Segmented, Cap, PlatformRks, platformSay } from './reportKit';
+import { MONO, VERDICT, nf, minus, stripOf, Strip, VerdictPill, Legend, Segmented, Cap, PlatformRks, platformSay, culpritsSummary } from './reportKit';
 
 const COLS = '12px 170px 200px minmax(220px,1fr) 130px 96px';
 
@@ -58,9 +58,7 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
     });
   }, [data.platforms, sort, metric, rkByCode]);
   const maxUnder = Math.max(1, ...list.map(p => p.stats.under_total));
-  const total = list.reduce((a, p) => a + p.stats.under_total, 0);
-  const sys = data.platforms.filter(p => p.verdict === 'fail' || p.verdict === 'sysund').length;
-  const wr = data.platforms.filter(p => p.wr_systemic).length;
+  const { under: total, systemic: sys, wrSystemic: wr } = culpritsSummary(data);
 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '16px 20px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>

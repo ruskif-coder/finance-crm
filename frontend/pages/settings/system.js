@@ -1,389 +1,197 @@
 /**
- * Настройки → Статус.
+ * Настройки → Статус системы (макет design_handoff_status, 16.11.2026; заменяет экран из восьми плиток 07.09.2026).
  *
- * Заведено 07.09.2026 после случая, когда база DSP лежала три часа и об этом никто не
- * узнал. Спека — `docs/SPEC_экран_состояния_системы.md`, дизайн — хендофф
- * `docs/статус.zip` (`design_handoff_system_health`).
+ * Одна таблица проверок с секциями, фильтры пинами, скролл только внутри карточек. «Требует внимания» — первая
+ * секция; тон секции и экрана считается из строк (`statusModel`). Права — только администратор (владелец 16.11.2026),
+ * сервер закрыт `require_admin`.
  *
- * Готового компонента в хендоффе НЕ БЫЛО (только дизайн-система и html-референс), поэтому
- * вёрстка своя — но на наших примитивах и токенах. Палитра хендоффа совпадает с нашей по
- * значениям, отличаются только имена переменных: `--card` → `--bg-card`, `--t1` →
- * `--text-primary` и так далее. Второй набор токенов не заводился.
- *
- * ЧЕТЫРЕ ТОНА, А НЕ ТРИ. `idle` — «данных нет, и это норма»: cron стоит только на сервере,
- * синк с Битриксом запускается руками. В счёт отказов такие строки не идут.
- *
- * Тон плитки и тон экрана ВЫЧИСЛЯЮТСЯ из строк, руками не задаются: хранимая копия
- * состояния разъехалась бы с проверками.
+ * Открытие экрана и «авто · 30 с» живых запросов наружу не делают: связь с Телеграмом и SSL проверяет фоновый прогон
+ * (`python -m app.system.watch`, крон раз в 10 минут), экран берёт их последний снимок. «Проверить» — такой прогон
+ * сейчас: с записью истории и оповещениями при смене состояния.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Head from 'next/head'
-import Navbar from '@/components/Navbar'
+import { useRouter } from 'next/router'
+import Navbar, { firstAllowedHref } from '@/components/Navbar'
 import SettingsTabs from '@/components/SettingsTabs'
-import MaintenanceButton from '@/components/MaintenanceButton'
-import api, { auth } from '@/lib/api'
-import { card, MONO, UI, btnSm } from '@/components/salesTableKit'
-import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { MONO, UI } from '@/components/salesTableKit'
+import api, { auth } from '@/lib/http'
+import { isAdmin } from '@/lib/auth'
+import { detailText } from '@/lib/loadError'
 import { fmtTime } from '@/lib/dates'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { TONE_DOT, buildView, plural, verdictOf } from '@/components/settings/status/statusModel'
+import StatusTable from '@/components/settings/status/StatusTable'
+import { DiskCard, OnlineAndActivity } from '@/components/settings/status/SidePanels'
+import { MaintBadge, MaintButton, NotifyButton, Toggle, headBtn } from '@/components/settings/status/HeaderActions'
 
-const CARD = { ...card, padding: '16px 18px' }
-const CAPS = { fontFamily: MONO, fontSize: 10, letterSpacing: '.1em',
-               textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }
-
-/** Тон → цвет, фон, подпись. `idle` серый: это не поломка, а отсутствие данных. */
-const TONE = {
-  ok:   { fg: 'var(--income)',       bg: 'var(--income-tint)',  bd: 'var(--income-border)',  label: 'всё в норме' },
-  warn: { fg: 'var(--warning-text)', bg: 'var(--warning-tint)', bd: 'var(--warning-border)', label: 'внимание' },
-  bad:  { fg: 'var(--danger)',       bg: 'var(--danger-tint)',  bd: 'var(--danger-border)',  label: 'отказ' },
-  idle: { fg: 'var(--text-faint)',   bg: 'var(--bg-subtle)',    bd: 'var(--border-card)',    label: 'нет данных' },
+const AUTO_MS = 30000
+const cap = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
+const plain = { background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textAlign: 'left' }
+const cardBox = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18 }
+const VERDICT = {
+  ok: { bg: 'var(--income-tint)', bd: 'var(--income-border)', fg: 'var(--income-fg)' },
+  warn: { bg: 'var(--warning-tint)', bd: 'var(--warning-border)', fg: 'var(--warning-fg)' },
+  bad: { bg: 'var(--danger-tint)', bd: 'var(--danger-border)', fg: 'var(--danger-fg)' },
 }
-const t = (k) => TONE[k] || TONE.idle
+const groupPin = (on) => ({ ...plain, display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 9, fontSize: 12, whiteSpace: 'nowrap',
+  background: on ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
+  color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontWeight: on ? 700 : 600 })
+const Num = ({ n }) => <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{n}</span>
 
-/** Квадратный маркер — все маркеры экрана квадратные (правило хендоффа). */
-function Mark({ tone, size = 6 }) {
-  return <span style={{ width: size, height: size, borderRadius: 2, flexShrink: 0,
-                        background: t(tone).fg, display: 'inline-block' }} />
-}
-
-/** Итог плитки считается ИЗ СТРОК: «всё ок · 4», «2 из 5 не настроено», «нет данных». */
-function tileSummary(items) {
-  const bad = items.filter(i => i.tone === 'bad').length
-  const warn = items.filter(i => i.tone === 'warn').length
-  const idle = items.filter(i => i.tone === 'idle').length
-  if (bad) return { tone: 'bad', text: `${bad} из ${items.length} отказ` }
-  if (warn) return { tone: 'warn', text: `${warn} из ${items.length} не настроено` }
-  if (idle && idle === items.length) return { tone: 'idle', text: 'нет данных · норма стенда' }
-  if (idle) return { tone: 'idle', text: `${items.length - idle} ок · ${idle} без данных` }
-  return { tone: 'ok', text: `всё ок · ${items.length}` }
-}
-
-function CheckRow({ c }) {
-  const muted = c.tone === 'idle'
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,1fr) auto', gap: 9,
-                  alignItems: 'baseline', padding: '8px 0',
-                  borderBottom: '1px solid var(--border-row)' }}>
-      <Mark tone={c.tone} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600,
-                      color: muted ? 'var(--text-muted)' : 'var(--text-primary)' }}>{c.title}</div>
-        {!!c.note && (
-          <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)',
-                        marginTop: 3, lineHeight: 1.5 }}>{c.note}</div>
-        )}
-      </div>
-      <div style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                    color: muted ? 'var(--text-faint)' : t(c.tone).fg }}>{c.value || '—'}</div>
-    </div>
-  )
-}
-
-function Tile({ title, items, children }) {
-  const s = tileSummary(items || [])
-  return (
-    <div style={{ ...CARD, borderColor: s.tone === 'bad' ? 'var(--danger-border)'
-                    : s.tone === 'warn' ? 'var(--warning-border)' : 'var(--border-card)',
-                  display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: t(s.tone).fg }} />
-        <span style={CAPS}>{title}</span>
-        <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10,
-                       color: t(s.tone).fg }}>{s.text}</span>
-      </div>
-      {children}
-      {(items || []).map(c => <CheckRow key={c.key} c={c} />)}
-    </div>
-  )
-}
-
-/** Спарклайн: 24 часа, нулевые серые, у каждого столбика подсказка со значением.
- *  Столбики, а не линия: значения дискретны по часам, линия обещала бы плавность. */
-function Spark({ series, field, tone }) {
-  const top = Math.max(1, ...series.map(x => x[field]))
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 52 }}>
-        {series.map(x => (
-          <div key={x.hour} title={`${fmtTime(x.hour, '')} · ${x[field]}`}
-               style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                        justifyContent: 'flex-end', height: '100%' }}>
-            <div style={{ height: Math.max(2, Math.round(x[field] / top * 48)), borderRadius: 2,
-                          background: x[field] ? tone : 'var(--border-inner)' }} />
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5,
-                    fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>
-        <span>{fmtTime(series[0].hour, '')} вчера</span><span>сейчас</span>
-      </div>
-    </div>
-  )
-}
-
-/** Полоса занятости диска: цвет по порогам 80 / 90 % занятости. */
-function DiskBar({ disk }) {
-  const c = disk.used_pct > 90 ? 'var(--danger)'
-    : disk.used_pct > 80 ? 'var(--warning)' : 'var(--income)'
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ height: 8, borderRadius: 4, background: 'var(--border-inner)',
-                    overflow: 'hidden' }}>
-        <div style={{ width: `${disk.used_pct}%`, height: '100%', background: c }} />
-      </div>
-      <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', marginTop: 5 }}>
-        занято {disk.used_gb} из {disk.total_gb} ГБ · порог: жёлтый 20 %, красный 10 % свободного
-      </div>
-    </div>
-  )
-}
-
-/* Шесть предложений — статический текст экрана, а не данные с сервера: это не состояние,
-   а список того, чего на экране НЕТ. Каждое считается из уже имеющегося в базе. */
-const SUGGESTIONS = [
-  ['Расхождение с Битриксом', 'var(--danger)',
-   'Сколько сделок и сумм разошлось с внешним источником на момент последней синки. Автосинки нет, и узнать это можно только вручную — а цифра нужна каждый день.',
-   'сделки · журнал синхронизаций'],
-  ['Целостность связок', 'var(--warning)',
-   'Контрагенты без юрлица, договоры без контрагента, стадии без слоя денег. Тот же отчёт «требует разбора», сведённый в одно число.',
-   'справочники · stage_catalog'],
-  ['Очередь уведомлений', 'var(--accent)',
-   'Сколько уведомлений ждёт отправки и сколько провалилось. Пока задание не запускалось, очередь копится молча.',
-   'notifications'],
-  ['Свежесть статистики площадок', 'var(--violet-fg)',
-   'Дата последнего замера по каждой поверхности. Дашборд трафика считает недокрут от факта — если факт вчерашний, все цифры врут.',
-   'publisher_traffic'],
-  ['Медленные запросы', 'var(--warning)',
-   'Топ-5 самых долгих запросов за сутки с длительностью. Ответ базы 20 мс — средний, а на реестрах бывает 4 секунды.',
-   'pg_stat_statements'],
-  ['Последний успешный бэкап', 'var(--income)',
-   'Не факт наличия каталога, а дата и размер последнего дампа плюс результат тестового восстановления. Бэкап без проверки восстановления — не бэкап.',
-   'каталог бэкапов · шаг 2'],
-]
-
-export default function SystemStatus() {
-  const [d, setD] = useState(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+export default function SettingsSystem() {
+  const router = useRouter()
+  const [data, setData] = useState(null)
+  const [maint, setMaint] = useState(null)
+  const [error, setError] = useState('')
+  const [f, setF] = useState({ q: '', tone: 'all', group: 'all' })
+  const [closed, setClosed] = useState({ cand: true })
+  const [open, setOpen] = useState({})
+  const [confirm, setConfirm] = useState('')
   const [auto, setAuto] = useState(true)
+  const [checking, setChecking] = useState(false)
+  const [justChecked, setJustChecked] = useState(false)
   const autoRef = useRef(auto)
   autoRef.current = auto
 
-  /** `live` — запросы к внешним сервисам. Делает их только РУЧНОЕ «Проверить»:
-   *  человек, нажавший кнопку, хочет настоящий ответ, а фон каждые 30 секунд дёргать
-   *  чужие API не должен — это способ получить бан по частоте. */
-  const load = useCallback(async (live = false) => {
-    setBusy(true); setErr('')
-    try {
-      const { data } = await api.get(`/system/status${live ? '?live=1' : ''}`, auth())
-      setD(data)
-    } catch (e) {
-      setErr(e?.response?.status === 403
-        ? 'Экран доступен только администратору.'
-        : 'Не удалось получить состояние.')
-    }
-    setBusy(false)
-  }, [])
+  const load = useCallback(() => api.get('/system/status', auth())
+    .then(r => { setData(r.data); setError('') })
+    .catch(e => setError(detailText(e, 'Статус не загрузился'))), [])
+  const loadMaint = useCallback(() => api.get('/maintenance', auth()).then(r => setMaint(r.data)).catch(() => {}), [])
 
-  useRefreshOnReturn(() => load())
-  useEffect(() => { load() }, [load])
-
-  // Интервал живёт всё время, а перерисовывает только при включённом тумблере: снимать и
-  // ставить его на каждый щелчок значило бы плодить таймеры, переживающие страницу.
   useEffect(() => {
-    const id = setInterval(() => { if (autoRef.current) load() }, 30000)
+    if (!isAdmin()) {
+      let p = {}
+      try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { p = {} }
+      router.push(firstAllowedHref(p, false))
+      return undefined
+    }
+    load(); loadMaint()
+    // «авто · 30 с»: выключенный тумблер действительно останавливает обновление (а не только перестаёт показывать)
+    const id = setInterval(() => { if (autoRef.current) { load(); loadMaint() } }, AUTO_MS)
     return () => clearInterval(id)
-  }, [load])
+  }, [load, loadMaint, router])
+  useRefreshOnReturn(() => { if (autoRef.current) load() })
 
-  const by = (g) => (d?.checks || []).filter(c => c.group === g)
-  const ov = t(d?.overall)
-  const badN = (d?.alerts || []).filter(a => a.tone === 'bad').length
+  const checkNow = () => {
+    setChecking(true)
+    api.post('/system/status/check', {}, auth())
+      .then(r => { setData(r.data); setError(''); setJustChecked(true); setTimeout(() => setJustChecked(false), 2500) })
+      .catch(e => setError(detailText(e, 'Прогон проверок не удался')))
+      .finally(() => setChecking(false))
+  }
+  const runJob = (key) => api.post(`/system/jobs/${key}/run`, {}, auth())
+    .then(() => { load(); setTimeout(load, 4000) })
+    .catch(e => setError(detailText(e, 'Задание не запустилось')))
+  const saveAlerts = (patch) => api.put('/system/alerts', patch, auth())
+    .then(r => setData(d => ({ ...d, notify: { ...d.notify, ...r.data } })))
+    .catch(e => setError(detailText(e, 'Настройки оповещений не сохранились')))
+  const announce = (scope) => api.post('/maintenance', scope, auth()).then(loadMaint).catch(e => setError(detailText(e, 'Техобслуживание не объявлено')))
+  const cancelMaint = () => api.delete('/maintenance', auth()).then(loadMaint).catch(e => setError(detailText(e, 'Техобслуживание не снято')))
+
+  const checks = useMemo(() => data?.checks || [], [data])
+  const groups = useMemo(() => data?.groups || [], [data])
+  const view = useMemo(() => buildView(checks, groups, f), [checks, groups, f])
+  const verdict = verdictOf(checks)
+  const vt = VERDICT[verdict.tone]
+  const filtered = !!(f.q || f.tone !== 'all' || f.group !== 'all')
+  const storage = checks.find(c => c.key === 'storage')?.value
 
   return (
     <>
-      <Head><title>Статус · Настройки | SIMB-AD ERP</title></Head>
+      <Head><title>Статус системы · Настройки | SIMB-AD ERP</title></Head>
+      {/* Навбар и тело — одной колонкой высотой в экран: так прокручиваются только карточки, а не страница */}
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Navbar active="settings" />
-      {/* Вкладки и содержимое — В ОДНОЙ обёртке. Порознь они и разъехались: у обёртки с
-          одними вкладками стоял `minHeight: 100vh`, то есть пустая полоса высотой в целый
-          экран, и данные уезжали ПОД сгиб (владелец 17.09.2026). Высота в один экран
-          нужна фону страницы, а фон — это тот же контейнер, что держит содержимое.
-
-          Ширина — на всё окно, как у остальных экранов настроек: ряд вкладок от края до края, по левому краю
-          (владелец 16.09 и 16.11.2026) — иначе при переходе между экранами ряд прыгает. */}
-      <div style={{ background: 'var(--bg-canvas)', minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
+      <style>{`
+        .st-row:hover { background: var(--bg-tint) !important }
+        .st-head:hover, .st-btn:hover { border-color: var(--border-hover) !important }
+        .st-btn:hover { color: var(--accent-fg) !important }
+        .st-cta:hover, .st-yes:hover { background: var(--accent-hover) !important }
+        .st-q:focus { border-color: var(--accent) !important }
+      `}</style>
+      <div style={{ padding: '20px 26px 22px', background: 'var(--bg-canvas)', flex: '1 1 auto', minHeight: 0, boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, color: 'var(--text-primary)' }}>
         <SettingsTabs active="system" />
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',
-                      marginBottom: 16 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 25, fontWeight: 800 }}>Статус</h1>
-            <div style={{ ...CAPS, marginTop: 5, color: 'var(--text-faint)' }}>
-              /settings/system · {d ? `${new Set(d.checks.map(c => c.group)).size} групп проверок` : '…'}
-            </div>
-          </div>
-          {!!d && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
-                           background: ov.bg, border: `1px solid ${ov.bd}`, color: ov.fg,
-                           padding: '7px 13px', borderRadius: 11, marginTop: 4 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: ov.fg }} />
-              <b style={{ ...CAPS, color: ov.fg }}>{ov.label}</b>
-              <span style={{ fontSize: 12 }}>
-                {d.alerts.length - badN} требуют настройки ·{' '}
-                {badN ? `отказов ${badN}` : 'отказов нет'}
-              </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.025em' }}>Статус системы</span>
+            <span style={{ ...cap, fontSize: 10 }}>{plural(checks.length, 'проверка', 'проверки', 'проверок')} · {groups.length} групп</span>
+          </span>
+          {data && (
+            <span title="Итог считается из строк: худшее состояние среди всех проверок" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 26, padding: '0 10px',
+              borderRadius: 8, background: vt.bg, border: `1px solid ${vt.bd}`, fontSize: 12, fontWeight: 700, color: vt.fg, whiteSpace: 'nowrap' }}>
+              <span style={{ width: 7, height: 7, borderRadius: 2, background: TONE_DOT[verdict.tone] }} />{verdict.label}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10,
-                         alignItems: 'center', marginTop: 6 }}>
-            {!!d && (
-              <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)',
-                             textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                {fmtTime(d.checked_at, '')}
-              </span>
-            )}
-            <button style={btnSm(auto)} onClick={() => setAuto(a => !a)}
-                    title="Обновлять каждые 30 секунд">авто · 30с</button>
-            <button style={btnSm(false)} disabled={busy} onClick={() => load(true)}>
-              Проверить
-            </button>
-            {/* Техобслуживание стоит ЗДЕСЬ, а не в шапке: нажатие останавливает работу
-                всем сразу, и место у такой кнопки — там, куда заходят осознанно. */}
-            <MaintenanceButton />
+          <MaintBadge st={maint} />
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              {checking ? 'проверяю…' : justChecked ? 'проверено только что' : data ? `проверено в ${fmtTime(data.checked_at)}` : ''}</span>
+            <button type="button" onClick={() => setAuto(a => !a)} className="st-head" title="Автообновление каждые 30 секунд"
+              style={{ ...headBtn, gap: 8, padding: '0 12px 0 10px', color: auto ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+              <Toggle on={auto} />авто · 30 с</button>
+            <button type="button" onClick={checkNow} disabled={checking} className="st-head" title="Прогнать все проверки сейчас, включая живые запросы наружу"
+              style={headBtn}>Проверить</button>
+            <NotifyButton cfg={data?.notify} onChange={saveAlerts} />
+            <MaintButton st={maint} onAnnounce={announce} onCancel={cancelMaint} />
           </span>
         </div>
 
-        {!!err && (
-          <div style={{ ...CARD, borderColor: 'var(--danger-border)', color: 'var(--danger)' }}>{err}</div>
-        )}
+        {!!error && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger-border)', color: 'var(--danger-fg)', borderRadius: 12, padding: '8px 14px', fontSize: 12.5 }}>{error}</div>}
 
-        {d && (
-          <div style={{ display: 'grid', gap: 14 }}>
+        <div style={{ ...cardBox, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0,1fr))', padding: '14px 6px' }}>
+          {(data?.kpi || []).map((k, i) => (
+            <span key={k.key} style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: '0 18px', borderLeft: `1px solid ${i ? 'var(--border-inner)' : 'transparent'}`, minWidth: 0 }}>
+              <span style={cap}>{k.label}</span>
+              <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{k.value}</span>
+              <span title={k.hint} style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.hint}</span>
+            </span>
+          ))}
+        </div>
 
-            <div style={{ ...CARD, display: 'grid',
-                          gridTemplateColumns: `repeat(${d.kpi.length}, 1fr)` }}>
-              {d.kpi.map((k, i) => (
-                <div key={k.key} style={{ padding: '2px 16px',
-                                          borderRight: i === d.kpi.length - 1
-                                            ? '1px solid transparent'
-                                            : '1px solid var(--border-inner)' }}>
-                  <div style={CAPS}>{k.label}</div>
-                  <div style={{ fontFamily: MONO, fontSize: 23, fontWeight: 700, margin: '6px 0 4px',
-                                color: k.key === 'errors' && k.value !== '0'
-                                  ? 'var(--warning-text)' : 'var(--text-primary)' }}>{k.value}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{k.hint}</div>
-                </div>
-              ))}
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap' }}>
+          <input value={f.q} onChange={e => setF({ ...f, q: e.target.value })} placeholder="Проверка, ключ, файл" aria-label="Поиск" type="search" className="st-q"
+            style={{ width: 210, height: 32, boxSizing: 'border-box', padding: '0 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+              borderRadius: 10, fontSize: 12.5, outline: 'none', fontFamily: UI, color: 'var(--text-primary)' }} />
+          <span style={{ display: 'inline-flex', padding: 2, borderRadius: 11, background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)' }}>
+            {view.tones.map(([k, label, n]) => {
+              const on = f.tone === k
+              return (
+                <button key={k} type="button" onClick={() => setF({ ...f, tone: k })} style={{ ...plain, display: 'inline-flex', alignItems: 'center', gap: 6, height: 28,
+                  padding: '0 11px', borderRadius: 9, background: on ? 'var(--bg-card)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
+                  color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontSize: 12.5, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap' }}>{label}<Num n={n} /></button>
+              )
+            })}
+          </span>
+          {filtered && <button type="button" onClick={() => setF({ q: '', tone: 'all', group: 'all' })}
+            style={{ ...plain, fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)', whiteSpace: 'nowrap' }}>сбросить ×</button>}
+          <span style={{ flex: '1 0 100%', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ ...cap, width: 58 }}>Группа</span>
+            <button type="button" onClick={() => setF({ ...f, group: 'all' })} style={groupPin(f.group === 'all')}>Все<Num n={view.inToneN} /></button>
+            {view.groupPins.map(p => (
+              <button key={p.key} type="button" title={p.title} onClick={() => setF({ ...f, group: f.group === p.key ? 'all' : p.key })} style={groupPin(f.group === p.key)}>
+                <span style={{ width: 7, height: 7, borderRadius: 2, background: TONE_DOT[p.tone] }} />{p.label}<Num n={p.n} />
+              </button>
+            ))}
+          </span>
+        </div>
 
-            {/* Блок целиком скрыт, когда очередь пуста: пустая рамка «всё хорошо»
-                занимает место и приучает пролистывать. */}
-            {!!d.alerts.length && (
-              <div style={{ ...CARD, background: 'var(--warning-bg)',
-                            borderColor: 'var(--warning-border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warning)' }} />
-                  <span style={CAPS}>Требует внимания</span>
-                  <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10,
-                                 color: 'var(--text-faint)' }}>{d.alerts.length} строк</span>
-                </div>
-                {d.alerts.map(a => (
-                  <div key={a.key} style={{ display: 'grid',
-                        gridTemplateColumns: '170px minmax(0,1fr) 132px 132px', gap: 10,
-                        alignItems: 'center', padding: '9px 0',
-                        borderBottom: '1px solid var(--border-row)' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
-                                   fontSize: 13, fontWeight: 600 }}>
-                      <Mark tone={a.tone} /> {a.title}
-                    </span>
-                    <span style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5 }}>{a.consequence || a.note || '—'}</div>
-                      {!!a.keys?.length && (
-                        <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)',
-                                      marginTop: 3 }}>нет {a.keys.join(', ')}</div>
-                      )}
-                    </span>
-                    <span style={{ fontFamily: MONO, fontSize: 10, textAlign: 'right',
-                                   textTransform: 'uppercase', letterSpacing: '.05em',
-                                   color: t(a.tone).fg }}>{a.value}</span>
-                    <span style={{ textAlign: 'right' }}>
-                      {/* Кнопка только там, где вопрос ДЕЙСТВИТЕЛЬНО решается. «Открыть
-                          .env» из браузера невозможен, и такая кнопка была бы обещанием,
-                          которого интерфейс не выполнит. */}
-                      {a.action
-                        ? <a href={a.action.href} style={{ ...btnSm(false), textDecoration: 'none' }}>
-                            {a.action.label}
-                          </a>
-                        : <span style={{ fontFamily: MONO, fontSize: 9.5,
-                                         color: 'var(--text-faint)' }}>правится в .env</span>}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14,
-                          alignItems: 'stretch' }}>
-              <Tile title="Действий в системе за сутки"
-                    items={[{ key: 'a', tone: 'ok', title: 'Действий в системе',
-                              value: String(d.activity.actions_24h),
-                              note: `пик ${Math.max(...d.activity.series.map(x => x.actions))} в час` }]}>
-                <Spark series={d.activity.series} field="actions" tone="var(--income)" />
-              </Tile>
-              <Tile title="Пользователей за сутки"
-                    items={[{ key: 'u', tone: 'ok', title: 'Пользователей',
-                              value: String(d.activity.users_24h),
-                              note: 'считаются по журналу действий' }]}>
-                <Spark series={d.activity.series} field="users" tone="var(--accent)" />
-              </Tile>
-
-              <Tile title="Службы" items={by('Службы')} />
-              <Tile title="Диск и файлы" items={by('Диск')}>
-                <DiskBar disk={d.disk} />
-              </Tile>
-
-              <Tile title="Базы" items={by('Базы')} />
-              <Tile title="Внешние связи" items={by('Внешние связи')} />
-
-              <Tile title="Конфигурация и бэкапы"
-                    items={[...by('Конфигурация'), ...by('Бэкапы')]} />
-              <Tile title="Фоновые задания" items={by('Фоновые задания')} />
-            </div>
-
-            <div style={CARD}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12,
-                            flexWrap: 'wrap' }}>
-                <span style={{ ...CAPS, color: 'var(--accent)' }}>Чем дополнить</span>
-                <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                  шесть проверок, которых на экране нет — все считаются из того, что уже в базе
-                </span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                            gap: 12 }}>
-                {SUGGESTIONS.map(([title, tone, text, src]) => (
-                  <div key={title} style={{ background: 'var(--bg-subtle)', borderRadius: 13,
-                                            padding: '13px 15px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: tone }} />
-                      <b style={{ fontSize: 13 }}>{title}</b>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.55 }}>{text}</div>
-                    <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)',
-                                  marginTop: 7, textTransform: 'uppercase', letterSpacing: '.06em' }}>{src}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Честная граница экрана: без неё отсутствие раздела читается как «там всё
-                хорошо», а на деле там просто нечем смотреть. */}
-            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.6 }}>
-              Контейнеры, их аптайм и политики перезапуска экран не показывает: у бэкенда
-              нет доступа к докеру, и это решение — сокет докера означает root на сервере.
-              Их принесёт агент на хосте. Живые запросы к внешним API тоже делает не этот
-              экран, а фоновый прогон: дёргать чужие сервисы при каждом открытии — способ
-              получить бан по частоте.
-            </div>
+        <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', gap: 12 }}>
+          {data ? (
+            <StatusTable view={view} closed={closed} onSection={k => setClosed(c => ({ ...c, [k]: !c[k] }))}
+              open={open} onRow={k => setOpen(o => ({ ...o, [k]: !o[k] }))} confirm={confirm} setConfirm={setConfirm} onRun={runJob} />
+          ) : (
+            <div style={{ ...cardBox, flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+              {error ? 'Нет данных' : 'Собираю проверки…'}</div>
+          )}
+          <div style={{ flex: '0 0 372px', minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <OnlineAndActivity online={data?.online || []} activity={data?.activity} />
+            <DiskCard disk={data?.disk} storage={storage} />
           </div>
-        )}
+        </div>
+      </div>
       </div>
     </>
   )

@@ -28,6 +28,19 @@ export const VERDICT = {
 };
 export const isProblem = p => ['fail', 'sysund', 'spot'].includes(p.verdict) || p.wr_systemic;
 
+/* Итог виджета «Площадки-виновники» — ОДИН расчёт на развёрнутый виджет и его строку-итог (хендофф расхлопа v2, 17.11.2026):
+   в списке — площадки с недокрутом или системным WR; «системно» — вердикт fail/sysund. */
+export function culpritsSummary(data) {
+  const platforms = data?.platforms || [];
+  const list = platforms.filter(p => p.stats.under_total > 0 || p.wr_systemic);
+  return {
+    count: list.length,
+    under: list.reduce((a, p) => a + p.stats.under_total, 0),
+    systemic: platforms.filter(p => p.verdict === 'fail' || p.verdict === 'sysund').length,
+    wrSystemic: platforms.filter(p => p.wr_systemic).length,
+  };
+}
+
 /* ── форматы ── */
 export const nf = v => Math.round(v).toLocaleString('ru-RU');
 export const pct = v => (v == null ? '—' : `${Math.round(v * 100)} %`);

@@ -1,8 +1,8 @@
 // Строка глобального поиска в шапке (десктоп). Спецификация: docs/SPEC_глобальный_поиск.md,
 // дизайн — хендофф docs/поиск.zip (README §3).
 //
-// Свёрнута — элемент размером с вкладку контура в конце ряда вкладок. Развёрнута — поле
-// на всю ширину от логотипа до правой группы: ряд вкладок на это время скрывает NavDesktop.
+// Свёрнутое поле и его растяжение — в строке меню (components/nav/NavBar.jsx, навигация v3): там названия контуров
+// на это время уходят в пиктограммы. Здесь — само поле в раскрытом виде и выпадашка результатов.
 // Выпадашка — ровно по ширине поля. Клавиатура: ↑ ↓ по строкам сквозь группы (наведение
 // ставит тот же индекс), Enter — подсвеченная строка (без подсветки — единственное
 // попадание или страница результатов), Esc — свернуть. Клик мимо сворачивает пустое поле;
@@ -13,11 +13,6 @@ import { SEARCH_HINT, SEARCH_HINT_TEXT, TYPE_LABELS, internalHref, saveQuery, se
 import { DropRow } from './ResultRow'
 import useSearch from './useSearch'
 
-const PILL = {
-  display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 12px',
-  border: '1px solid var(--border-card)', borderRadius: 10, background: 'transparent',
-  color: 'var(--text-secondary)', fontFamily: UI, fontSize: 13, cursor: 'pointer',
-}
 const GROUP_CAP = {
   padding: '8px 10px 4px', fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.1em',
   textTransform: 'uppercase', color: 'var(--text-faint)',
@@ -30,14 +25,6 @@ const SearchIcon = ({ size = 15, color = 'currentColor', width = 1.9 }) => (
     <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" />
   </svg>
 )
-
-export function SearchPill({ onOpen }) {
-  return (
-    <button type="button" className="nav-item" onClick={onOpen} title="Поиск (Ctrl+K)" style={PILL}>
-      <SearchIcon /> Поиск
-    </button>
-  )
-}
 
 /** Ширина поля — выпадашка ровно по ней (хендофф: «ровно по ширине поля»). */
 function useWidth(ref) {
@@ -54,7 +41,7 @@ function useWidth(ref) {
   return w
 }
 
-export default function SearchBar({ onClose, onNavigate }) {
+export default function SearchBar({ onClose, onNavigate, height = 38 }) {
   const [q, setQ] = useState('')
   const [drop, setDrop] = useState(true)
   const [hi, setHi] = useState(-1)
@@ -115,7 +102,7 @@ export default function SearchBar({ onClose, onNavigate }) {
         .srch-all:hover { color: var(--accent-hover) !important; text-decoration: underline !important }
       `}</style>
       <label ref={field} style={{
-        flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, height: 38,
+        flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, height,
         boxSizing: 'border-box', padding: '0 12px', background: 'var(--bg-subtle)',
         border: '1px solid var(--accent)', borderRadius: 10,
       }}>

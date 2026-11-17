@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { btnSm } from '@/components/salesTableKit'
 import { downloadPassport } from '@/lib/dealDocs'
 
-export default function PassportButton({ dealId }) {
+// `label` и `style` — для панели площадок v2 («↓ Excel» в геометрии макета); по умолчанию — прежний вид.
+export default function PassportButton({ dealId, label = '↓', style }) {
   const [busy, setBusy] = useState(false)
   const [why, setWhy] = useState('')
   const run = async () => {
@@ -17,7 +18,7 @@ export default function PassportButton({ dealId }) {
   }
   return (
     <button style={{ ...btnSm(false), cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.6 : 1,
-      color: why ? 'var(--danger-fg)' : undefined }}
-      disabled={busy} onClick={run} title={why ? `Паспорт сделки: ${why}` : 'Паспорт сделки'}>↓</button>
+      ...style, color: why ? 'var(--danger-fg)' : style?.color }}
+      disabled={busy} onClick={run} title={why ? `Паспорт сделки: ${why}` : 'Паспорт сделки'}>{label}</button>
   )
 }

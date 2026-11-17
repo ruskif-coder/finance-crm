@@ -31,6 +31,14 @@ def _day(v: Optional[str], what: str) -> Optional[date]:
         raise HTTPException(status_code=400, detail=f"{what}: дата в виде ГГГГ-ММ-ДД")
 
 
+def report_filename(code: str, group: Optional[str], period_from: date, upto: date, chosen_from: bool) -> str:
+    """Имя файла отчёта. В нём день, по который есть данные (аккаунты 16.11.2026), а не дата выгрузки. Выбрано начало
+    периода (календарик рядом с «XLS») — и день начала: «…_с_05.11_по_09.11.2026», иначе отчёт за часть флайта по имени
+    не отличить от отчёта со старта (владелец 17.11.2026). Обычный «XLS» за весь флайт — прежнее «…_по_<день>»."""
+    since = f"_с_{period_from:%d.%m}" if chosen_from and period_from else ""
+    return f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"{since}_по_{upto:%d.%m.%Y}.xlsx"
+
+
 @router.get("/deal/{deal_id}.xlsx")
 def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional[str] = None,
                 group: Optional[str] = None,
@@ -79,9 +87,8 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
     # листах факта по-прежнему — модель SIMB ID (24.10.2026); `to_xlsx` второй комплект умеет, но его больше не просят.
     body = client_report_xlsx.to_xlsx(rep)
     code = re.sub(r"[^\w-]", "", deal.code or str(deal.id))
-    # В имени — день, по который в отчёте есть данные (аккаунты 16.11.2026), а не дата выгрузки.
     upto = min(x for x in (h["period_to"], h.get("last_data")) if x)
-    human = f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"_по_{upto:%d.%m.%Y}.xlsx"
+    human = report_filename(code, group, h["period_from"], upto, chosen_from=d1 is not None)
     return Response(content=body, media_type=(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), headers={
         "Content-Disposition": f"attachment; filename=\"report_{code}.xlsx\"; "

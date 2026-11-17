@@ -7,7 +7,8 @@ import { btnSm } from '@/components/salesTableKit'
 import { downloadOffsite } from '@/lib/dealDocs'
 import { Cube } from '@/components/LogoLoader'
 
-export default function OffsiteButton({ dealId }) {
+// `style` — для панели площадок v2 (геометрия макета); по умолчанию — прежний вид.
+export default function OffsiteButton({ dealId, style }) {
   const [state, setState] = useState('idle')      // idle | busy | done | error
   const [why, setWhy] = useState('')
 
@@ -33,7 +34,7 @@ export default function OffsiteButton({ dealId }) {
       )}
       {state === 'done' && <span style={{ fontSize: 11.5, color: 'var(--income-fg)' }}>архив скачан ✓</span>}
       <button style={{ ...btnSm(false), display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-        cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.75 : 1 }}
+        ...style, cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.75 : 1 }}
         disabled={busy} onClick={run}
         title="Баннеры и паспорт для площадок без нашего кода — заводить у них вручную">
         {busy && <Cube variant="spinner" size={12} />}

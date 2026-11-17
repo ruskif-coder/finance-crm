@@ -6,7 +6,6 @@
  * списка экранов: добавление раздела делается правкой nav.data.json и ничего больше.
  */
 import React, { Fragment, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import { getPermissions, can, isAdmin as isAdminNow } from '@/lib/auth'
@@ -14,11 +13,12 @@ import { Z } from '@/components/salesTableKit'
 import { freshMark, hasFresh } from '@/lib/notify.mjs'
 import { ago } from '@/lib/dates'
 import { TONE, toneOf, toneWeight } from '@/lib/tone'
-import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref, resolveLegacy } from '@/lib/nav'
+import { allowedSections, allowedItems, findByPath, firstAllowedHref, resolveLegacy } from '@/lib/nav'
 import BugReport from './BugReport'
-import SearchBar, { SearchPill } from './search/SearchBar'
 import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
 import { applyTheme, readTheme, THEME_ON, THEMES } from '@/lib/theme'
+import NavBar from './nav/NavBar'
+import { sumBadge } from '@/lib/navModel.mjs'
 
 /* Сброс дефолтов <button>: вся навигация — настоящие кнопки (фокус с клавиатуры,
    Enter/Space, роль для скринридера), но выглядят ровно как в макете. */
@@ -42,14 +42,8 @@ export const T = {
 }
 
 /* ── бейджи ─────────────────────────────────────────────────────────── */
-/* Пока не подключены: считать не из чего, источником станет модуль уведомлений.
-   Код оставлен нетронутым — он оживёт, когда появится эндпоинт. */
-const sumBadges = items => items.reduce((a, i) => a + (i.badge ? parseInt(i.badge, 10) || 0 : 0), 0)
+/* Счётчики экранов (креативы на проверку, премодерация) вешаются в Nav ниже; сумма раздела — sumBadge из lib/navModel. */
 const hasPlus = items => items.some(i => i.badge && i.badge.endsWith('+'))
-export const badgeText = list => {
-  const total = list.reduce((a, s) => a + sumBadges(s.items), 0)
-  return list.some(s => hasPlus(s.items)) ? total + '+' : String(total)
-}
 
 const Badge = ({ children, size = 16 }) => (
   <span style={{
@@ -62,33 +56,6 @@ const Badge = ({ children, size = 16 }) => (
 const BellIcon = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6" /><path d="M10 19a2 2 0 0 0 4 0" />
-  </svg>
-)
-
-export const GearIcon = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-    <circle cx="12" cy="12" r="3.2" />
-    <path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.5 6.5l1.4 1.4M16.1 16.1l1.4 1.4M17.5 6.5l-1.4 1.4M7.9 16.1l-1.4 1.4" />
-  </svg>
-)
-
-// Рубль — ярлык на «Операции». Только для админа: раздел с первичными данными,
-// в контурном меню ему места не нашлось, а заходить туда приходится часто.
-const RubleIcon = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M9 20V5h4.2a4 4 0 0 1 0 8H9" />
-    <path d="M6.5 15.5h7" />
-    <path d="M6.5 12.5H9" />
-  </svg>
-)
-
-// Отчёт — ярлык на сводку руководителя. Только админу, как и рубль: экран показывает
-// маржу и всю воронку денег. Столбики, а не документ: при 16 px документ неотличим от
-// шестерёнки соседним глазом, а столбики читаются сразу.
-const ReportIcon = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 20h16" />
-    <path d="M7 20v-6M12 20V8M17 20v-9" />
   </svg>
 )
 
@@ -556,211 +523,10 @@ function Profile({ onGoto, canSettings, compact = false }) {
   )
 }
 
-/* Раздел с выпадающей панелью. Используется и строкой контуров, и кнопкой
-   «Справочники»: у справочников экранов пять, и без панели попасть с контрагентов
-   на договоры было бы некуда — раньше это делали табы внутри страницы.
-   variant: 'tab' — пункт строки, 'ghost' — контурная кнопка справа.
-   align: 'right' — панель прижимается к правому краю, иначе уезжает за окно. */
-function Section({ s, variant = 'tab', align = 'left', hover, open, close, closeNow,
-                perms, isAdmin, active, onNavigate }) {
-  const isOpen = hover === s.key
-  /* Панель уходит В ПОРТАЛ, к body. Внутри шапки она жила в её стопке (`zIndex: 40`)
-     и оказывалась ПОД модалками карточки сделки (60 и 300): курсор попадал на
-     перекрывающий слой, наведение с раздела слетало, и меню мигало. Портал ставит её
-     поверх содержимого страницы и по-прежнему ниже модальных подложек (10000) —
-     окно должно накрывать меню, а карточка нет.
-     Координаты замеряются при открытии: `position: fixed` считает от окна. */
-  const wrapRef = useRef(null)
-  const [rect, setRect] = useState(null)
-  useEffect(() => {
-    if (isOpen && wrapRef.current) setRect(wrapRef.current.getBoundingClientRect())
-    else setRect(null)
-  }, [isOpen])
-  /* Активность — по ключу. Индексы сравнивать нельзя: строка контуров отфильтрована,
-     а если экран вне карты (active === null) — не активен никто. */
-  const isCurrent = s.key === active?.section?.key
-  const total = sumBadges(s.items)
-  const ghost = variant === 'ghost'
-  return (
-    /* Мышь — открытие по наведению, закрытие с задержкой 120 мс. Клавиатура —
-       фокус открывает панель, Escape закрывает и возвращает фокус на триггер,
-       уход фокуса за пределы раздела тоже закрывает. */
-    <span
-      ref={wrapRef}
-      onMouseEnter={() => open(s.key)} onMouseLeave={close}
-      onFocus={() => open(s.key)}
-      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) closeNow() }}
-      onKeyDown={e => {
-        if (e.key === 'Escape' && isOpen) {
-          e.stopPropagation()
-          e.currentTarget.querySelector('button')?.focus()
-          closeNow()
-        }
-      }}
-      style={{ position: 'relative', display: ghost ? 'inline-flex' : undefined }}>
-      <button type="button" aria-haspopup="true" aria-expanded={isOpen}
-        className={ghost ? 'nav-ghost' : undefined}
-        onClick={() => { const h = entryHref(s.key, perms, isAdmin); if (h) onNavigate?.({ href: h }) }} style={{
-        ...btnReset,
-        display: 'inline-flex', alignItems: 'center', gap: 7,
-        ...(ghost
-          ? { height: 32, padding: '0 13px', border: `1px solid ${isCurrent ? T.accentBorder : T.border}`, borderRadius: 10, fontSize: 13, background: isCurrent ? T.accentTint : T.card }
-          : { padding: '8px 12px', borderRadius: 10, fontSize: 13.5, background: isCurrent ? T.accentTint : isOpen ? T.subtle : 'transparent' }),
-        color: isCurrent ? T.accent : T.t2, fontWeight: isCurrent ? 700 : 600,
-        whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
-      }}>
-        {s.title}
-        {total > 0 && <Badge>{hasPlus(s.items) ? total + '+' : total}</Badge>}
-        <span style={{ fontSize: 9, color: isCurrent ? T.accentSoft : T.t4 }}>▾</span>
-      </button>
-
-      {isOpen && rect && createPortal(
-        <span
-          /* События портала всплывают по РЕАКТ-дереву, а не по DOM: панель остаётся
-             ребёнком того же span, и наведение на неё не считается уходом с раздела. */
-          onMouseEnter={() => open(s.key)} onMouseLeave={close}
-          style={{
-            position: 'fixed', top: rect.bottom, minWidth: 212, paddingTop: 6,
-            ...(align === 'right' ? { right: Math.max(8, window.innerWidth - rect.right) }
-              : { left: rect.left }),
-            zIndex: Z.dropdown,
-            display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
-          }}>
-          <span style={{
-            background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 14,
-            padding: 7, display: 'flex', flexDirection: 'column',
-          }}>
-            {allowedItems(s, perms, isAdmin).map(it => {
-              const isActiveItem = active && active.item.href === it.href
-              return (
-                <button type="button" key={it.key} className="nav-item" onClick={() => onNavigate?.(it)} style={{
-                  ...btnReset,
-                  display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px', borderRadius: 10,
-                  background: isActiveItem ? T.accentTint : 'transparent',
-                }}>
-                  <span style={{ width: 7, height: 7, borderRadius: 2, background: isActiveItem ? T.accent : T.hoverBorder }} />
-                  <span style={{ fontSize: 13, fontWeight: isActiveItem ? 700 : 600, color: isActiveItem ? T.accent : T.t1, whiteSpace: 'nowrap' }}>{it.label}</span>
-                  {it.badge && <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.danger }}>{it.badge}</span>}
-                </button>
-              )
-            })}
-          </span>
-        </span>,
-        document.body)}
-    </span>
-  )
-}
-
-
 /* ══════════════════════════════════════════════════════════════════════
-   ДЕСКТОП (≥ 1024px)
+   ДЕСКТОП (≥ 1024px) — строка меню v3 · микс, отдельный модуль components/nav/
+   (хендофф design_handoff_nav_mix, 17.11.2026). Прежняя строка с Section снята.
    ══════════════════════════════════════════════════════════════════════ */
-export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGear, bell, bug, canSettings, hasDirectory, onLogo, logo = '/logo.png', children }) {
-  const [hover, setHover] = useState(null)
-  const timer = useRef(null)
-  const open = key => { clearTimeout(timer.current); setHover(key) }
-  const close = () => { timer.current = setTimeout(() => setHover(null), 120) }
-  /* Клавиатура закрывает панель сразу, без «мышиной» задержки. */
-  const closeNow = () => { clearTimeout(timer.current); setHover(null) }
-  useEffect(() => () => clearTimeout(timer.current), [])
-
-  /* Глобальный поиск: свёрнут — последняя «вкладка» ряда, развёрнут — поле на месте
-     ряда вкладок. Ctrl+K (Cmd+K на маке) открывает с любого экрана. */
-  const [searchOpen, setSearchOpen] = useState(false)
-  useEffect(() => {
-    const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K' || e.code === 'KeyK')) {
-        e.preventDefault()
-        closeNow()
-        setSearchOpen(true)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  /* `Section` живёт на уровне модуля (ниже по файлу) — НЕ здесь.
-
-     Объявленный внутри рендера, он пересоздавался как новый тип компонента на каждый
-     рендер `NavDesktop`, то есть на каждое движение мыши между разделами: React
-     размонтировал панель и монтировал заново, `mouseleave` от удаляемого узла запускал
-     закрытие, а `mouseenter` на новый без движения мыши не приходил. Панель открывалась
-     и тут же гасла — заметно было при наведении снизу, когда курсор останавливается
-     на пункте. Ловушка №2 из навыка `styling-new-page`. */
-
-  const directory = sections.find(s => s.key === 'directory')
-
-  return (
-    /* Внешний контейнер липкий целиком: строка фильтров страницы (children)
-       прилипает вместе с шапкой — как в старом Navbar.js. */
-    /* Оформление (фон, нижняя граница, тень) рисуется ровно один раз — на внешнем
-       контейнере, поэтому вид шапки одинаков и с фильтрами, и без них. */
-    <div style={{
-      position: 'sticky', top: 0, zIndex: 40,
-      background: T.card, borderBottom: `1px solid ${T.inner}`, boxShadow: T.shadow,
-    }}>
-    <div style={{
-      padding: '12px 20px',
-      display: 'flex', alignItems: 'center', gap: 20, fontFamily: T.sans, color: T.t1,
-    }}>
-      <button type="button" onClick={onLogo} aria-label="На главную"
-        style={{ ...btnReset, display: 'block', paddingRight: 20, borderRight: `1px solid ${T.inner}` }}>
-        <img src={logo} alt="Simb-AD" onError={e => { e.target.style.display = 'none' }}
-          style={{ height: 22, width: 'auto', display: 'block' }} />
-      </button>
-
-      <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0, flexWrap: 'wrap', alignItems: 'center' }}>
-        {searchOpen ? (
-          <SearchBar onClose={() => setSearchOpen(false)} onNavigate={href => onNavigate?.({ href })} />
-        ) : (
-          <>
-            {/* «Справочники» — не пункт строки контуров, а контурная кнопка справа (как в макете). */}
-            {sections.filter(s => s.key !== 'directory').map(s => (
-              <Section key={s.key} s={s} hover={hover} open={open} close={close} closeNow={closeNow}
-                perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
-            ))}
-            <span style={{ marginLeft: 6 }}><SearchPill onOpen={() => { closeNow(); setSearchOpen(true) }} /></span>
-          </>
-        )}
-      </span>
-
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
-        {/* Панель у справочников такая же, как у контуров: попасть в нужный справочник
-            из любого раздела, а не только в первый по списку. */}
-        {/* Ярлык «Операции» — перед справочниками и только админу (см. RubleIcon). */}
-        {isAdmin && (
-          <button type="button" className="nav-icon" onClick={() => onNavigate?.({ href: '/exec' })}
-            title="Сводка руководителя" aria-label="Сводка руководителя"
-            style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
-            <ReportIcon />
-          </button>
-        )}
-        {isAdmin && (
-          <button type="button" className="nav-icon" onClick={() => onNavigate?.({ href: '/finance/operations' })}
-            title="Операции" aria-label="Операции"
-            style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
-            <RubleIcon />
-          </button>
-        )}
-        {hasDirectory && directory && (
-          <Section s={directory} variant="ghost" align="right"
-            hover={hover} open={open} close={close} closeNow={closeNow}
-            perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
-        )}
-        {bug}
-        {bell}
-        {canSettings && (
-          <button type="button" className="nav-icon" onClick={onGear} title="Настройки" aria-label="Настройки" style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
-            <GearIcon />
-          </button>
-        )}
-        <Profile onGoto={h => onNavigate?.({ href: h })} canSettings={canSettings} />
-      </span>
-    </div>
-    {children && <div style={{ padding: '10px 24px', borderTop: `1px solid ${T.inner}`, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{children}</div>}
-    </div>
-  )
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    МОБИЛЬНЫЙ (< 1024px)
@@ -864,7 +630,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
           {sections.map(s => {
             const open = exp === s.key
             const isCurrent = s.key === curKey
-            const total = sumBadges(s.items)
+            const total = sumBadge(s)
             return (
               /* flex:0 0 auto ОБЯЗАТЕЛЕН — иначе карточки сжимаются вместо скролла панели */
               <div key={s.key} style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', border: `1px solid ${open ? T.accentBorder : T.border}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -936,13 +702,14 @@ export default function Nav({ children, onSearch, asPath }) {
   }, [])
   const { perms, isAdmin } = session
 
-  const rawSections = mounted ? allowedSections(perms, isAdmin) : []
+  // Экраны раздела — сразу только доступные роли и стоящие в меню: строка и панель v3 читают `items` как есть.
+  const rawSections = mounted ? allowedSections(perms, isAdmin).map(s => ({ ...s, items: allowedItems(s, perms, isAdmin) })) : []
   // Значок ставим только если пункт вообще виден — иначе и запрос лишний.
   const visible = href => rawSections.some(s => s.items?.some(i => i.href === href))
   const trafficWaiting = useTrafficWaiting(visible('/traffic/queue'))
   const premodWaiting = usePremodWaiting(visible('/traffic/premoderation'))
   // Клонируем ветку с пунктом и вешаем `badge`: механика карты дальше сама покажет число и
-  // на пункте, и в значке раздела (sumBadges). Мутировать nav.data.json нельзя — он общий
+  // на пункте, и в значке раздела (sumBadge из lib/navModel). Мутировать nav.data.json нельзя — он общий
   // и кэшируется между рендерами.
   const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting }
   const sections = rawSections.map(sec => (sec.items?.some(i => badges[i.href] > 0)
@@ -957,10 +724,8 @@ export default function Nav({ children, onSearch, asPath }) {
   const props = {
     sections, perms, isAdmin, active,
     onNavigate: it => go(it.href),
-    onGear: () => go('/settings'),
     onLogo: () => { const h = mounted && firstAllowedHref(perms, isAdmin); if (h) go(h) },
     canSettings,
-    hasDirectory: mounted && sections.some(s => s.key === 'directory'),
     bell: <Bell onGoto={go} size={mobile ? 36 : 32} />,
     // Кнопка сбоя стоит РЯДОМ с колокольчиком (владелец 17.09.2026): там же,
     // куда человек смотрит, когда система о чём-то сообщает.
@@ -975,7 +740,6 @@ export default function Nav({ children, onSearch, asPath }) {
         @keyframes popIn { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
         @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important } }
         .nav-item:hover { background:${T.subtle} }
-        .nav-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
         .nav-icon:hover { background:${T.subtle}; color:${T.accent} }
         /* Колокольчик мигает, пока есть непоказанное (владелец 15.09.2026). Признак
            снимается ОТКРЫТИЕМ панели, не прочтением строк, — см. markSeen.
@@ -997,7 +761,11 @@ export default function Nav({ children, onSearch, asPath }) {
           страницах, и это единственная точка, где режим появится везде сразу, без
           правки сорока экранов. */}
       <MaintenanceBar state={mnt} onLifted={mnt.reload} />
-      {mobile ? <NavMobile {...props} /> : <NavDesktop {...props} />}
+      {mobile ? <NavMobile {...props} /> : (
+        <NavBar sections={sections} active={active} path={asPath || router.asPath} isAdmin={isAdmin} canSettings={canSettings}
+          onNavigate={go} onLogo={props.onLogo} bug={props.bug} bell={props.bell}
+          profile={<Profile onGoto={go} canSettings={canSettings} />}>{children}</NavBar>
+      )}
       <MaintenanceStub state={mnt} />
     </>
   )

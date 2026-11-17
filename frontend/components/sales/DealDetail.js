@@ -8,6 +8,7 @@ import { Cube } from '@/components/LogoLoader'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
 import BusyAct from '@/components/BusyAct'
+import ReportDates, { reportUrl } from '@/components/ReportDates'
 import { downloadMp } from '../../lib/mpDownload'
 import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
@@ -99,8 +100,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   }, [reportPick])
   const getReport = async (group) => {
     setReportPick(false); setReportBusy(true)
-    const q = group ? `?group=${encodeURIComponent(group)}` : ''
-    await blobGet(`/client-report/deal/${d.id}.xlsx${q}`)   // имя — с сервера: «…_по_<последний день данных>»
+    await blobGet(reportUrl(d.id, { group }))   // имя — с сервера: «…_по_<последний день данных>»
     setReportBusy(false)
   }
   const groups = d.report_groups || []
@@ -323,6 +323,12 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
           ))}
         </PortalPopover>
         </span>
+      )}
+      {/* Отчёт за выбранные дни — календарик рядом с «Отчётом» (владелец 17.11.2026) */}
+      {queue && (
+        <ReportDates dealId={d.id} startDate={d.report_from} groups={groups} disabled={!d.report_ready}
+          title={d.report_ready ? 'Отчёт клиенту за выбранные дни' : 'Статистики по РК ещё нет — отчёт появится после первого дня с показами'}
+          style={{ width: 34, height: 34, padding: 0, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }} />
       )}
       {queue ? (
         <a href={`/sales/deals/${d.code || d.id}`} target="_blank" rel="noopener noreferrer" title="Открыть карточку сделки в новой вкладке"

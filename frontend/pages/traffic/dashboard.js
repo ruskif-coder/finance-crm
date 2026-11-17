@@ -11,10 +11,9 @@
  * остаётся оформление: пороги цвета, геометрия полос, подписи. Два калькулятора
  * разошлись бы молча, правдоподобными числами.
  *
- * Чего на экране НЕТ и почему:
- *   · «Обновить статистику» и «Обновить из сделок» — РК появляются по цепочке, а не по
- *     кнопке (владелец 04.09.2026);
- *   · переключателя тёмной темы — тёмной темы в проекте нет.
+ * Раскладка v2 — хендофф `design_handoff_traffic_expand_v2` (17.11.2026): шапка, виджеты со строкой-итогом, строка
+ * РК, пульт, площадки группами, аналитика 680px справа. Куски — в `components/traffic/v2/`, здесь состояние и действия.
+ * «Обновить из сделок» — только админу (инструмент разбора, крон делает то же в 06:00).
  *
  * Пока коннектор не подключён (этап 2c), факта нет ни у одной РК: факт, процент, прогноз
  * и недокрут показываются ПРОЧЕРКОМ, а не нулём. Это норма экрана, а не поломка.
@@ -23,125 +22,37 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
-import { MONO, UI, card, CAP, btnSm, btn, inp, sel, Modal, PortalPopover, ROW_TONE, Z,
-  EXT_TONE, ExtChip, ExtCover } from '@/components/salesTableKit'
-import { surfaceTag } from '@/lib/dealTitle'
+import { useNavObject } from '@/lib/navObject'
+import { MONO, UI, card, CAP, btn, inp, Modal } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import { downloadDealCreatives } from '@/lib/dealDocs'
-import OffsiteButton from '@/components/traffic/OffsiteButton'
-import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
 import DspRefreshModal from '@/components/traffic/DspRefreshModal'
 import TempoModal from '@/components/traffic/TempoModal'
-import PaceCell from '@/components/traffic/PaceCell'
-import { GearIcon } from '@/components/Nav'
 import AdfoxImportModal from '@/components/traffic/AdfoxImportModal'
-import AimButton from '@/components/traffic/AimButton'
-import RkSummaryRow, { SummaryDot } from '@/components/traffic/RkSummaryRow'
-import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
-import { fmtDateTime, todayMsk } from '@/lib/dates'
-import ExternalLaunch from '@/components/traffic/ExternalLaunch'
-import RkLog, { RkLogTile } from '@/components/traffic/RkLog'
+import RkLog from '@/components/traffic/RkLog'
 import CulpritsWidget from '@/components/traffic/platforms/CulpritsWidget'
-import WrLinkRow from '@/components/traffic/WrLinkRow'
 import { toReport } from '@/lib/platformsReport'
 import { downloadFile } from '@/lib/download'
-import {
-  CreativeCounts, CreativeRows, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
-  GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, RkReportLink, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
-  VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
-} from '@/components/traffic/dashboardKit'
+import { DASH, KpiRow, num } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { isAdmin as isAdminNow } from '@/lib/auth'
 import HungAttempts from '@/components/traffic/HungAttempts'
-import CopyCode from '@/components/CopyCode'
 import { detailText } from '@/lib/loadError'
-
-const DashIcon = ({ size = 21 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
-    <path d="M3 3v18h18" /><path d="M7 15l4-5 3 3 5-7" />
-  </svg>
-)
+import DashHeader, { ListPanel } from '@/components/traffic/v2/DashHeader'
+import RkRow, { RkHead } from '@/components/traffic/v2/RkRow'
+import RkPult, { ANALYTICS_W } from '@/components/traffic/v2/RkPult'
+import { DayWallV2, WidgetsSummary } from '@/components/traffic/v2/DayWallV2'
+import SitesPanel from '@/components/traffic/v2/SitesPanel'
+import RkAnalytics from '@/components/traffic/v2/RkAnalytics'
+import ReallocModal from '@/components/traffic/ReallocModal'
 
 // Свёрнута ли аналитика — помнится между заходами. Читается ТОЛЬКО в useEffect:
 // localStorage на сервере не существует, а первый рендер идёт там же. Умолчание —
 // свёрнуто; сохранённый выбор человека сильнее умолчания и в обе стороны.
 const WIDGETS_KEY = 'traffic_dashboard_widgets'
 
-const dm = (d) => (d ? String(d).slice(8, 10) + '.' + String(d).slice(5, 7) : DASH)
-const pctText = (v) => (v == null ? DASH : `${Number(v).toFixed(1)} %`)
-
-/* Колонки реестра. Ширины фиксированы у числовых и управляющих: иначе правый край
-   строки перестаёт быть выровненным, и это первое, что видно на широком экране. */
-/* Колонка описывается ЧЕТВЕРКОЙ: подпись, ширина, ключ сортировки, край.
-   Край задан ОДИН РАЗ и применяется и к заголовку, и к ячейке — до 04.09.2026 они
-   задавались порознь, и половина колонок разъехалась: пипсы жались вправо под левым
-   заголовком, числа стояли по правому краю под левой подписью. */
-const COLS = [
-  ['', '20px', null, 'left'],
-  ['Сделка', '78px', 'deal_code', 'left'],
-  ['Название РК', 'minmax(200px,1.6fr)', 'deal_title', 'left'],
-  ['Услуга', 'minmax(120px,1fr)', 'product', 'left'],
-  ['Площадки', '110px', 'placements_on', 'left'],
-  ['Статус РК', '150px', 'status', 'left'],
-  // Покрытие внешними системами: две плашки на РК. Стоят СРАЗУ за статусом — так
-  // же, как на карточке сделки, чтобы одно и то же читалось в одном месте.
-  ['WR · DSP', '58px', null, 'center'],
-  ['Период', '120px', 'date_start', 'left'],
-  ['План', '104px', 'plan_show', 'right'],
-  ['Факт', '104px', 'fact_shows', 'right'],
-  // «Выполнение» — полоса во всю ширину ячейки, край ей не нужен: подпись процента
-  // стоит под левым краем полосы, «флайт N %» под правым.
-  ['Выполнение', 'minmax(150px,1.2fr)', 'done_pct', 'left'],
-  ['Прогноз', '104px', 'forecast', 'right'],
-  ['Недокрут', '110px', 'under', 'right'],
-  // Действия: «Отчёт по РК» + пауза/стоп (11.10.2026). Было 72px на две кнопки — третья наезжала на «Недокрут».
-  ['', '190px', null, 'right'],
-]
-const GRID = COLS.map(c => c[1]).join(' ')
-
-/* Значение для сортировки. Пустое уходит В КОНЕЦ в обе стороны, а не притворяется нулём:
-   РК без факта не «худшая по факту», у неё факта нет — и всплывать в топ ей не за что. */
-const EMPTY = { asc: Infinity, desc: -Infinity }
-const sortVal = (r, key, dir) => {
-  const v = r[key]
-  if (v == null || v === '') return typeof r[key] === 'string' ? '' : EMPTY[dir]
-  return typeof v === 'string' ? v.toLowerCase() : v
-}
-
-/** Флаги строки — дефекты данных и состояние площадок, словами. */
-function flagsOf(r) {
-  const out = []
-  if (!r.plan_show) out.push(['нет плана', 'У сделки не заведён медиаплан'])
-  if (!r.placements) out.push(['нет площадок', 'К РК не подключена ни одна площадка'])
-  else if (!r.placements_on) out.push(['ни одна не крутит', 'Площадки подключены, но ни одна не запущена'])
-  const noWeight = (r.placements || 0) - (r.placements_weighted || 0)
-  if (noWeight > 0) out.push([`${noWeight} без веса`, 'Нет индекса в балансировщике — в раскладку не попадут'])
-  if (r.plan_show && r.fact_shows == null) out.push(['нет статистики', 'Коннектор ещё не приносил суточный срез'])
-  // Недокрут — словом в строке, а не только числом в своей колонке: у законченной РК
-  // это итог работы, и он должен читаться без сопоставления двух чисел глазами.
-  if (r.under > 0 && r.plan_show) {
-    out.push([`недокрут ${Math.round(r.under / r.plan_show * 100)} %`,
-      `Не откручено ${num(r.under)} показов из плана`])
-  }
-  return out
-}
-
-
-// Объём площадки против плана РК — тон и подсказка строки площадки (владелец 27.09.2026).
-const volOf = (vol, pid) => vol?.by_publisher?.[String(pid)]
-const volTint = (vol, pid) => {
-  const l = volOf(vol, pid)?.level
-  return l === 'over' ? 'var(--danger-tint)' : l === 'warn' ? 'var(--warning-tint)' : undefined
-}
-const volTitle = (vol, pid) => {
-  const v = volOf(vol, pid)
-  if (!v || v.level === 'ok') return undefined
-  return `На площадке заложено ${Math.round((v.share || 0) * 100)} % плана РК`
-    + (v.level === 'over' ? ' — больше плана, запуск заблокирован' : '')
-}
 
 // Таргетинги, которые уйдут в DSP вместе с выгрузкой (app/dsp/targeting.py). Показываются
 // всегда: решение о настройках принимается по живым числам этой РК. Пока выключатель
@@ -285,33 +196,6 @@ function WrAttach({ campaignId, pl, onDone }) {
   )
 }
 
-// Цвет кнопок «ПИКСЕЛЬ WR» / «В DSP» (владелец 30.09.2026): зелёная — есть что сделать
-// сейчас, жёлтая — всё готовое уже сделано, серая — ещё нечего (ни один комплект не дошёл).
-const BTN_TONE = {
-  go: { background: 'var(--income-tint)', color: 'var(--income-fg)', borderColor: 'var(--income)' },
-  done: { background: 'var(--warning-tint)', color: 'var(--warning-fg)', borderColor: 'var(--warning)' },
-  idle: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },
-  off: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },
-}
-// Счётчик незаведённого — тот же вид, что счётчики в меню (Nav.Badge): красная плашка
-// с числом сразу после названия. Нуля не показываем.
-const CountBadge = ({ n }) => (n > 0 ? (
-  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    minWidth: 16, height: 16, padding: '0 5px', marginLeft: 6, borderRadius: 6,
-    background: 'var(--danger-tint)', color: 'var(--danger)', fontFamily: MONO,
-    fontSize: 9.5, fontWeight: 700 }}>{n}</span>
-) : null)
-
-const btnTitle = (base, b, what) => {
-  if (!b) return base
-  if (b.state === 'off') return b.external ? 'Пиксель — внешний тег сделки: вставки в Weborama не заводятся, у всех площадок пиксель уже есть' : `${base}. По этой РК свой пиксель Weborama не заказан`
-  if (b.state === 'go') return `${base}. Готово к действию площадок: ${b.go}; уже сделано: ${b.done}`
-  if (b.state === 'done') return `${base}. Всё готовое уже сделано (${b.done}); новое появится после согласования и ЕРИД`
-  return `${base}. Пока нечего: ни у одной площадки нет согласованного креатива с ЕРИД — ${what} ждёт`
-}
-
-// Порядок в «площадки и распределение»: не наш код → смешанные → наша DSP.
-const EXT_ORDER = (p) => (p.ext_mode === 'external' ? 0 : p.ext_mode === 'mixed' ? 1 : 2)
 
 export default function TrafficDashboard() {
   const router = useRouter()
@@ -340,15 +224,6 @@ export default function TrafficDashboard() {
   // трафик, — не его работа. Кому аналитика нужна постоянно, разворачивает её один
   // раз: выбор помнится между заходами и переживает перезаход.
   const [widgets, setWidgets] = useState(false)
-  const [pop, setPop] = useState(null)        // один открытый поповер на экран
-  const [openPlace, setOpenPlace] = useState(null)   // id раскрытой площадки (одна)
-  // Вид расхлопа: площадки → креативы или наоборот. Обратный СУММИРУЕТ по площадкам,
-  // а не перераспределяет — весов у креативов нет.
-  const [byCr, setByCr] = useState(false)
-  // Сортировка по шапке. Умолчание (null) — порядок с сервера: месяц по убыванию,
-  // внутри код сделки. Он смысловой, поэтому клик его ЗАМЕНЯЕТ, а не дополняет.
-  const [sortKey, setSortKey] = useState(null)
-  const [sortDir, setSortDir] = useState('asc')
   const [msg, setMsg] = useState('')     // отказ — красным
   const [note, setNote] = useState('')    // подтверждение — синим
 
@@ -390,14 +265,14 @@ export default function TrafficDashboard() {
   // Виджет «Площадки-виновники» кормится отчётом «Площадки × РК» (хендофф 05.11.2026) — тем же фильтром трафика.
   const [platRaw, setPlatRaw] = useState(null)
   const [platErr, setPlatErr] = useState('')
+  // Грузится и при свёрнутых виджетах: строка-итог показывает те же числа виновников (v2, 17.11.2026).
   const loadPlat = useCallback(() => {
-    if (!widgets) return
     const p = new URLSearchParams()
     if (scope) p.set('scope', scope)
     api.get(`/traffic-dashboard/platforms?${p}`, auth())
       .then(r => { setPlatRaw(r.data); setPlatErr('') })
       .catch(e => setPlatErr(detailText(e, 'Не удалось загрузить площадки-виновники')))
-  }, [scope, widgets])
+  }, [scope])
   useEffect(() => { loadPlat() }, [loadPlat])
   useRefreshOnReturn(loadPlat)
   const platData = useMemo(() => toReport(platRaw), [platRaw])
@@ -476,13 +351,6 @@ export default function TrafficDashboard() {
     return !w
   })
 
-  // Закрытие поповера по клику мимо — как в остальных экранах раздела.
-  useEffect(() => {
-    const off = (e) => { if (!e.target.closest('[data-pop-root]')) setPop(null) }
-    document.addEventListener('click', off)
-    return () => document.removeEventListener('click', off)
-  }, [])
-
   const loadStat = useCallback(async (id, g, win) => {
     const q = new URLSearchParams({ grain: g || 'day' })
     if (win && win.from) q.set('date_from', win.from)
@@ -519,20 +387,7 @@ export default function TrafficDashboard() {
   /* Запуск РК — окном с планом по каждой площадке (владелец 01.10.2026): что поднимется,
      что уже крутит, что не поднимется и почему. Прежний confirm спрашивал только про
      отключённые и не поднимал «ждёт запуска» вовсе. */
-  const startCampaign = (row) => { setPop(null); setStartAsk(row) }
-
-  const wk = (id) => (grain[id] || 'day') === 'week'
-  // Итог текущей недели — столбец, в который попадает сегодняшний день. WR и
-  // расхождения у недели нет: сервер сверяет за день и за период.
-  const weekTotals = (st) => {
-    // Неделя — та, где последний отчитанный день (дата среза), а не календарное сегодня:
-    // факт приходит за вчера (владелец 02.10.2026).
-    const today = String(st.totals?.as_of || todayMsk())
-    const b = (st.buckets || []).find(x => String(x.date_from) <= today && today <= String(x.date_to))
-    if (!b) return { shows: 0, clicks: 0, ctr: null }
-    return { shows: b.shows, clicks: b.clicks,
-      ctr: b.shows ? Math.round(b.clicks / b.shows * 10000) / 100 : null }
-  }
+  const startCampaign = (row) => { setStartAsk(row) }
 
   /* Сверка с DSP после нажатия (владелец 30.09.2026): статусы перечитываются из DSP,
      лимиты креативов при запуске уходят сразу. Расхождение или сбой сверки — вслух. */
@@ -551,7 +406,6 @@ export default function TrafficDashboard() {
   }
 
   const setCampaignStatus = async (row, s, withPlacements) => {
-    setPop(null)
     try {
       const r = await api.put(`/traffic-dashboard/campaign/${row.id}/status`,
         { status: s, with_placements: !!withPlacements }, auth())
@@ -643,6 +497,9 @@ export default function TrafficDashboard() {
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
   const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
   const [boostAsk, setBoostAsk] = useState(null)       // строка РК в окне «Темп размещения»
+  const [reallocAsk, setReallocAsk] = useState(null)   // строка РК в окне «Перераспределить» (v2: кнопка у «Откуда недокрут»)
+  // «площадки →» в шаге «Сбор» пульта — таблица только по площадкам без показов за последний день (v2)
+  const [noShows, setNoShows] = useState({})
   const [refreshAsk, setRefreshAsk] = useState(null) // строка РК в окне «Обновить данные в DSP»
   const [adfoxOpen, setAdfoxOpen] = useState(false) // окно «Импорт ADFOX»
   const tgt = useTargetingCampaign()              // демо-кампания нацеливания: «протухла» ли
@@ -717,7 +574,6 @@ export default function TrafficDashboard() {
   }
 
   const setPlacementStatus = async (campId, p, s) => {
-    setPop(null)
     try {
       const w = await api.put(`/traffic-dashboard/placement/${p.id}/status`, { status: s }, auth())
       const st = w.data?.stage
@@ -733,23 +589,31 @@ export default function TrafficDashboard() {
   const all = data?.rows || []
   // ?open=КОД — «На дашборд» со страницы разбора раскрывает эту РК. toggle пересоздаётся на каждом
   // рендере, поэтому эффект зовёт его через ref, а не держит в зависимостях.
+  // Раскрытая РК — третьим уровнем пилюли меню («Трафики · Дашборд · РК 54SLGF»); клик по «Дашборд» в пилюле сворачивает её.
+  const openRow = open ? all.find(x => x.id === open) : null
+  const collapse = useCallback(() => setOpen(null), [])
+  useNavObject(router.asPath, openRow?.deal_code ? `РК ${openRow.deal_code}` : '', collapse)
   const openCode = String(router.query.open || '')
   const toggleRef = useRef(null)
   toggleRef.current = toggle
+  // `?open=` — один раз на код: раскрытие РК меняет `open`, эффект запускался снова и делал второй replace подряд
+  const openHandled = useRef('')
   useEffect(() => {
-    if (!openCode || !data?.rows) return
+    if (!openCode || !data?.rows || openHandled.current === openCode) return
+    openHandled.current = openCode
     const row = data.rows.find(x => String(x.deal_code).toUpperCase() === openCode.toUpperCase())
     if (row && open !== row.id) toggleRef.current(row.id)
     router.replace('/traffic/dashboard', undefined, { shallow: true })
   }, [openCode, data, open, router])
   const sumOf = (r) => summary?.by_campaign?.[r.id]
   // Ссылка-действие сводки ведёт в блок расхлопа, а не на новый экран (макет 11.10.2026).
-  const goTo = (r, target) => {
+  const goTo = (r, target, act) => {
+    // v2: «площадки без показов» фильтрует таблицу площадок, «перераспределить» открывает окно сразу (17.11.2026).
+    if (act?.check === 'delivery') setNoShows(x => ({ ...x, [r.id]: true }))
+    if (target === 'alloc') { setReallocAsk(r); return }
     if (target === 'deal') { window.open(`/sales/deals/${encodeURIComponent(r.deal_code || r.deal_id)}`, '_blank', 'noopener'); return }
     if (target === 'adfox') { setAdfoxOpen(true); return }
     if (target === 'start' && mayEdit) { startCampaign(r); return }
-    if (target === 'start') setByCr(false)
-    if (target === 'placements' || target === 'alloc') setByCr(false)
     const id = { pixel: 'ext', dsp: 'ext', placements: 'placements', alloc: 'placements', start: 'placements', wr: 'wr', stats: 'stats' }[target]
     const el = id && document.getElementById(`rk-${r.id}-${id}`)
     if (!el) return
@@ -762,43 +626,25 @@ export default function TrafficDashboard() {
   // «Ожидает старта» (владелец 02.11.2026): новые РК от сборки до фактического старта — расчётные статусы до
   // «запущена» (`CAMPAIGN_DERIVED` в app/ad/flight.py). Стартовала — уходит в «Запущенные».
   const waitingStart = (r) => r.status === 'ожидает сборки' || r.status === 'готова'
+  // Переключатель списка (v2, 17.11.2026): пять пунктов, пункты с нулём скрыты. «Без плана» и «Без площадок» — внутри
+  // «Требует внимания», отдельными кнопками их больше нет.
   const TABS = [
     ['all', 'Все', all.length],
     ['waiting', 'Ожидает старта', all.filter(waitingStart).length],
     ['running', 'Запущенные', all.filter(r => r.status === 'запущена').length],
-    ['action', 'Нужно действие', all.filter(r => sumOf(r)?.worst === 'red').length],
-    ['attention', 'Требует внимания', all.filter(needsAttention).length],
-    ['noplan', 'Без плана', all.filter(r => !r.plan_show).length],
-    ['noplaces', 'Без площадок', all.filter(r => !r.placements).length],
+    ['action', 'Нужно действие', all.filter(r => sumOf(r)?.worst === 'red').length,
+      'Красная проверка заведения, сбора или раскладки (ночной прогон)'],
+    ['attention', 'Требует внимания', all.filter(needsAttention).length, 'Без плана, без площадок или с недокрутом'],
   ]
-  const onSort = (key) => {
-    if (!key) return
-    if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return }
-    // Третий клик снимает сортировку и возвращает порядок сервера — иначе из неё
-    // невозможно выйти, не перезагрузив страницу.
-    if (sortDir === 'asc') setSortDir('desc')
-    else { setSortKey(null); setSortDir('asc') }
-  }
-
   const rows = all.filter(r => {
     if (tab === 'running' && r.status !== 'запущена') return false
     if (tab === 'waiting' && !waitingStart(r)) return false
     if (tab === 'action' && sumOf(r)?.worst !== 'red') return false
     if (tab === 'attention' && !needsAttention(r)) return false
-    if (tab === 'noplan' && r.plan_show) return false
-    if (tab === 'noplaces' && r.placements) return false
     const s = q.trim().toLowerCase()
     return !s || [r.deal_code, r.deal_title, r.brand, r.product, r.stage].some(
       v => String(v || '').toLowerCase().includes(s))
   })
-  if (sortKey) {
-    rows.sort((a, b) => {
-      const x = sortVal(a, sortKey, sortDir)
-      const y = sortVal(b, sortKey, sortDir)
-      const c = x < y ? -1 : x > y ? 1 : 0
-      return sortDir === 'desc' ? -c : c
-    })
-  }
 
   const k = data?.kpi || {}
   const qb = k.queue || {}
@@ -838,96 +684,26 @@ export default function TrafficDashboard() {
       <Navbar />
       <div style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 28px 60px', fontFamily: UI }}>
 
-        {/* шапка */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 14, flexWrap: 'wrap' }}>
-          <span style={{ width: 40, height: 40, borderRadius: 12, flex: '0 0 auto',
-            background: 'var(--traffic-tint)', color: 'var(--traffic)',
-            display: 'grid', placeItems: 'center' }}><DashIcon /></span>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>
-              Дашборд трафика</h1>
-            <div style={{ ...CAP, marginBottom: 0, marginTop: 2 }}>
-              Трафики · открутка рекламных кампаний
-              {data?.as_of && <span style={data.as_of_stale ? { color: 'var(--danger)', fontWeight: 700 } : undefined}
-                title={data.as_of_stale ? 'Статистика DSP не обновлялась больше суток — проверьте ночной съём' : undefined}>
-                {` · данные на ${dm(data.as_of)}`}{data.as_of_stale ? ' — устарели' : ''}</span>}
-            </div>
-          </div>
-
-          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {isAdmin && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                {!!syncSaid && (
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>
-                    {syncSaid}
-                  </span>
-                )}
-                <button style={btnSm(false)} disabled={syncing} onClick={forceSync}
-                  title="Пересобрать РК, площадки и креативы из сделок. Это же делает крон в 06:00; кнопка — для разбора, когда ждать до утра нельзя.">
-                  {syncing ? 'Обновляю…' : 'Обновить из сделок'}
-                </button>
-              </span>
-            )}
-            {/* Выбор трафика — у всех, а не только у мастера: очередь общая, и «чьи РК»
-                здесь фильтр экрана, а не право. В списке ВСЕ активные учётки трафика,
-                мастера сверху и со звёздочкой. */}
-            <select style={{ ...sel, minWidth: 190 }} value={scope || data?.scope || 'mine'}
-              onChange={e => setScope(e.target.value)}>
-              <option value="mine">Мои</option>
-              <option value="all">Все трафики</option>
-              {/* Разбор невыбранного: РК без ответственного. Отдельный пункт, а не
-                  человек в списке — фильтр по ОТСУТСТВИЮ назначения. */}
-              <option value="none">Не распределено</option>
-              {(data?.reps || []).filter(r => r.user_id !== data?.my_user_id).map(r => (
-                <option key={r.user_id} value={String(r.user_id)}>
-                  {r.is_master ? '★ ' : ''}{r.name}
-                </option>
-              ))}
-            </select>
-            <button style={btn(archive)} onClick={() => setArchive(v => !v)}
-              title={archive ? 'Показаны архивные РК — скрыть' : 'РК сделок на «Итоговой сверке» и дальше, а также «не случилась» и «сорвалась» скрыты — показать'}>
-              {archive ? 'Скрыть архив' : `Архив${data?.archived ? ` (${data.archived})` : ''}`}
-            </button>
-            {/* Импорт суточного отчёта Adfox — площадки вне нашей DSP (владелец 02.10.2026):
-                перед кнопкой виджетов, у кого есть правка дашборда. */}
-            {mayEdit && (
-              <button style={btn(false)} onClick={() => setAdfoxOpen(true)}
-                title="Импорт ADFOX: загрузить суточный отчёт Adfox — показы площадок вне нашей DSP лягут в факт РК">
-                ↑ ADFOX
-              </button>
-            )}
-            <WidgetsToggle open={widgets} onToggle={toggleWidgets} />
-          </span>
-        </div>
+        <DashHeader data={data} scope={scope} onScope={setScope} archive={archive} onArchive={() => setArchive(v => !v)}
+          mayEdit={mayEdit} isAdmin={isAdmin} noFact={noFact} total={all.length} verifier={verifier} wbBusy={wbBusy}
+          onWbRefresh={refreshVerifier} widgets={widgets} onWidgets={toggleWidgets} onAdfox={() => setAdfoxOpen(true)}
+          sync={{ syncing, syncSaid, onSync: forceSync }} />
 
         {!!msg && <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--danger)' }}>{msg}</div>}
         {!!note && <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--blue)' }}>{note}</div>}
 
         <div style={{ marginBottom: 14 }}><KpiRow items={KPI} /></div>
 
-        {/* Плашка о дырах: пока коннектор не подключён, факта нет — и экран говорит это
-            словами, а не рисует нули. */}
-        {!!noFact && (
-          <div style={{ ...card, padding: '12px 16px', marginBottom: 14,
-            background: 'var(--warning-bg)', borderColor: 'var(--warning-border)' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--warning-text)' }}>
-              По {noFact} из {all.length} РК факта нет — коннектор статистики ещё не подключён
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 3 }}>
-              У этих РК факт, процент, прогноз и недокрут показаны прочерком, а не нулём:
-              экран не выдумывает данные, которых нет.
-            </div>
+        {/* аналитика: свёрнута — строка-итог, развёрнута — виновники и стена дней одной высоты (v2, 17.11.2026) */}
+        {!widgets && !!data && (
+          <div style={{ marginBottom: 12 }}>
+            <WidgetsSummary platData={platData} wall={data.wall || []} rows={all} onOpen={toggleWidgets} />
           </div>
         )}
-
-        {/* аналитика */}
-        {/* Карточки тянутся по высокой (умолчание grid), и это теперь верно: окна
-            прокрутки у обоих виджетов одной высоты `WIDGET_BODY`, поэтому растягивать
-            нечего — низы сходятся сами. */}
         {widgets && (
           // Виджет виновников по макету шире (≈1090 px, хендофф 05.11.2026) — левая колонка больше; уже — прокрутка внутри.
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr)',
-            gap: 14, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.12fr) minmax(0,1fr)',
+            gap: 12, marginBottom: 12 }}>
             {/* «Площадки-виновники» — компонент хендоффа (05.11.2026) на том же ответе, что отчёт «Площадки × РК»:
                 один запрос кормит и виджет, и экран, числа не расходятся. */}
             {platData ? (
@@ -940,79 +716,20 @@ export default function TrafficDashboard() {
                 Площадки-виновники · {platErr || 'загрузка…'}</div>
             )}
 
-            <div style={{ ...card, padding: '16px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                <span style={{ ...CAP, marginBottom: 0 }}>стена дней</span>
-                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>день против нужного темпа</span>
-                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 12 }}>
-                  {WALL_LEGEND.map(([l, c]) => (
-                    <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
-                      fontSize: 10.5, color: 'var(--text-muted)' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}
-                    </span>
-                  ))}
-                </span>
+            {/* Высоту ряда задают виновники; стена встаёт в ту же высоту, строки — прокруткой внутри (владелец 17.11.2026). */}
+            <div style={{ position: 'relative', minWidth: 0, minHeight: 360 }}>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+                <DayWallV2 fill wall={data?.wall || []} rows={all} activeId={open}
+                  onPick={id => { if (open !== id) toggle(id); else alignRow(id) }} />
               </div>
-              <DayWall rows={data?.wall || []} onOpen={toggle} />
             </div>
           </div>
         )}
 
-        {/* реестр */}
-        <div style={{ ...card, padding: '16px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.02em',
-              color: 'var(--text-primary)' }}>Рекламные кампании</span>
-            {/* Поиск — сразу за заголовком реестра, как на других реестрах (владелец 30.09.2026). */}
-            <input style={{ ...inp, width: 280 }} value={q} onChange={e => setQ(e.target.value)}
-              placeholder="Номер, название, бренд, услуга…" />
-            <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-faint)' }}>
-              {rows.length} из {all.length}</span>
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
-              {TABS.map(([key, label, n]) => (
-                <button key={key} onClick={() => setTab(key)}
-                  style={{ ...btnSm(tab === key), ...(key === 'action' && n > 0
-                    ? { borderColor: 'var(--danger-border)', color: tab === key ? 'var(--bg-card)' : 'var(--danger-fg)' } : {}) }}
-                  title={key === 'action' ? 'Красная проверка заведения, сбора или раскладки (ночной прогон)' : undefined}>
-                  {label} <span style={{ fontFamily: MONO, opacity: .7 }}>{n}</span>
-                </button>
-              ))}
-            </span>
-          </div>
+        {/* реестр — v2 (17.11.2026): панель списка, шапка колонок, РК — отдельными карточками */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <ListPanel q={q} onQ={setQ} shown={rows.length} total={all.length} tabs={TABS} tab={tab} onTab={setTab} />
 
-          {/* Легенда и подпись про риску — над колонками: цвет полосы и цвет пипсов
-              иначе приходится угадывать, а риска без объяснения читается как дефект. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-            marginBottom: 10 }}>
-            <span style={{ display: 'inline-flex', gap: 13, flexWrap: 'wrap' }}>
-              {TABLE_LEGEND.map(([title, items], gi) => (
-                <Fragment key={title}>
-                  {gi > 0 && <span style={{ width: 1, alignSelf: 'stretch',
-                    background: 'var(--border-inner)' }} />}
-                  <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em',
-                    textTransform: 'uppercase', color: 'var(--text-faint)' }}>{title}</span>
-                  {items.map(([label, color, border]) => (
-                    <span key={label} style={{ display: 'inline-flex', alignItems: 'center',
-                      gap: 5, fontSize: 10.5, color: 'var(--text-muted)' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: color,
-                        border: border ? `1px solid ${border}` : 'none', boxSizing: 'border-box' }} />
-                      {label}
-                    </span>
-                  ))}
-                </Fragment>
-              ))}
-            </span>
-            <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 9,
-              letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-              риска на полосе — где должны быть по календарю
-            </span>
-          </div>
-
-          {/* Факт бывает НЕ настоящим. На стенде он весь из демо-скрипта, а тянучка
-              статистики ещё не написана — то есть боевому факту пока взяться неоткуда.
-              Молчать об этом нельзя: по этим числам перераспределяют объём. */}
-          {/* Сервер отдаёт ТОЛЬКО небоевые источники факта (демо, ручной ввод) — Weborama-сверка
-              и DSP сюда не попадают (`stat_sources.non_combat`, 01.10.2026). */}
           {!!(data?.fact_sources || []).length && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
               padding: '9px 13px', marginBottom: 10, borderRadius: 10,
@@ -1025,810 +742,52 @@ export default function TrafficDashboard() {
             </div>
           )}
 
-          <VerifierStrip state={verifier} busy={wbBusy} mayEdit={mayEdit}
-            onRefresh={refreshVerifier} />
-
-          {/* Шапка сдвинута на 9 px: у строк ниже 8 px внутреннего отступа плюс 1 px
-              рамки — без поправки заголовки уезжают от своих колонок ровно на рамку. */}
-          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10,
-            padding: '0 9px 8px', borderBottom: '1px solid var(--border-card)',
-            marginBottom: 4 }}>
-            {COLS.map(([label, , key, align], i) => (
-              <span key={i} onClick={() => onSort(key)}
-                style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em',
-                  textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden',
-                  cursor: key ? 'pointer' : 'default',
-                  color: sortKey === key ? 'var(--accent)' : 'var(--text-faint)',
-                  textAlign: align }}>
-                {label}{sortKey === key ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
-              </span>
-            ))}
-          </div>
+          <RkHead />
 
           {rows.map(r => {
-            const flags = flagsOf(r)
             const d = detail[r.id]
-            // Тон строки — по СРОЧНОСТИ, а не по заполненности карточки (13.09.2026).
-            //
-            // Было: `r.traffic_rep_id ? normal : today`, то есть кремовая заливка означала
-            // «ответственный трафик не назначен». Замер базы: 920 сделок, трафик задан у
-            // ТРЁХ. Признак стоял практически на каждой строке — и единственный приём
-            // выделения в списке из 57 РК не выделял ничего: таблица читалась как сплошное
-            // предупреждение, а пять строк с реальным недокрутом терялись в ней.
-            //
-            // Теперь заливку получает только то, что требует действия сегодня:
-            //   розовая  — недокрут: план не откручен, это потеря денег;
-            //   кремовая — РК числится идущей, а крутить нечем (нет плана или площадок);
-            //   без тона  — всё остальное. «Ожидает сборки» — нормальное начало жизни
-            //               кампании, а не тревога, и красить его нечем.
-            //
-            // Ответственный трафик из строки не пропал: он остался в подсказке строки и
-            // отдельным полем в расхлопе. Он и не был срочностью — он свойство карточки.
-            const live = r.status === 'запущена' || r.status === 'пауза'
-            // Объёмы по площадкам больше плана РК — тоже «проблема» (владелец 27.09.2026).
-            const u = (r.volumes?.blocked || (r.under || 0) > 0) ? ROW_TONE.overdue
-              : (live && (!r.plan_show || !r.placements)) ? ROW_TONE.today
-                : ROW_TONE.normal
             return (
-              <div key={r.id} id={`rk-row-${r.id}`}>
-                {/* Строка — ОБВЕДЁННАЯ карточка, тонами из общего кита `ROW_TONE`: ровно
-                    так устроен реестр дашборда аккаунтов и так же нарисовано в макете.
-                    Заливка сама по себе почти белая — читается именно рамка, поэтому
-                    подсветка живёт парой, а не одним фоном. Тон выбирается выше, по
-                    срочности; большинство строк остаётся без тона намеренно — цвет
-                    имеет смысл ровно до тех пор, пока им покрашено меньшинство.
-                    Раскрытая строка перекрывает тон: где ты находишься важнее
-                    напоминания. */}
-                <div onClick={() => toggle(r.id)}
-                  title={r.traffic ? `Ответственный трафик: ${r.traffic}`
-                    : 'Ответственный трафик не назначен'}
-                  style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center',
-                    padding: '8px 8px', boxSizing: 'border-box', cursor: 'pointer',
-                    // Раскрытая строка срастается с расхлопом: нижние углы выпрямляются
-                    // и зазор убирается, иначе карточка и её содержимое выглядят как две
-                    // разные плашки, случайно оказавшиеся рядом.
-                    borderRadius: open === r.id ? '9px 9px 0 0' : 9,
-                    marginBottom: open === r.id ? 0 : 4,
-                    // Строку не красим (дизайн 22.10.2026): заливка большой площади в тёмных темах давала
-                    // светлые полосы с пропадающим текстом. Тревога — квадрат у кода и метки под названием,
-                    // тон строки остался только рамкой.
-                    border: `1px solid ${u.border}`,
-                    borderBottom: open === r.id ? 'none' : `1px solid ${u.border}`,
-                    background: open === r.id ? 'var(--accent-tint)' : 'var(--bg-card)' }}>
-                  <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{open === r.id ? '▾' : '▸'}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 11.5,
-                    fontWeight: 700, color: 'var(--accent)' }}>
-                    <SummaryDot sum={sumOf(r)} />
-                    <CopyCode text={r.deal_code} /></span>
+              <div key={r.id} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)',
+                borderRadius: 18, overflow: open === r.id ? 'visible' : 'hidden' }}>
+                <RkRow r={r} open={open === r.id} mayEdit={mayEdit} mayReport={mayReport} onToggle={() => toggle(r.id)}
+                  onStart={() => startCampaign(r)} onPause={() => setCampaignStatus(r, 'пауза')}
+                  onStop={() => setCampaignStatus(r, 'остановлена')} />
 
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden',
-                      textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.deal_title}>
-                      {r.deal_title}</span>
-                    {/* Большое расхождение с Weborama за период (владелец 27.09.2026). */}
-                    {r.wr_mismatch?.level === 'bad' && (
-                      <span title={r.wr_mismatch.hint} style={{ fontSize: 9.5, padding: '1px 6px',
-                        borderRadius: 6, background: 'var(--danger-tint)', color: 'var(--danger-fg)',
-                        border: '1px solid var(--danger-border)', whiteSpace: 'nowrap',
-                        alignSelf: 'flex-start', fontWeight: 700 }}>
-                        {r.wr_mismatch.reason === 'wr_higher' ? '⛔ WR больше нашего факта'
-                          : '⛔ Большое расхождение с WR'}</span>
-                    )}
-                    {/* Красная метка: объёмы по площадкам больше плана РК — запуск РК и
-                        площадок заблокирован, пока аккаунт их не уменьшит. */}
-                    {!!r.volumes?.blocked && (
-                      <span title={r.volumes.message} style={{ fontSize: 9.5, padding: '1px 6px',
-                        borderRadius: 6, background: 'var(--danger-tint)', color: 'var(--danger-fg)',
-                        border: '1px solid var(--danger-border)', whiteSpace: 'nowrap',
-                        alignSelf: 'flex-start', fontWeight: 700 }}>
-                        ⛔ объёмы больше плана РК</span>
-                    )}
-                    {!!flags.length && (
-                      <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
-                        {flags.map(([t, hint]) => (
-                          <span key={t} title={hint} style={{ fontSize: 9.5, padding: '1px 6px',
-                            borderRadius: 6, background: 'var(--warning-tint)',
-                            color: 'var(--warning-text)', whiteSpace: 'nowrap' }}>{t}</span>
-                        ))}
-                      </span>
-                    )}
-                  </span>
-
-                  <ServiceCell product={r.product} color={r.product_color}
-                    surface={surfaceTag(r.inventory)} />
-
-                  {/* Ячейка тянется на всю колонку — по её краям и разводятся пипсы
-                      со счётчиком. Без ширины `space-between` разводить нечего. */}
-                  <span style={{ display: 'block', width: '100%' }}>
-                    <Pips total={r.placements} on={r.placements_on}
-                      items={r.pips} pace={r.pace} /></span>
-
-                  {/* Статус РК ПОКАЗЫВАЕМ, а не выбираем (владелец 04.09.2026). Он
-                      следствие цепочки и действий над РК, а не значение из списка:
-                      выпадашка предлагала бы проставить «окончена» вместо того, чтобы
-                      завершить кампанию. Меняется он кнопками справа и в расхлопе. */}
-                  {/* Ширина по самому длинному статусу («ожидает сборки»): столбец
-                      должен читаться ровным краем, а не лесенкой. */}
-                  <span><StatusPill value={r.status} w={132} /></span>
-
-                  {/* Свёртка по РК: серый — ни одной площадки, жёлтый — часть,
-                      зелёный — все (владелец 09.09.2026). Числа считает сервер
-                      тем же расчётом, что и плашки внутри расхлопа: два счёта
-                      одного и того же разошлись бы молча. */}
-                  <span style={{ display: 'inline-flex', gap: 4, justifySelf: 'center' }}>
-                    <ExtCover letter="W" size={17} label="Пиксель Weborama"
-                      totals={r.external_totals?.weborama} />
-                    <ExtCover letter="D" size={17} label="Заведено в DSP"
-                      totals={r.external_totals?.dsp} />
-                  </span>
-
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.2 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11 }}>
-                      {dm(r.date_start)} … {dm(r.date_end)}</span>
-                    {/* До старта считаем ДО СТАРТА, а не «осталось»: у РК, которая
-                        начнётся послезавтра, «осталось 30 дней» читается как «идёт и
-                        вот-вот кончится». Число то же, смысл противоположный. */}
-                    <span style={{ fontSize: 9.5,
-                      color: r.days_to_start ? 'var(--blue)' : 'var(--text-faint)' }}>
-                      {r.days_to_start
-                        ? (r.days_to_start === 1 ? 'старт завтра' : `до старта ${r.days_to_start} дн`)
-                        : r.days_left == null ? DASH
-                          : r.flight_over ? 'флайт закончен' : `${r.days_left} дн осталось`}</span>
-                  </span>
-
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>
-                    {r.plan_show ? num(r.plan_show) : (
-                      <span style={{ color: 'var(--warning-text)' }}>нет МП</span>)}
-                  </span>
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
-                    color: r.fact_shows == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>
-                    {num(r.fact_shows)}</span>
-
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <PaceBar pct={r.done_pct} pace={r.pace} />
-                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 10,
-                        color: pctTone(r.done_pct, r.pace) }}>{pctText(r.done_pct)}</span>
-                      <span style={{ fontSize: 9.5, color: 'var(--text-faint)' }}>
-                        {r.pace == null ? '' : `флайт ${Math.round(r.pace * 100)} %`}</span>
-                    </span>
-                  </span>
-
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
-                    color: r.forecast == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>
-                    {num(r.forecast)}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
-                    color: r.under ? 'var(--danger)' : 'var(--text-faint)' }}>
-                    {r.under == null ? DASH : r.under ? `−${num(r.under)}` : 'нет'}</span>
-
-                  {/* Действия над ВСЕЙ РК — дубль кнопок расхлопа: решение «стоп» часто
-                      принимают, глядя на строку, и раскрывать её ради двух кнопок незачем. */}
-                  <span style={{ justifySelf: 'end', display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                    {mayReport && (
-                      <a href={`/traffic/campaign/${encodeURIComponent(r.deal_code)}`} title="Отчёт по РК: срезы, площадки, выводы"
-                        style={{ ...btnSm(false), textDecoration: 'none', whiteSpace: 'nowrap' }}>Отчёт по РК</a>
-                    )}
-                    {mayEdit && (
-                      <PlaceActions
-                        status={r.status === 'запущена' ? 'запущен'
-                          : r.status === 'пауза' ? 'пауза' : 'ждёт запуска'}
-                        canStart={r.status !== 'окончена' && r.status !== 'архив'}
-                        why={r.launch_hint}
-                        onStart={() => startCampaign(r)}
-                        onPause={() => setCampaignStatus(r, 'пауза')}
-                        onOff={() => setCampaignStatus(r, 'остановлена')} />
-                    )}
-                  </span>
-                </div>
-
-                {/* Расхлоп — продолжение своей карточки: та же рамка, только без
-                    верхнего края, иначе он отрывается от строки и читается как
-                    отдельный блок посреди реестра. */}
+                {/* Расхлоп v2 (17.11.2026): пульт одной строкой, площадки слева, аналитика 680px справа — липкая */}
                 {open === r.id && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr)',
-                    gap: 16, padding: '14px 12px 20px', marginBottom: 8,
-                    border: '1px solid var(--border-row)', borderTop: 'none',
-                    borderRadius: '0 0 9px 9px', background: 'var(--bg-card)' }}>
-                    <RkSummaryRow sum={sumOf(r)} checkedAt={summary?.checked_at} onAction={(t) => goTo(r, t)} />
-                    {/* площадки и распределение */}
-                    <div id={`rk-${r.id}-placements`}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-                        <span style={{ ...CAP, marginBottom: 0 }}>
-                          {byCr ? 'креативы и площадки' : 'площадки и распределение'}</span>
-                        {/* Обратный вид — та же выборка с другой стороны. Он СУММИРУЕТ по
-                            площадкам: объём идёт «вес площадки → план площадки → поровну
-                            по креативам», и весов у креативов нет. */}
-                        <span style={{ display: 'inline-flex', gap: 5 }}>
-                          {[[false, 'по площадкам'], [true, 'по креативам']].map(([v, l]) => (
-                            <button key={l} style={btnSm(byCr === v)} onClick={() => setByCr(v)}>{l}</button>
-                          ))}
-                          {/* Архив чистых креативов сделки — тот же, что «Скачать» у
-                              документа «Креативы» в карточке (владелец 27.09.2026). */}
-                          {!!r.volumes?.blocked && (
-                            <span style={{ ...btnSm(false), whiteSpace: 'nowrap', cursor: 'default',
-                              color: 'var(--danger-fg)', borderColor: 'var(--danger-border)',
-                              background: 'var(--danger-tint)' }} title={r.volumes.message}>
-                              ⛔ объёмы больше плана РК
-                            </span>
-                          )}
-                          {!!r.creatives_ready && (
-                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} title="Архив с чистыми архивами всех креативов сделки"
-                              onClick={() => downloadDealCreatives(r.deal_id, setMsg)}>
-                              ↓ креативы · {r.creatives_ready}
-                            </button>
-                          )}
-                        </span>
-                        {d && (
-                          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                            {r.placements_on} из {r.placements} крутят · доля по весам
-                          </span>
-                        )}
-                        {d && d.share_sum > 0 && d.share_sum < 0.99 && (
-                          <span style={{ fontSize: 10.5, color: 'var(--warning-text)' }}>
-                            сумма долей {Math.round(d.share_sum * 100)} % — часть объёма стоит на выключенных
-                          </span>
-                        )}
-                        {/* Две кнопки внешних систем. Порядок между ними НЕ косметика:
-                            пиксель показа вшивается в креатив, поэтому Weborama идёт
-                            первой, а DSP без пикселя площадку не берёт. Обе спрашивают
-                            подтверждение с числами — см. `askExternal`. */}
-                        {d && (
-                          <span id={`rk-${r.id}-ext`} style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-                            {/* Архив для площадок без нашего кода: баннеры по папкам площадок +
-                                Excel-паспорт (владелец 29.09.2026, app/traffic/offsite_export.py). */}
-                            <PassportButton dealId={r.deal_id} />
-                            <OffsiteButton dealId={r.deal_id} />
-                            {mayEdit && (<>
-                            <button style={{ ...btnSm(false), ...BTN_TONE[d.buttons?.weborama?.state], whiteSpace: 'nowrap' }}
-                              disabled={d.buttons?.weborama?.state === 'off'}
-                              onClick={() => askExternal(r, 'weborama')}
-                              title={btnTitle('Завести вставки в Weborama и забрать пиксели показа', d.buttons?.weborama, 'пиксель')}>
-                              ПИКСЕЛЬ WR<CountBadge n={d.buttons?.weborama?.go} /></button>
-                            <button style={{ ...btnSm(false), ...BTN_TONE[d.buttons?.dsp?.state], whiteSpace: 'nowrap' }}
-                              onClick={() => askExternal(r, 'dsp')}
-                              title={btnTitle('Выгрузить креативы согласованных площадок в DSP', d.buttons?.dsp, 'выгрузка')}>
-                              В DSP<CountBadge n={d.buttons?.dsp?.go} /></button>
-                            </>)}
-                          </span>
-                        )}
+                  <div>
+                    <RkPult rk={r} d={d} sum={sumOf(r)} mayEdit={mayEdit} mayReport={mayReport} reps={data?.reps}
+                      notesCount={rkNotes[r.id] ? rkNotes[r.id].length : (d?.notes_count || 0)} logOpen={!!logOpen[r.id]}
+                      onToggleLog={() => toggleLog(r)} onAction={(t, act) => goTo(r, t, act)} onPickTraffic={uid => setTraffic(r, uid)}
+                      onStart={() => startCampaign(r)} onPause={() => setCampaignStatus(r, 'пауза')}
+                      onStop={() => setCampaignStatus(r, 'остановлена')} onFinish={() => finish(r)}
+                      onDspRefresh={data?.can_dsp_refresh && r.ms_campaign_xxhash ? () => setRefreshAsk(r) : null} />
+                    {!!logOpen[r.id] && d && (
+                      <div style={{ padding: '10px 14px 0 18px' }}>
+                        <RkLog rkCode={r.deal_code} notes={rkNotes[r.id] || []} canWrite={!!d.can_write_notes}
+                          onAdd={note => addNote(r, note)} onClose={() => toggleLog(r)} />
                       </div>
-                      {!d && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>загрузка…</span>}
-                      {d && !d.placements.length && (
-                        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                          К этой РК не подключена ни одна площадка.
-                        </span>
-                      )}
-                      {/* Обратный вид: креатив → площадки. Группировка по КОРНЮ цепочки
-                          доработок — креатив как рекламное сообщение един. Суммирует, а
-                          не перераспределяет: весов у креативов нет. */}
-                      {d && !!d.placements.length && byCr && (
-                        <>
-                          {byCreative(d.placements).map(g => (
-                            <div key={g.key} style={{ padding: '9px 0',
-                              borderBottom: '1px solid var(--border-row)' }}>
-                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-                                  {g.name || 'без названия'}</span>
-                                <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>
-                                  {g.ms_title || DASH}</span>
-                                {/* Нацеливание для скриншотов после старта (01.10.2026) — на
-                                    текущую версию комплекта этого креатива. */}
-                                {!!g.set_id && <AimButton setId={g.set_id} tgtState={tgt.state} offWhy={g.aim_off} compact />}
-                                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11 }}>
-                                  план {num(g.plan)}</span>
-                                <span style={{ fontFamily: MONO, fontSize: 11,
-                                  color: g.live ? 'var(--blue)' : 'var(--text-faint)' }}>
-                                  в МС {g.live} / {g.places.length}</span>
-                                {/* Креатив целиком, на всех площадках РК (15.10.2026): крутит, если крутит хоть одна пара;
-                                    отключён — если отключены все. По одной площадке — в расхлопе площадки. */}
-                                {mayEdit && (
-                                  <PlaceActions
-                                    status={g.places.some(c => c.status === 'запущен') ? 'запущен'
-                                      : g.places.every(c => c.status === 'отклонён') ? 'завершена' : 'пауза'}
-                                    canStart={g.places.some(c => ['согласован', 'пауза'].includes(c.status))}
-                                    onStart={() => setCreativeGroupStatus(r.id, g, 'запущен')}
-                                    onPause={() => setCreativeGroupStatus(r.id, g, 'пауза')}
-                                    onOff={() => setCreativeGroupStatus(r.id, g, 'отклонён')}
-                                    titles={{ start: 'Запустить креатив на всех площадках, где он согласован',
-                                      cannot: 'Нет площадок, где креатив согласован или на паузе',
-                                      pause: 'Пауза креатива на всех площадках: доли останутся',
-                                      off: 'Отключить креатив на всех площадках: объём уйдёт остальным креативам',
-                                      offDone: 'Креатив отключён на всех площадках' }} />
-                                )}
-                              </div>
-                              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 6 }}>
-                                {g.places.map(pl => (
-                                  <span key={pl.id} style={{ display: 'inline-flex', alignItems: 'center',
-                                    gap: 6, padding: '3px 9px', borderRadius: 8,
-                                    border: '1px solid var(--border-card)', background: 'var(--bg-card)' }}>
-                                    {/* Сайт площадки в новой вкладке — как в других реестрах (01.10.2026). */}
-                                    {!!pl.domain && (
-                                      <a href={safeHref(`https://${pl.domain}`)} target="_blank" rel="noreferrer"
-                                        title={`Открыть ${pl.domain} в новой вкладке`}
-                                        style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12 }}>↗</a>
-                                    )}
-                                    <span style={{ fontFamily: MONO, fontSize: 10.5 }}>{pl.domain}</span>
-                                    <StatusPill value={pl.status} />
-                                    <span style={{ fontFamily: MONO, fontSize: 10,
-                                      color: pl.fixed ? 'var(--accent)' : 'var(--text-faint)',
-                                      fontWeight: pl.fixed ? 700 : undefined }}
-                                      title={pl.fixed ? 'Объём задан в блоке креатива' : undefined}>
-                                      {pl.fixed ? 'фикс ' : ''}{num(pl.plan_show)}</span>
-                                    <input type="checkbox" checked={!!pl.screens_done_at}
-                                      disabled={!mayEdit} aria-label="Скрины запуска сняты"
-                                      title={pl.screens_done_at
-                                        ? `Скрины запуска сняты · ${fmtDateTime(pl.screens_done_at)}${pl.screens_by ? ` · ${pl.screens_by}` : ''}`
-                                        : 'Скрины запуска сняты?'}
-                                      style={{ width: 14, height: 14, margin: 0,
-                                        cursor: mayEdit ? 'pointer' : 'not-allowed' }}
-                                      onChange={e => setCreativeScreens(r.id, pl, e.target.checked)} />
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                          <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 8,
-                            lineHeight: 1.45 }}>
-                            Обратный вид СУММИРУЕТ по площадкам. Объём идёт «вес площадки →
-                            план площадки → поровну по креативам»; весов у креативов нет.
-                          </div>
-                        </>
-                      )}
-
-                      {d && !!d.placements.length && !byCr && (
-                        <>
-                          <div style={{ display: 'grid', gap: 6, padding: '0 0 6px',
-                            gridTemplateColumns: 'minmax(0,1.3fr) 84px 44px 76px 56px 88px 88px 88px 96px 132px 76px 64px',
-                            borderBottom: '1px solid var(--border-inner)' }}>
-                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Темп', 'Статус', 'Е·W·D·С', '']
-                              .map((h, i) => (
-                                <span key={h} style={{ fontFamily: MONO, fontSize: 9,
-                                  letterSpacing: '.08em', textTransform: 'uppercase',
-                                  color: 'var(--text-faint)',
-                                  textAlign: i >= 3 && i <= 7 ? 'right'
-                                    : (i === 9 || i === 10) ? 'center' : 'left' }}>{h}</span>
-                              ))}
-                          </div>
-                          {/* Площадки «не наш код» — всегда сверху (владелец 30.09.2026): их запуск
-                              ручной, галочкой, и они не должны теряться среди DSP-площадок. */}
-                          {[...d.placements].sort((a, b) => EXT_ORDER(a) - EXT_ORDER(b)).map(p => (
-                            <Fragment key={p.id}>
-                            {/* Объём площадки против плана РК (27.09.2026): > 50 % — жёлтым,
-                                > 100 % — красным; причина в подсказке. */}
-                            <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
-                              title={volTitle(d.volumes, p.publisher_id)}
-                              style={{ display: 'grid', gap: 6, alignItems: 'center', cursor: 'pointer',
-                              gridTemplateColumns: 'minmax(0,1.3fr) 84px 44px 76px 56px 88px 88px 88px 96px 132px 76px 64px',
-                              padding: '7px 0', borderBottom: '1px solid var(--border-row)',
-                              background: volTint(d.volumes, p.publisher_id) }}>
-                              {/* Обрезается НАЗВАНИЕ, а метки остаются целыми: «не на…» не читается. */}
-                              <span style={{ display: 'flex', alignItems: 'center', minWidth: 0,
-                                fontFamily: MONO, fontSize: 11.5, whiteSpace: 'nowrap' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
-                                  title={p.domain || p.publisher}>{p.domain || p.publisher}</span>
-                                {/* Режим по поверхностям в сделке (30.09.2026): внешняя — все её
-                                    поверхности не через нашу DSP; смешанная — часть. */}
-                                {p.ext_mode === 'external' && (
-                                  <span title="Не наш код: площадка во внешней DSP — в нашу DSP её не завести, креатив заводится там вручную"
-                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
-                                      borderRadius: 5, background: 'var(--warning-tint)',
-                                      color: 'var(--warning-text)' }}>не наш код</span>
-                                )}
-                                {p.ext_mode === 'mixed' && (
-                                  <span title={`${(p.ext_surfaces || []).join('/')} — во внешней DSP, остальное — через нашу DSP`}
-                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
-                                      borderRadius: 5, background: 'var(--warning-tint)',
-                                      color: 'var(--warning-text)' }}>{(p.ext_surfaces || []).join('/')} вне DSP</span>
-                                )}
-                                {p.is_direct && (
-                                  <span title="Площадка крутит сама — факт вводится руками"
-                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
-                                      borderRadius: 5, background: 'var(--bg-subtle)',
-                                      color: 'var(--text-muted)' }}>сама</span>
-                                )}
-                              </span>
-                              {/* Счётчик креативов — здесь же, где клик раскрывает их
-                                  список: число и то, что за ним стоит, в одном месте. */}
-                              <span><CreativeCounts counts={p.creative_counts} /></span>
-                              <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>
-                                {p.code || DASH}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
-                                color: p.no_weight ? 'var(--warning-text)' : 'var(--text-secondary)' }}>
-                                {p.no_weight ? 'нет индекса' : num(p.weight)}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>
-                                {p.share ? `${(p.share * 100).toFixed(1)} %` : DASH}</span>
-                              {/* Объём, заданный в блоке креатива (владелец 25.09.2026):
-                                  площадка получает ровно его, остаток РК — по весам. */}
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
-                                color: p.fixed ? 'var(--accent)' : undefined, fontWeight: p.fixed ? 700 : undefined }}
-                                title={p.fixed ? 'Объём задан в блоке креатива сделки — площадка получает ровно его, остаток плана РК делится по весам' : undefined}>
-                                {!!p.fixed && <span style={{ fontSize: 8.5, letterSpacing: '.06em', marginRight: 4,
-                                  padding: '1px 4px', borderRadius: 4, background: 'var(--accent-tint)' }}>ФИКС</span>}
-                                {num(p.plan_show)}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
-                                color: p.fact_shows == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>
-                                {num(p.fact_shows)}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
-                                color: p.under ? 'var(--danger)' : 'var(--text-faint)' }}>
-                                {p.under == null ? DASH : `−${num(p.under)}`}</span>
-                              <PaceCell pace={p.pace} />
-                              {/* Статус ПОКАЗЫВАЕМ, а меняем кнопками: первые три значения
-                                  ставит конвейер согласования, и выпадашка предлагала бы
-                                  выбрать то, что человек не выбирает. */}
-                              {/* Ширина по самому широкому статусу («ждёт запуска») и
-                                  по центру колонки: разной длины плашки в столбце дают
-                                  лесенку, и она читается как беспорядок, а не как данные.
-                                  То же правило, что в колонке статуса РК. */}
-                              <span style={{ justifySelf: 'center' }}>
-                                <StatusPill value={p.status} w={116}
-                                  title={d.placement_manual.includes(p.status) ? ''
-                                    : 'Ставит согласование креативов'} /></span>
-                              {/* Внешние системы — СРАЗУ за статусом, как на карточке
-                                  сделки. Тот же расчёт, те же буквы, тот же тон: одно
-                                  состояние не должно называться на двух экранах
-                                  по-разному. */}
-                              <span style={{ justifySelf: 'center', display: 'inline-flex', gap: 3 }}>
-                                {/* ЕРИД — перед Weborama и DSP: без него нельзя ни то, ни другое.
-                                    Серый — ни у одного креатива, жёлтый — у части, зелёный — у всех. */}
-                                <ExtChip letter="Е" size={17}
-                                  tone={{ all: 'ok', part: 'wait' }[p.erid?.state] || 'none'}
-                                  title={`ЕРИД: ${p.erid ? `${p.erid.got} из ${p.erid.total} креативов` : 'нет данных'}`
-                                    + (p.erid?.state === 'part' ? ' — у части креативов ещё нет, их пиксель и выгрузка ждут' : '')} />
-                                <ExtChip letter="W" size={17}
-                                  tone={EXT_TONE[p.external?.weborama?.state] || 'none'}
-                                  title={`Weborama: ${p.external?.weborama?.state || 'нет данных'}`
-                                    + (p.external?.weborama?.why ? ` — ${p.external.weborama.why}` : '')} />
-                                <ExtChip letter="D" size={17}
-                                  tone={EXT_TONE[p.external?.dsp?.state] || 'none'}
-                                  title={`DSP: ${p.external?.dsp?.state || 'нет данных'}`
-                                    + (p.external?.dsp?.why ? ` — ${p.external.dsp.why}` : '')} />
-                                {/* Скрины запуска (01.10.2026) — после DSP: снимают их уже по
-                                    крутящемуся креативу. Отметка — в виде «по креативам». */}
-                                <ExtChip letter="С" size={17}
-                                  tone={{ all: 'ok', part: 'wait' }[p.screens?.state] || 'none'}
-                                  title={`Скрины запуска: ${p.screens ? `${p.screens.got} из ${p.screens.total} креативов` : 'нет данных'}`
-                                    + ' — отметка в виде «по креативам»'} />
-                              </span>
-                              <span style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
-                                {mayEdit && p.ext_mode === 'external' && (
-                                  <ExternalLaunch status={p.status} canStart={p.can_start}
-                                    onChange={st => setPlacementStatus(r.id, p, st)} />
-                                )}
-                                {mayEdit && p.ext_mode !== 'external' && (
-                                  <PlaceActions status={p.status} canStart={p.can_start}
-                                    uploaded={p.dsp_uploaded} why={p.start_why}
-                                    onStart={() => setPlacementStatus(r.id, p, 'запущен')}
-                                    onPause={() => setPlacementStatus(r.id, p, 'пауза')}
-                                    onOff={() => setPlacementStatus(r.id, p, 'завершена')} />
-                                )}
-                              </span>
-                            </div>
-                            {openPlace === p.id && (
-                              <div style={{ padding: '0 0 10px 18px',
-                                borderBottom: '1px solid var(--border-row)' }}>
-                                <CreativeRows rows={p.creatives} manual={d.creative_manual}
-                                  mayEdit={mayEdit} campaignHash={r.ms_campaign_xxhash}
-                                  onStatus={(cr, st) => setCreativeStatus(r.id, cr, st)} />
-                              </div>
-                            )}
-                            </Fragment>
-                          ))}
-                          <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 8,
-                            lineHeight: 1.45 }}>
-                            До старта и первые 5 дней РК объём делят все площадки в работе,
-                            дальше — только запущенные. Пауза останавливает открутку, доля
-                            площадки в плане сохраняется. Отключение убирает её из
-                            распределения — объём уходит остальным.
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* динамика */}
-                    <div id={`rk-${r.id}-stats`}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10,
-                        marginBottom: 10, flexWrap: 'wrap' }}>
-                        <span style={{ ...CAP, marginBottom: 0 }}>динамика показов</span>
-                        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 5,
-                          alignItems: 'center' }}>
-                          {/* Видна всем с доступом к дашборду: аккаунт и продавец открывают окно в режиме чтения
-                              («меняет трафик»), применяет трафик (макет 08.10.2026). Флайт кончился — кнопка неактивна. */}
-                          {(
-                            <button disabled={detail[r.id]?.days_left === 0}
-                              style={{ ...btnSm(!!detail[r.id]?.boost), textTransform: 'uppercase',
-                              letterSpacing: '.04em', display: 'inline-flex', alignItems: 'center', gap: 6,
-                              opacity: detail[r.id]?.days_left === 0 ? 0.5 : 1 }}
-                              title={detail[r.id]?.days_left === 0 ? 'Флайт закончился — поднимать нечего'
-                                : 'Темп размещения: поднять остаток РК на процент на несколько дней или перераспределить объём между площадками'}
-                              aria-label="Настройки темпа размещения"
-                              onClick={() => setBoostAsk(r)}>
-                              <GearIcon size={13} />
-                              темп размещения{detail[r.id]?.boost
-                                ? ` · +${detail[r.id].boost.pct} % до ${dm(detail[r.id].boost.until)}` : ''}
-                            </button>
-                          )}
-                          {[['day', 'дни'], ['week', 'недели']].map(([g, l]) => (
-                            <button key={g} style={btnSm((grain[r.id] || 'day') === g)}
-                              onClick={() => { setGrain(x => ({ ...x, [r.id]: g }))
-                                setRange(x => ({ ...x, [r.id]: null }))
-                                loadStat(r.id, g) }}>
-                              {l}</button>
-                          ))}
-                          {/* Третья кнопка — окно дат. Интервал КЛИПУЕТСЯ К ФЛАЙТУ на
-                              сервере: выбрал месяц, а РК шла две недели — покажем эти
-                              две недели, а не пустоту по краям. */}
-                          <span data-pop-root style={{ position: 'relative', display: 'inline-block' }}>
-                            <button style={btnSm(!!range[r.id])}
-                              onClick={() => setPop(x => (x === `dt${r.id}` ? null : `dt${r.id}`))}>
-                              {range[r.id]
-                                ? `${dm(range[r.id].from)} — ${dm(range[r.id].to)}`
-                                : 'даты'}
-                            </button>
-                            <PortalPopover open={pop === `dt${r.id}`} minWidth={280}
-                              style={{ padding: 12, gap: 9, zIndex: Z.dropdown }}>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                Окно внутри флайта РК
-                              </span>
-                              {/* Поля тянутся поровну и умеют сжиматься (`minWidth: 0`):
-                                  иначе два `input[type=date]` держат собственную ширину,
-                                  панель раздувается сверх `minWidth`, и у правого края
-                                  экрана из неё уезжает кнопка «показать». */}
-                              <span style={{ display: 'flex', gap: 8 }}>
-                                <input type="date" style={{ ...inp, fontFamily: MONO, fontSize: 12,
-                                  flex: '1 1 0', minWidth: 0, padding: '7px 8px' }}
-                                  defaultValue={r.date_start}
-                                  onChange={e => setRange(x => ({ ...x,
-                                    [r.id]: { ...(x[r.id] || { to: r.date_end }), from: e.target.value } }))} />
-                                <input type="date" style={{ ...inp, fontFamily: MONO, fontSize: 12,
-                                  flex: '1 1 0', minWidth: 0, padding: '7px 8px' }}
-                                  defaultValue={r.date_end}
-                                  onChange={e => setRange(x => ({ ...x,
-                                    [r.id]: { ...(x[r.id] || { from: r.date_start }), to: e.target.value } }))} />
-                              </span>
-                              <span style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span onClick={() => { setRange(x => ({ ...x, [r.id]: null }))
-                                  setPop(null); loadStat(r.id, grain[r.id] || 'day') }}
-                                  style={{ fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer' }}>
-                                  сбросить</span>
-                                <span onClick={() => { setPop(null)
-                                  loadStat(r.id, grain[r.id] || 'day', range[r.id]) }}
-                                  style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--blue)', cursor: 'pointer' }}>
-                                  показать</span>
-                              </span>
-                            </PortalPopover>
-                          </span>
-                          {/* Подсказка по цветам — в правом верхнем углу блока: без неё
-                              светлый и сплошной столбцы читаются как «мало» и «много». */}
-                          <span style={{ display: 'inline-flex', gap: 10, marginLeft: 6 }}>
-                            {[['план', 'var(--blue-soft)'], ['факт', 'var(--blue)'],
-                              ...((stat[r.id]?.buckets || []).some(b => b.boost_extra)
-                                ? [['темп размещения', 'var(--warning)']] : [])].map(([l, c]) => (
-                              <span key={l} style={{ display: 'inline-flex', alignItems: 'center',
-                                gap: 5, fontSize: 10.5, color: 'var(--text-muted)' }}>
-                                <span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}
-                              </span>
-                            ))}
-                          </span>
-                        </span>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                      <div style={{ flex: '1 1 auto', minWidth: 0, borderRight: '1px solid var(--border-card)' }}>
+                        <SitesPanel rk={r} d={d} mayEdit={mayEdit} tgt={tgt} filterNoShows={!!noShows[r.id]}
+                          onClearNoShows={() => setNoShows(x => ({ ...x, [r.id]: false }))}
+                          handlers={{
+                            setPlacementStatus: (p, st) => setPlacementStatus(r.id, p, st),
+                            setCreativeStatus: (cr, st) => setCreativeStatus(r.id, cr, st),
+                            setCreativeGroupStatus: (g, st) => setCreativeGroupStatus(r.id, g, st),
+                            setCreativeScreens: (cr, done) => setCreativeScreens(r.id, cr, done),
+                            askExternal: (kind) => askExternal(r, kind),
+                            downloadCreatives: () => downloadDealCreatives(r.deal_id, fail),
+                          }} />
                       </div>
-                      <Dynamics data={stat[r.id]}
-                        label={`${r.deal_code} · ${r.product || ''}`.trim()} />
-
-                      {stat[r.id] && (
-                        <>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10,
-                            marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>
-                            {/* В режиме недель — недельные величины (владелец 01.10.2026: «переключил
-                                на недели, а суммы всё равно суточные»). Сервер отдаёт темп в день,
-                                неделя — тот же темп × 7. */}
-                            {[['средний темп', stat[r.id].speed == null ? DASH
-                                : wk(r.id) ? `${num(stat[r.id].speed * 7)} / нед` : `${num(stat[r.id].speed)} / дн`],
-                              [wk(r.id) ? 'нужно в неделю' : 'нужно в день', stat[r.id].need_per_day == null
-                                ? (r.flight_over ? 'флайт закончен' : DASH)
-                                : wk(r.id) ? `${num(stat[r.id].need_per_day * 7)} / нед`
-                                  : `${num(stat[r.id].need_per_day)} / дн`],
-                              ['дней осталось', stat[r.id].days_left == null ? DASH : String(stat[r.id].days_left)],
-                            ].map(([l, v]) => (
-                              <span key={l} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                <span style={{ ...CAP, marginBottom: 0 }}>{l}</span>
-                                <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700 }}>{v}</span>
-                              </span>
-                            ))}
-                          </div>
-
-                          {stat[r.id].totals && (
-                            /* Третий столбец — ЦЕЛЬ из медиаплана рядом с фактом
-                               (владелец 05.09.2026): трафик должен видеть, к чему его
-                               открутку будут принимать, не открывая карточку сделки.
-                               Строки у цели свои: частота и CR фактом пока не меряются,
-                               поэтому столбцы самостоятельные, а не пары «план/факт» —
-                               выдуманное соответствие врало бы про то, что сверено. */
-                            <div id={`rk-${r.id}-wr`} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
-                              marginTop: 12, borderTop: '1px solid var(--border-inner)' }}>
-                              {[[wk(r.id) ? 'эта неделя' : (stat[r.id].totals.as_of ? `за ${dm(stat[r.id].totals.as_of)}` : 'сегодня'), wk(r.id) ? weekTotals(stat[r.id]) : stat[r.id].totals.today],
-                                ['всего за период', stat[r.id].totals.period]]
-                                .map(([l, t], i, _a, T = stat[r.id].totals,
-                                       cover = [T.wr_placements && T.wr_placements < T.placements
-                                         ? `по ${T.wr_placements} из ${T.placements} площадок` : null,
-                                       /* Площадки вне DSP мерит одна Weborama — в сверку не идут,
-                                          справочно (владелец 02.10.2026). */
-                                       i === 1 && T.wr_outside ? `вне DSP: WR ${num(T.wr_outside)}` : null]
-                                         .filter(Boolean).join(' · ') || null) => (
-                                  /* Верхний отступ равен отступу плашки цели: три
-                                     заголовка обязаны стоять на одной линии, а плашку
-                                     подтягивать вверх нельзя — она наезжает на строку
-                                     над блоком. Значит опускаем соседей, а не поднимаем её. */
-                                  /* «Факт | WR» и строка расхождения (владелец 27.09.2026):
-                                     Weborama — независимая сверка, в факт не входит. Цвет
-                                     расхождения — сервера: до порога зелёный, до двух
-                                     порогов жёлтый, дальше или WR больше нашего — красный. */
-                                  <span key={l} style={{ display: 'grid',
-                                    gridTemplateColumns: 'minmax(0,1fr) auto auto', columnGap: 12,
-                                    rowGap: 3, paddingTop: 10, alignContent: 'start' }}>
-                                    <span style={{ ...CAP, marginBottom: 0 }}>{l}</span>
-                                    <span style={{ ...CAP, marginBottom: 0, textAlign: 'right' }}>факт</span>
-                                    <span style={{ ...CAP, marginBottom: 0, textAlign: 'right' }}>wr</span>
-                                    {[['Показы', num(t.shows), t.wr ? num(t.wr.shows) : DASH],
-                                      ['Переходы', num(t.clicks), t.wr ? num(t.wr.clicks) : DASH],
-                                      ['CTR', t.ctr == null ? DASH : `${t.ctr} %`,
-                                        t.wr?.ctr == null ? DASH : `${t.wr.ctr} %`]].map(([a, b, w]) => (
-                                        <Fragment key={a}>
-                                          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{a}</span>
-                                          <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{b}</span>
-                                          <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
-                                            color: 'var(--text-secondary)' }}>{w}</span>
-                                        </Fragment>
-                                      ))}
-                                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)',
-                                      borderTop: '1px solid var(--border-inner)', paddingTop: 3 }}>Расхождение с WR</span>
-                                    <span title={t.mismatch?.hint || 'Weborama по этому периоду не измеряла'}
-                                      style={{ gridColumn: 'span 2', textAlign: 'right', fontFamily: MONO,
-                                        fontSize: 11.5, fontWeight: 700, borderTop: '1px solid var(--border-inner)',
-                                        paddingTop: 3, color: MISMATCH_FG[t.mismatch?.level] || 'var(--text-faint)' }}>
-                                      {t.mismatch ? `${String(t.mismatch.pct).replace('.', ',')} %` : DASH}
-                                    </span>
-                                    {/* Охват сверки: Weborama мерила часть площадок —
-                                        процент посчитан по ним, не по всей РК. */}
-                                    {!!cover && (
-                                      <span style={{ gridColumn: '1 / -1', fontSize: 10.5,
-                                        color: 'var(--text-faint)', textAlign: 'right' }}>{cover}</span>
-                                    )}
-                                  </span>
-                                ))}
-                              {/* Цель выделена плашкой — тем же приёмом, что «Услуги от»
-                                  на карточке сделки: подложка, рамка, скругление 12.
-                                  Слева факт, который мы намеряли, справа обязательство
-                                  из медиаплана — и это разные по природе числа, а не
-                                  третий столбец той же таблицы.
-
-                                  Вверх плашку НЕ подтягиваем: отрицательный отступ ради
-                                  выравнивания подписи с соседними наезжал на строку
-                                  «дней осталось» над блоком. */}
-                              <span style={{ display: 'flex', flexDirection: 'column', gap: 3,
-                                background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
-                                borderRadius: 12, padding: '10px 12px', alignSelf: 'start' }}>
-                                <span style={{ ...CAP, marginBottom: 2 }}>цель · kpi приёмки</span>
-                                {GOAL_LABELS.filter(([k]) => d.goals && d.goals[k]).length
-                                  ? GOAL_LABELS.filter(([k]) => d.goals && d.goals[k]).map(([k, label]) => (
-                                    <span key={k} style={{ display: 'flex', justifyContent: 'space-between',
-                                      gap: 8, fontSize: 11.5 }}>
-                                      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-                                      <span style={{ fontFamily: MONO, textAlign: 'right' }}>
-                                        {String(d.goals[k]).trim()}</span>
-                                    </span>
-                                  ))
-                                  : (
-                                    <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.45 }}>
-                                      В медиаплане не заданы — принимать не по чему.
-                                    </span>
-                                  )}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Отчёт Weborama по ссылке — внешний пиксель (05.11.2026): сверка РК в целом снимается по ссылке клиента */}
-                          {!!d.wr_link && (
-                            <WrLinkRow campaignId={r.id} link={d.wr_link} mayEdit={mayEdit}
-                              onChange={wl => { setDetail(prev => ({ ...prev, [r.id]: { ...prev[r.id], wr_link: wl } })); loadStat(r.id, grain[r.id] || 'day') }} />
-                          )}
-                          {/* Ряд управления (владелец 05.11.2026): заголовок и подпись — сверху, ниже в одну линию кнопки,
-                              плитки и ответственные; шаг между кнопками и плитками один — 8 px. */}
-                          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>
-                            {mayEdit && (
-                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-                                <span style={{ ...CAP, marginBottom: 0 }}>управление рк</span>
-                                {/* Подпись называет НАШУ стадию: в макете стоит «Предварительная сверка», но в каталоге такой
-                                    стадии нет — после размещения идёт «Итоговая сверка». */}
-                                <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.45 }}>
-                                  «Завершить РК» двигает сделку на стадию «Итоговая сверка» — хозяином снова становится аккаунт.
-                                </span>
-                              </div>
-                            )}
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                              {mayEdit && (
-                              <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'nowrap' }}>
-                                {/* До выкладки в DSP запуск и стоп заперты (владелец 29.09.2026):
-                                    иначе меняется только наша пометка, а в сети — ничего.
-                                    Причина — с сервера, тем же правилом, что у ручки. */}
-                                <button disabled={!!r.dsp_block}
-                                  aria-label={r.status === 'запущена' ? 'Пауза РК' : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
-                                  title={r.status === 'запущена' ? 'Пауза РК'
-                                    : (detail[r.id]?.launch_hint || r.launch_hint)
-                                      ? `Запуск заперт: ${detail[r.id]?.launch_hint || r.launch_hint}`
-                                      : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
-                                  onClick={() => (r.status === 'запущена'
-                                    ? setCampaignStatus(r, 'пауза')
-                                    /* Старт и возобновление — через окно с планом по площадкам
-                                       (01.10.2026): голое «запущена» не поднимало площадки, и
-                                       РК «стартовала» с 19 площадками в «ждёт запуска». */
-                                    : startCampaign(r))}
-                                  style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
-                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                    border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--blue)'}`,
-                                    background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--blue)',
-                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--on-accent)' }}>
-                                  {r.status === 'запущена'
-                                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1.2" /><rect x="14" y="4" width="5" height="16" rx="1.2" /></svg>
-                                    : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
-                                </button>
-                                <button disabled={!!r.dsp_block} title={r.dsp_block || 'Стоп РК'} aria-label="Стоп РК"
-                                  onClick={() => setCampaignStatus(r, 'остановлена')}
-                                  style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
-                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                    border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--danger-border)'}`,
-                                    background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--bg-card)',
-                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--danger)' }}>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
-                                </button>
-                                <button onClick={() => finish(r)}
-                                  style={{ height: 40, padding: '0 16px', borderRadius: 10, cursor: 'pointer',
-                                    border: '1px solid var(--blue-soft)', background: 'var(--bg-card)',
-                                    color: 'var(--blue)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
-                                  Завершить РК
-                                </button>
-                                {/* Перезаписать у заведённой РК ссылки, пиксели и таргеты по
-                                    текущим данным — Администратор и «Админ Трафик» (02.10.2026). */}
-                                {!!data?.can_dsp_refresh && !!r.ms_campaign_xxhash && (
-                                  /* Пиктограммой круговых стрелок в одном ряду с остальными
-                                     (владелец 03.10.2026); смысл — в подсказке и aria-label. */
-                                  <button aria-label="Обновить данные в DSP"
-                                    style={{ width: 40, height: 40, padding: 0, borderRadius: 10, cursor: 'pointer',
-                                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                      border: '1px solid var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)' }}
-                                    title="Обновить данные в DSP: перезаписать ссылки, пиксели и таргеты по текущим данным; сначала покажет, что изменится"
-                                    onClick={() => setRefreshAsk(r)}>
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                      strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" />
-                                      <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </span>
-                              )}
-                              <span style={{ display: 'inline-flex', gap: 8, marginLeft: mayEdit ? 16 : 0 }}>
-                              {/* Порядок плиток (владелец 05.11.2026): «Задачи» · «Отчёт» · «Лог РК» */}
-                              <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
-                                title={r.deal_title} advertiser={d.advertiser_label} />
-                              {mayReport && <RkReportLink code={r.deal_code} />}
-                              <RkLogTile count={rkNotes[r.id] ? rkNotes[r.id].length : (d.notes_count || 0)}
-                                open={!!logOpen[r.id]} onToggle={() => toggleLog(r)} />
-                              </span>
-                              <Owners owners={d.owners} reps={data?.reps}
-                                onPick={uid => setTraffic(r, uid)} />
-                            </div>
-                            {mayEdit && !!r.dsp_block && (
-                              <div style={{ fontSize: 11.5, color: 'var(--warning-text)', marginTop: 8, lineHeight: 1.45 }}>
-                                Запуск и остановка станут доступны после выгрузки в DSP — кнопка «В DSP» выше.
-                              </div>
-                            )}
-                          </div>
-                          {!!logOpen[r.id] && (
-                            <RkLog rkCode={r.deal_code} notes={rkNotes[r.id] || []} canWrite={!!d.can_write_notes}
-                              onAdd={note => addNote(r, note)} onClose={() => toggleLog(r)} />
-                          )}
-                        </>
-                      )}
+                      <div style={{ flex: `0 0 ${ANALYTICS_W}px`, width: ANALYTICS_W, boxSizing: 'border-box', position: 'sticky', top: 'var(--navbar-h, 66px)', alignSelf: 'flex-start' }}>
+                        <RkAnalytics rk={r} d={d} st={stat[r.id]} grain={grain[r.id] || 'day'} range={range[r.id] || null}
+                          onGrain={g => { setGrain(x => ({ ...x, [r.id]: g })); setRange(x => ({ ...x, [r.id]: null })); loadStat(r.id, g) }}
+                          onRange={win => { setRange(x => ({ ...x, [r.id]: win })); loadStat(r.id, grain[r.id] || 'day', win || undefined) }}
+                          onTempo={() => setBoostAsk(r)} onRealloc={() => setReallocAsk(r)} mayEdit={mayEdit}
+                          onWrLinkChange={wl => { setDetail(prev => ({ ...prev, [r.id]: { ...prev[r.id], wr_link: wl } })); loadStat(r.id, grain[r.id] || 'day') }} />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1867,6 +826,16 @@ export default function TrafficDashboard() {
               loadStat(boostAsk.id, grain[boostAsk.id] || 'day', range[boostAsk.id]),
             ])
             setDetail(x => ({ ...x, [boostAsk.id]: d.data }))
+          }} />
+      )}
+      {reallocAsk && (
+        <ReallocModal row={reallocAsk} auth={auth} canEdit={mayEdit} onClose={() => setReallocAsk(null)}
+          onDone={async () => {
+            const [d] = await Promise.all([
+              api.get(`/traffic-dashboard/campaign/${reallocAsk.id}`, auth()),
+              loadStat(reallocAsk.id, grain[reallocAsk.id] || 'day', range[reallocAsk.id]),
+            ])
+            setDetail(x => ({ ...x, [reallocAsk.id]: d.data }))
           }} />
       )}
       {refreshAsk && (

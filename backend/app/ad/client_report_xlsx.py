@@ -23,7 +23,7 @@ from typing import Optional
 
 import openpyxl
 from openpyxl.chart import BarChart, Reference
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Border, Color, Font, PatternFill
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
 from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.utils import get_column_letter
@@ -35,9 +35,20 @@ _TPL = os.path.join(os.path.dirname(__file__), "..", "templates")
 TEMPLATE = os.path.abspath(os.path.join(_TPL, "client_report_template.xlsx"))
 CHART_XML = os.path.abspath(os.path.join(_TPL, "client_report_chart.xml"))
 SHEET = "Отчёт"
-# Привязка графика владельца (v5): от колонки D (+смещение) строки 11, размер в EMU.
-CHART_ANCHOR = {"col": 3, "colOff": 947057, "row": 10, "rowOff": 54428,
-                "cx": 22261286, "cy": 2220686}
+# Привязка графика — ровно из правки владельца 17.11.2026 (файл QZ9VNS v6): от колонки D (+818 029 EMU) строки 11,
+# ширина 19 061 205 EMU на стандартное поле 31 дня. Поле шире (РК на два месяца) — ширина растёт пропорционально
+# ширине поля (`_fit_header`). Область построения внутри графика (x, w) — в `client_report_chart.xml`, из той же правки.
+# Своя формула «пиксели колонки» не годится: Excel владельца рисует колонки иначе, чем считает формула.
+CHART_ANCHOR = {"col": 3, "colOff": 818029, "row": 10, "rowOff": 54428, "cy": 2220686}
+CHART_CX_31 = 19061205
+# Колонок дней — всегда не меньше 31 (владелец 17.11.2026): у короткого месяца хвост пустой и заштрихован, шапка и
+# «ИТОГО» стоят на одном месте у любого месяца. Числа — только за реальные дни.
+MIN_DAY_COLS = 31
+TOTAL_W, MARGIN_W = 17.44140625, 3.109375   # ширины «ИТОГО» / чисел результата и поля за ней (правка владельца v2)
+ZOOM = 68                            # масштаб всех листов при открытии (владелец 17.11.2026: 70, затем 68)
+DAY_W = 8.33203125                   # все колонки дней (правка владельца v2, 17.11.2026)
+METRIC_W = {5: 13.0, 6: 13.0}        # «Уники» и «CTR» (E, F) — 13, шаблон давал им 14 вместе с D (правка владельца v2)
+DEFAULT_W = 8.88671875               # ширина колонки без описания в шаблоне
 SAMPLE_TITLE, SAMPLE_HEAD, SAMPLE_DATA, SAMPLE_TOTAL = 19, 20, 21, 22
 FIRST_FREE = 18
 # Раскладка образца v4 (владелец 05.10.2026): площадки B:F (площадка, показы, клики, уники,
@@ -86,6 +97,9 @@ class _Painter:
         # Комплект «с поправкой» подписан в шапках: клики, уники и CTR там — модель SIMB ID.
         self.m = " (модель)" if model else ""
         self.total_col = G + len(days)
+        # Добивочная колонка (дня в месяце нет) — штриховка поверх фона листа, а не пустая клетка «как ноль»
+        bg = copy(s.background.fill.fgColor) if s.background.fill.fill_type else "FFFFFFFF"
+        self.hatch = PatternFill(fill_type="lightUp", fgColor="FFD3D8E3", bgColor=bg)
 
     def put(self, r, c, value, proto, fmt=None):
         cell = self.ws.cell(r, c)
@@ -128,13 +142,13 @@ class _Painter:
         vals = {x["label"]: x for x in by_day}
         self.put(top, H, "Дата", s.head)
         for i, d in enumerate(self.days):
-            self.put(top, G + i, _ddmm(d, year=False), s.head_day)
+            self.put(top, G + i, _ddmm(d, year=False) if d else None, s.head_day)
         self.put(top, self.total_col, "ИТОГО", s.head_total)
         last = max(vals) if vals else None
         shows, clicks, uniq, ctr, acc, run = [], [], [], [], [], 0
         for d in self.days:
             v = vals.get(d)
-            past = bool(last and d <= last and (self.d_from is None or d >= self.d_from))
+            past = bool(d and last and d <= last and (self.d_from is None or d >= self.d_from))
             sh = v["shows"] if v else (0 if past else None)
             ck = v["clicks"] if v else (0 if past else None)
             shows.append(sh)
@@ -153,6 +167,10 @@ class _Painter:
             for i, v in enumerate(row_vals):
                 self.put(top + k, G + i, v, s.day_num, fmt)
             self.put(top + k, self.total_col, total, s.day_total, fmt)
+        for i, d in enumerate(self.days):
+            if d is None:
+                for rr in range(top, top + len(lines) + 1):
+                    ws.cell(rr, G + i).fill = copy(self.hatch)
         end_right = top + len(lines) + 1
         for x in range(top + 1, max(end_left, end_right)):
             if not ws.row_dimensions[x].height:
@@ -171,7 +189,7 @@ def _ctr(shows, clicks):
     return round(clicks / shows * 100, 2) if shows else None
 
 
-def _chart(ws, top_row, n_days) -> dict | None:
+def _chart(ws, top_row, n_days, cx: int) -> dict | None:
     """Место под график владельца. Сам график — его XML (`client_report_chart.xml`, правка в
     Excel 05.10.2026) без изменений, кроме ссылок на диапазоны: openpyxl ставит заготовку с
     ТОЧНОЙ привязкой владельца, `to_xlsx` подменяет её содержимое. → ссылки для подмены."""
@@ -185,7 +203,7 @@ def _chart(ws, top_row, n_days) -> dict | None:
     ch.anchor = OneCellAnchor(
         _from=AnchorMarker(col=CHART_ANCHOR["col"], colOff=CHART_ANCHOR["colOff"],
                            row=CHART_ANCHOR["row"], rowOff=CHART_ANCHOR["rowOff"]),
-        ext=XDRPositiveSize2D(cx=CHART_ANCHOR["cx"], cy=CHART_ANCHOR["cy"]))
+        ext=XDRPositiveSize2D(cx=cx, cy=CHART_ANCHOR["cy"]))
     ws.add_chart(ch)
     sh = f"'{ws.title}'!"
     return {"SHOWS_T": f"{sh}${lab}${top_row + 1}", "CAT": f"{sh}${first}${top_row}:${last}${top_row}",
@@ -222,6 +240,96 @@ def _fill_header(ws, rep: Report):
     return coordinate_to_tuple(chart_at) if chart_at else None
 
 
+CHART_MARK_COL = 7                   # метка графика в шаблоне — G11
+RESULT_L, RESULT_V = 40, 41          # «Результат за период» в шаблоне: подписи AN, числа AO
+HEAD_LAST = 45                       # правее этой колонки шаблон шапку не оформляет
+
+
+def _fit_header(ws, tc: int, background) -> int:
+    """Шапка первого листа — по колонке «ИТОГО» таблиц `tc` (правка владельца 17.11.2026, файл QZ9VNS): заголовок до `tc`,
+    «Результат за период» — последние четыре колонки (подписи tc−3…tc−1, числа в tc), заголовок графика E…tc−6, место
+    графика E…tc−5, зазор tc−4, поле справа tc+1. Шаблон рисует это на постоянном AO — шапка торчала правее таблиц.
+    → ширина графика в EMU."""
+    merged = {str(m) for m in ws.merged_cells.ranges}
+    for rng in ("M3:AO4", "M5:AO5", "AN9:AO10", "E9:AL10", "G11:AM16"):
+        if rng in merged:
+            ws.unmerge_cells(rng)
+    # снимок блока результата и места графика до перекладки
+    label_style = {r: copy(ws.cell(r, RESULT_L)._style) for r in range(9, 17)}
+    value_style = {r: copy(ws.cell(r, RESULT_V)._style) for r in range(9, 17)}
+    texts = {r: (ws.cell(r, RESULT_L).value, ws.cell(r, RESULT_V).value) for r in range(9, 17)}
+    chart_style = copy(ws.cell(11, CHART_MARK_COL)._style)
+    # правее «ИТОГО» шапки нет: поле tc+1 — фон без рамок, дальше — чистый лист
+    for r in range(1, FIRST_FREE):
+        for c in range(tc + 1, HEAD_LAST + 1):
+            cell = ws.cell(r, c)
+            cell.value = None
+            cell.border = Border()
+            cell.fill = copy(background) if c == tc + 1 else PatternFill(fill_type=None)
+    # «Результат за период»
+    for r in range(9, 17):
+        for c in range(tc - 3, tc + 1):
+            cell = ws.cell(r, c)
+            cell.value = None
+            cell._style = copy(value_style[r] if (c == tc and r >= 11) else label_style[r])
+        ws.cell(r, tc - 3).value = texts[r][0]
+        if r >= 11:
+            ws.cell(r, tc).value = texts[r][1]
+    ws.merge_cells(start_row=9, end_row=10, start_column=tc - 3, end_column=tc)
+    for r in range(11, 17):
+        ws.merge_cells(start_row=r, end_row=r, start_column=tc - 3, end_column=tc - 1)
+    # заголовок отчёта и подзаголовок — до «ИТОГО»
+    ws.merge_cells(start_row=3, end_row=4, start_column=13, end_column=tc)
+    ws.merge_cells(start_row=5, end_row=5, start_column=13, end_column=tc)
+    # заголовок графика и его место (стиль места — бывшей метки графика G11), зазор перед результатом — фон
+    ws.merge_cells(start_row=9, end_row=10, start_column=E, end_column=tc - 6)
+    for r in range(11, 17):
+        for c in range(E, tc - 4):
+            ws.cell(r, c)._style = copy(chart_style)
+            ws.cell(r, c).value = None
+    ws.merge_cells(start_row=11, end_row=16, start_column=E, end_column=tc - 5)
+    for r in range(1, FIRST_FREE):    # зазор перед результатом — фоном, и край заголовка графика над местом графика
+        for c in ((tc - 5, tc - 4) if r in (9, 10) else (tc - 4,)):
+            if ws.cell(r, c).fill.fill_type is None:
+                ws.cell(r, c).fill = copy(background)
+    # значения слева (агентство … окончание РК, C11:C16) — на чистом белом, а не «белый −5 %» шаблона (правка владельца v7)
+    for r in range(11, 17):
+        cell = ws.cell(r, C)
+        if cell.fill.fill_type:
+            cell.fill = PatternFill(fill_type="solid", fgColor=Color(theme=0, tint=0.0))
+    widths = {**ws._tpl_cols, **METRIC_W, **{c: DAY_W for c in range(G, tc)}, tc: TOTAL_W, tc + 1: MARGIN_W}
+    _write_cols(ws, widths, upto=max(tc + 2, max(ws._tpl_cols)))
+    field = _field_width(widths, tc)
+    return round(CHART_CX_31 * field / _field_width(widths, G + MIN_DAY_COLS)) if tc > G + MIN_DAY_COLS else CHART_CX_31
+
+
+def _field_width(widths: dict, tc: int) -> float:
+    """Ширина поля графика E…tc−5 в единицах ширины колонок."""
+    return sum(widths.get(c, DEFAULT_W) for c in range(E, tc - 4))
+
+
+def _tpl_cols(ws) -> dict:
+    """Ширины колонок шаблона по номеру колонки. Шаблон описывает их ДИАПАЗОНАМИ (J…L, N…AL одной записью); обращение
+    `column_dimensions["K"]` заводит поверх диапазона отдельную запись шириной 13, и Excel получал пересекающиеся
+    описания — ширины «не прописывались» (владелец 17.11.2026). Поэтому снимок — один раз, сразу после загрузки."""
+    out = {}
+    for dim in list(ws.column_dimensions.values()):
+        if dim.width and dim.min and (dim.max or dim.min) < 200:   # хвост «до конца листа» — не разворачиваем
+            for c in range(dim.min, (dim.max or dim.min) + 1):
+                out.setdefault(c, dim.width)
+    return out
+
+
+def _write_cols(ws, widths: dict, upto: int) -> None:
+    """Описание колонок листа заново — по одной записи на колонку, без диапазонов и пересечений."""
+    from openpyxl.worksheet.dimensions import ColumnDimension, DimensionHolder
+    holder = DimensionHolder(worksheet=ws)
+    for c in range(1, upto + 1):
+        letter = get_column_letter(c)
+        holder[letter] = ColumnDimension(ws, index=letter, width=widths.get(c, DEFAULT_W), customWidth=True)
+    ws.column_dimensions = holder
+
+
 def _days_of(rep: Report) -> list:
     """Колонки дней — ПОЛНЫЕ календарные месяцы, в которые попадает период отчёта (владелец
     05.10.2026: РК на 15 дней «поехала» — шаблон, график и ширины рассчитаны на месяц).
@@ -232,7 +340,8 @@ def _days_of(rep: Report) -> list:
         return []
     m1 = d1.replace(day=1)
     nxt = (d2.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return [m1 + timedelta(days=i) for i in range((nxt - m1).days)]
+    days = [m1 + timedelta(days=i) for i in range((nxt - m1).days)]
+    return days + [None] * max(0, MIN_DAY_COLS - len(days))
 
 
 def _fill_main(ws, rep: Report, samples: _Samples, model: bool):
@@ -253,16 +362,17 @@ def _fill_main(ws, rep: Report, samples: _Samples, model: bool):
     r = FIRST_FREE + 1
     top_row = r + 1
     r = p.block(r, "ПО ПЛОЩАДКАМ И ПО ДНЯМ", rep.by_placement, rep.by_day)
-    refs = _chart(ws, top_row, len(days)) if chart_at else None
+    cx = _fit_header(ws, p.total_col, samples.background.fill)
+    refs = _chart(ws, top_row, len(days), cx) if chart_at else None
     # группы креативов (владелец 24.10.2026) — между общим блоком и креативами
     for cr in rep.groups + rep.creatives:
         r = p.block(r, cr["label"], cr["by_placement"], cr["by_day"])
     # Фон однородный — как пустая ячейка образца (белый −5 %); значения и итоги белые, шапки
-    # синие — их стили из образца. Правый край — две колонки за «ИТОГО» дней (AP при 31 дне):
-    # владелец 05.10.2026 убрал лишнюю заливку в крайней правой колонке.
+    # синие — их стили из образца. Правый край — ОДНА колонка за «ИТОГО» дней (правка владельца 17.11.2026; до неё — две,
+    # с 05.10.2026), то же поле, что у шапки.
     bg = copy(samples.background.fill)
     for row in ws.iter_rows(min_row=FIRST_FREE, max_row=max(ws.max_row, r) + 2,
-                            max_col=p.total_col + 2):
+                            max_col=p.total_col + 1):
         for cell in row:
             if type(cell).__name__ != "MergedCell" and cell.value is None \
                     and cell.fill.fill_type is None:
@@ -279,11 +389,13 @@ def render(rep: Report, rep_model: Optional[Report] = None, template_path: str =
     («Отчёт (модель)», «По неделям (модель)») — владелец 05.10.2026: два комплекта вкладок."""
     wb = openpyxl.load_workbook(template_path)
     ws = wb.active
+    ws._tpl_cols = _tpl_cols(ws)     # до любых обращений к колонкам по букве
     ws.title = SHEET
     samples = _Samples(ws)
     ws_model = None
     if rep_model is not None:
         ws_model = wb.copy_worksheet(ws)           # копия шаблона ДО заполнения
+        ws_model._tpl_cols = ws._tpl_cols
         ws_model.title = SHEET + MODEL_SUFFIX
     refs = []
     r1 = _fill_main(ws, rep, samples, model=False)
@@ -298,6 +410,8 @@ def render(rep: Report, rep_model: Optional[Report] = None, template_path: str =
         # порядок листов: Отчёт, По неделям, Отчёт (модель), По неделям (модель)
         wb._sheets.sort(key=lambda x: [SHEET, WEEKS_SHEET_BASE, SHEET + MODEL_SUFFIX,
                                        WEEKS_SHEET_BASE + MODEL_SUFFIX].index(x.title))
+    for sheet in wb.worksheets:
+        sheet.sheet_view.zoomScale = sheet.sheet_view.zoomScaleNormal = ZOOM
     wb._client_chart_refs = refs
     return wb
 
@@ -323,7 +437,7 @@ def weeks_of(d1: date, d2: date, last: date | None) -> list:
 
 def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None:
     """Лист «По неделям» (вид — по примеру аккаунтов 05.10.2026): площадки строками, у каждой
-    календарной недели и у «ИТОГО» по три колонки — показы, клики, CTR. Над неделями — строка «Расчётный охват» (владелец
+    календарной недели и у «ИТОГО» по три колонки — показы, клики, CTR. Над неделями всей РК — строка «Охват» (владелец
     16.11.2026): по дням недели сумма охватов пар «площадка × креатив» = уники модели × (1 − повторные заходы в неделе) ×
     (1 − пересечение аудитории площадок), оба числа — из диапазонов настроек SIMB ID, фиксируются на день (`report_coef`);
     в «ИТОГО» — сумма недель. По площадкам охвата нет. Дельты нет. Сначала вся
@@ -349,7 +463,7 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         return sh, ck
 
     def reach(site_days: dict, d_from, d_to) -> float:
-        """Расчётный охват таблицы за дни [d_from, d_to] — сумма охватов площадок-дней (4-е число `site_days`)."""
+        """Охват таблицы за дни [d_from, d_to] — сумма охватов площадок-дней (4-е число `site_days`)."""
         return sum((v[3] if len(v) > 3 else 0) or 0 for days in site_days.values() for d, v in days.items()
                    if d_from <= d <= d_to)
 
@@ -378,13 +492,10 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
                                  "sz": WEEKS_MAX_FONT})
         ws.row_dimensions[rr].height = s.h.get("data")
 
-    def table(r, title_text, site_days) -> int:
-        put(r, B, title_text, s.section)
-        ws.merge_cells(start_row=r, end_row=r, start_column=B, end_column=last_col)
-        ws.row_dimensions[r].height = s.h.get("title")
-        r += 1
-        # «Расчётный охват» — строкой над неделями (владелец 16.11.2026): число на неделю, в «ИТОГО» — сумма недель
-        put(r, B, "Расчётный охват", s.total_text)
+    def reach_row(r, site_days) -> int:
+        # «Охват» — строкой над неделями (владелец 16.11.2026; подпись «Охват», а не «Расчётный охват» — 17.11.2026):
+        # число на неделю, в «ИТОГО» — сумма недель
+        put(r, B, "Охват", s.total_text)
         acc_reach = 0
         for g in range(groups):
             col = C + PER * g
@@ -399,7 +510,17 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
             put(r, col, val, s.total_num, NUM).alignment = center
             ws.merge_cells(start_row=r, end_row=r, start_column=col, end_column=col + PER - 1)
         ws.row_dimensions[r].height = s.h.get("total")
+        return r + 1
+
+    def table(r, title_text, site_days, with_reach=False) -> int:
+        put(r, B, title_text, s.section)
+        ws.merge_cells(start_row=r, end_row=r, start_column=B, end_column=last_col)
+        ws.row_dimensions[r].height = s.h.get("title")
         r += 1
+        # Охват — только у таблицы всей РК и только в выгрузке всей РК (владелец 17.11.2026), не в разбивке по креативам
+        # и группам: охват — про аудиторию кампании целиком, по частям он складывался бы в число, которого нет
+        if with_reach:
+            r = reach_row(r, site_days)
         # две строки шапки: группы недель (объединены на PER колонок) и подписи метрик
         put(r, B, None, s.head)
         put(r + 1, B, "Площадка", s.head)
@@ -436,7 +557,7 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         ws.row_dimensions[r].height = s.h.get("total")
         return r + 2
 
-    r = table(2, f"Показы по неделям · РК {h.get('code') or ''}", rep.site_days)
+    r = table(2, f"Показы по неделям · РК {h.get('code') or ''}", rep.site_days, with_reach=not h.get("group"))
     for cr in rep.groups + rep.creatives:
         r = table(r, cr["label"], cr.get("site_days") or {})
 

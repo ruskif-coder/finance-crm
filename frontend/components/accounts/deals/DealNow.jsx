@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { MONO } from '@/components/salesTableKit'
 import BusyAct from '@/components/BusyAct'
+import ReportDates, { reportUrl } from '@/components/ReportDates'
 import { downloadMp } from '@/lib/mpDownload'
 import { downloadBlob, downloadDealCreatives } from '@/lib/dealDocs'
 import { fmtDateTimeShort } from '@/lib/dates'
@@ -97,9 +98,14 @@ function Docs({ d, now, links }) {
       {(now?.slot === 'live' || now?.slot === 'recon') && (
         <div style={ROW_BOX}>
           <span style={{ fontSize: 12.5, fontWeight: 700, flex: 1, color: d.report_ready ? 'var(--text-primary)' : 'var(--text-muted)' }}>Отчёт по РК</span>
-          {d.report_ready ? <BusyAct label="XLS" title="Отчёт клиенту в Excel" style={ACT}
-            run={() => downloadBlob(`/client-report/deal/${d.id}.xlsx`)} />   /* имя — с сервера: «…_по_<последний день данных>» */
-            : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>после первого дня показов</span>}
+          {/* «XLS» — весь отчёт; календарик — за выбранные дни (владелец 17.11.2026) */}
+          {d.report_ready ? (
+            <>
+              <BusyAct label="XLS" title="Отчёт клиенту в Excel — весь флайт" style={ACT}
+                run={() => downloadBlob(reportUrl(d.id))} />   {/* имя — с сервера: «…_по_<последний день данных>» */}
+              <ReportDates dealId={d.id} startDate={d.report_from} groups={d.report_groups || []} style={{ ...ACT, padding: 0, width: 26 }} />
+            </>
+          ) : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>после первого дня показов</span>}
         </div>)}
       {(now?.slot === 'recon' || d.master_docs?.master) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

@@ -518,6 +518,27 @@ _ADMINS = [{"type": "role", "value": "admin"}]
 _SUBJECT = [{"type": "resolver", "value": "subject_user"}]
 
 register(Event(
+    key="system_check_failed", direction="sys", group="Статус системы", title="Проверка перешла в «отказ»",
+    description=("Экран «Статус системы»: проверка упала. Уходит один раз — при переходе в отказ, а не на каждом прогоне. "
+                 "Каналы ограничивает поповер «Оповещения» на экране."),
+    tone="bad", action="Открыть статус", widget_group="Документы", recipients=_ADMINS, channels={"app": True, "tg": True},
+))
+register(Event(
+    key="system_check_recovered", direction="sys", group="Статус системы", title="Проверка вернулась в норму",
+    description="Проверка, бывшая в отказе, снова в норме — с временем простоя.",
+    tone="ok", action="Открыть статус", widget_group="Документы", recipients=_ADMINS, channels={"app": True, "tg": True},
+))
+register(Event(
+    key="system_check_warn_digest", direction="sys", group="Статус системы", title="Сводка: не настроено или истекает",
+    description="Раз в сутки, в 09:00 МСК: проверки в жёлтом — ненастроенные связи и истекающие сертификаты.",
+    tone="warn", action="Открыть статус", widget_group="Документы", recipients=_ADMINS, channels={"app": True, "mail": True},
+))
+register(Event(
+    key="system_job_failed", direction="sys", group="Статус системы", title="Задание упало после ручного запуска",
+    description="Тому, кто запустил задание кнопкой на экране статуса. Адресат задаётся кодом.",
+    tone="bad", action="Открыть статус", widget_group="Документы", recipients=[], channels={"app": True, "tg": True},
+))
+register(Event(
     key="user_created", direction="sys", group="Пользователи", title="Заведён пользователь",
     description="Администратор завёл учётку: кто, какая роль. Пароль в уведомление не попадает.",
     tone="info", action="Открыть пользователей", widget_group="Документы", recipients=_ADMINS, channels={"app": True},

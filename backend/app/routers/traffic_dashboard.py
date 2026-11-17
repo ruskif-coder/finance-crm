@@ -42,7 +42,7 @@ from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp.client import MsClient
 from app.ad.stat_sources import (VERIFIER, manual_superseded_sql, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
                                  mismatch_pct)
-from app.traffic import urgency
+from app.traffic import expand_view, urgency
 from app.audit import log_action
 from app.database import get_db
 from app.models import User
@@ -821,6 +821,8 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
     # Покрытие внешними системами — ОДНИМ расчётом на весь экран (четыре запроса на любое
     # число РК). По одной РК за раз это было бы под двести запросов на реестре из 57.
     ext_totals = ext_mod.totals_by_campaign(db, ids)
+    # Е и С в строке РК (дашборд v2, 17.11.2026) — тем же правилом, что у площадки.
+    es_totals = expand_view.erid_screens_by_campaign(db, ids)
     dist_by_camp = _distribution(db, pairs, facts, today, places, cr_all)
 
     # Креативы с материалом по сделкам страницы — для «↓ креативы» в раскрытии РК
@@ -885,6 +887,8 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
             # зелёный — все (решение владельца 09.09.2026). Цвет считает экран, числа —
             # сервер, и оба берут их из одного расчёта.
             "external_totals": ext_totals.get(c.id),
+            "erid_totals": (es_totals.get(c.id) or {}).get("erid"),
+            "screens_totals": (es_totals.get(c.id) or {}).get("screens"),
             "placements": len(pls),
             "placements_on": sum(1 for p in pls if p["status"] in PLACEMENT_RUNNING),
             "placements_weighted": sum(1 for p in pls if p["weight"]),
@@ -1035,10 +1039,15 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     # Третий этаж: план площадки — между её работающими креативами, по факту (владелец 24.10.2026): свой факт + доля
     # остатка; то же правило, что лимиты в DSP (`build.creative_plans`).
     from app.ad import creative_fact
-    cr_facts = creative_fact.totals(db, c)
+    cr_counts = creative_fact.counts(db, c)
+    cr_facts = {rid: v[0] for rid, v in cr_counts.items()}
     for row in out["rows"]:
         row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []),
                                         hold=holds(fl), facts=cr_facts, manual=row.get("fixed_plan") is not None)
+    # Дашборд v2 (17.11.2026): клики, CTR и расхождение с WR по площадке; факт, клики, CTR креатива на площадке.
+    goals = build.deal_goals(db, deal.id)
+    wr_by_pl = _verifier(db, [c.id], until=as_of).get(c.id, {}).get("by_placement", {})
+    out["rows"] = expand_view.enrich_creatives(expand_view.enrich_placements(out["rows"], wr_by_pl, goals), cr_counts)
 
     # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
     # расчёт разошёлся бы с первым, и спорить было бы нечем.
@@ -1085,7 +1094,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "wr_link": _wr_link_view(db, c, deal),
         # KPI приёмки из медиаплана — рядом с фактом, чтобы трафик видел, к чему его
         # открутку будут принимать, не открывая карточку сделки (владелец 05.09.2026).
-        "goals": build.deal_goals(db, deal.id),
+        "goals": goals,
         # «Цели и особенности РК» — то самое послание аккаунта трафику с карточки сделки.
         # Здесь оно ЧИТАЕТСЯ, а не правится: писал аккаунт, и правка из чужого экрана
         # означала бы, что задачу можно молча переписать за него.

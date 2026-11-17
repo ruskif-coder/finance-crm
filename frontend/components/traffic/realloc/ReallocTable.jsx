@@ -5,13 +5,13 @@ import { MONO } from '@/components/salesTableKit'
 import { grp } from '@/lib/salesFormat'
 import { FILTERS, needPerDay, nextSort, parsePlan, passes, planOf, sortRows, tempoOf } from '@/lib/reallocView.mjs'
 
-const COLS = 'minmax(170px,1.7fr) minmax(104px,1fr) repeat(6,minmax(70px,0.8fr)) minmax(132px,1.1fr) minmax(84px,0.8fr)'
+const COLS = 'minmax(170px,1.7fr) minmax(104px,1fr) repeat(7,minmax(70px,0.8fr)) minmax(132px,1.1fr) minmax(84px,0.8fr)'
 const nf = (v) => (v < 0 ? '−' : '') + grp(Math.abs(Math.round(v || 0)))
 const R = { fontFamily: MONO, fontSize: 12, textAlign: 'right' }
 const stop = (e) => e.stopPropagation()
 // Колонки шапки: ключ сортировки (`lib/reallocView` → sortRows) и подпись в две строки.
 const HEAD = [['name', 'Площадка'], ['pace', 'Темп'], ['shows_day', 'Показано', 'за сутки'], ['offered_day', 'Предложено', 'сетью · сутки'],
-  ['capacity', 'Может', 'в сутки ≈'], ['need', 'Нужно в сутки', 'до конца'], ['plan', 'План', 'сейчас'], ['delta', 'Отдаёт / берёт', 'за флайт'],
+  ['capacity', 'Может', 'в сутки ≈'], ['need', 'Нужно в сутки', 'до конца'], ['plan', 'План', 'сейчас'], ['fact', 'Факт', 'всего'], ['delta', 'Отдаёт / берёт', 'за флайт'],
   ['newplan', 'Новый план'], ['after', 'Нужно в сутки', 'после']]
 
 function HeadCell({ k, top, sub, sort, onSort }) {
@@ -46,6 +46,7 @@ export function ReallocTable({ rows, all, edits, setEdit, days, sel, setSel, can
   // Итого — по всем площадкам РК (баланс плана), а не по отфильтрованным строкам
   const planTotal = all.reduce((a, r) => a + (r.plan || 0), 0)
   const newTotal = all.reduce((a, r) => a + (planOf(r, edits) || 0), 0)
+  const factTotal = all.reduce((a, r) => a + (r.fact || 0), 0)
   // Порядок считается по правкам на момент клика: иначе при сортировке по «Новому плану» строка уезжала бы из-под курсора.
   // Правки пришли НЕ из таблицы («Перенести», «Применить», сброс, перезагрузка) — порядок пересчитывается (ревью 26.10.2026).
   const [sort, setSort] = useState(null)
@@ -59,7 +60,7 @@ export function ReallocTable({ rows, all, edits, setEdit, days, sel, setSel, can
   return (
     // Прокрутку (обе оси) держит контейнер окна: своя горизонтальная прокрутка сломала бы липкую шапку колонок.
     <div>
-      <div style={{ minWidth: 1040 }}>
+      <div style={{ minWidth: 1120 }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)',
           display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '8px 8px 8px', borderBottom: '1px solid var(--border-card)', alignItems: 'end',
           fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }}>
@@ -89,6 +90,8 @@ export function ReallocTable({ rows, all, edits, setEdit, days, sel, setSel, can
               <span style={{ ...R, color: r.capacity == null ? 'var(--text-disabled)' : 'var(--text-primary)' }}>{r.capacity == null ? '—' : nf(r.capacity)}</span>
               <span style={{ ...R, fontWeight: 700 }}>{nf(r.need)}</span>
               <span style={{ ...R, color: 'var(--text-secondary)' }}>{nf(r.plan)}{r.fixed_plan != null ? ' ✎' : ''}</span>
+              {/* Факт за весь флайт — рядом с планом, чтобы остаток читался без счёта в уме (владелец 17.11.2026) */}
+              <span style={{ ...R, color: r.fact == null ? 'var(--text-disabled)' : 'var(--text-primary)' }}>{r.fact == null ? '—' : nf(r.fact)}</span>
               <span style={{ ...R, fontWeight: 700, color: !ch ? 'var(--text-disabled)' : np > r.plan ? 'var(--income-fg)' : 'var(--danger-fg)' }}>
                 {!ch ? '—' : (np > r.plan ? '+' : '−') + nf(Math.abs(np - r.plan))}</span>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
@@ -111,7 +114,8 @@ export function ReallocTable({ rows, all, edits, setEdit, days, sel, setSel, can
         <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '10px 8px 0', fontFamily: MONO, fontWeight: 700 }}>
           <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }}>Итого · {rows.length} площадок</span>
           <span /><span /><span /><span /><span />
-          <span style={{ fontSize: 12, textAlign: 'right' }}>{nf(planTotal)}</span><span />
+          <span style={{ fontSize: 12, textAlign: 'right' }}>{nf(planTotal)}</span>
+          <span style={{ fontSize: 12, textAlign: 'right' }}>{nf(factTotal)}</span><span />
           <span style={{ fontSize: 12, textAlign: 'right', color: newTotal !== planTotal ? 'var(--danger-fg)' : 'var(--income-fg)' }}>{nf(newTotal)}</span><span />
         </div>
       </div>

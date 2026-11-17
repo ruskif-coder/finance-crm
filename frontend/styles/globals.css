@@ -600,3 +600,9 @@ svg [data-tile] { transform-box: fill-box; transform-origin: center; }
    вместо блокировки прокрутки в каждом окне. scrollbar-gutter держит место полосы прокрутки — страница не прыгает. */
 html:has([data-overlay]) { overflow: hidden; scrollbar-gutter: stable }
 [data-overlay] { overscroll-behavior: contain }
+
+/* Логотип шапки — токеном, без логики темы в коде (хендофф «Навигация v3 · микс», README §7). Ночной — у тёмных тем. */
+:root { --logo: image-set(url(/nav/logo-day-h16.png) 1x, url(/nav/logo-day-h32.png) 2x, url(/nav/logo-day-h48.png) 3x); }
+[data-theme="dark"], [data-theme="graphite"] {
+  --logo: image-set(url(/nav/logo-night-h16.png) 1x, url(/nav/logo-night-h32.png) 2x, url(/nav/logo-night-h48.png) 3x);
+}

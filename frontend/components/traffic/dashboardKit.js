@@ -20,9 +20,9 @@
  */
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MONO, UI, Modal, PortalPopover, Z, btnSm, selSm } from '../salesTableKit'
+import { MONO, Modal, PortalPopover, Z } from '../salesTableKit'
 import { grp } from '@/lib/salesFormat'
-import BannerCheckMark from './BannerCheckMark'
+import { cellKind, columnOf } from '@/lib/dynamicsModel.mjs'
 
 /** Прочерк — общий для всего экрана: пустое НЕ рисуется нулём. */
 export const DASH = '—'
@@ -64,52 +64,6 @@ export const PaceBar = ({ pct, pace, height = 8 }) => (
     )}
   </span>
 )
-
-/**
- * Пипсы площадок — ТА ЖЕ ШКАЛА, что у полосы выполнения, только по одной площадке.
- *
- * Решение владельца 05.09.2026. До этого пипсы отвечали «включено ли», а полоса рядом
- * «как идёт»: два языка про один процесс, и жёлтый в одной колонке означал «отстаём по
- * показам», а в соседней «согласовано, но не включили». Теперь цвет и там и там читает
- * открутку, и строка складывается: «17 из 19 крутят, из них четыре красных» — видно не
- * только сколько работает, но и на каких площадках собрался недокрут РК.
- *
- * Два состояния добавляются к шкале, потому что у площадки они есть, а у РК нет:
- *   · контур — согласована, но не включена (мяч у трафика, не у площадки);
- *   · сплошной серый — не крутит вовсе либо крутит, но замеров ещё нет.
- *
- * `pace` берётся у РК: флайт общий, и «где мы должны быть по календарю» у всех её
- * площадок одинаково.
- */
-export const Pips = ({ total, on, items, pace }) => {
-  const pips = items || []
-  return (
-    // Пипсы прижаты к левому краю колонки, счётчик — к правому. Иначе счётчик едет
-    // вслед за числом площадок: у РК с тремя площадками он стоит на 25 px левее, чем у
-    // РК с девятью, и столбец цифр перестаёт читаться как столбец.
-    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      gap: 8, width: '100%' }}>
-      <span style={{ display: 'inline-flex', gap: 2 }}>
-        {pips.map((p, i) => {
-          const ready = p.s === 'ready'
-          const tone = p.s === 'run' ? pctTone(p.pct, pace) : 'var(--border-inner)'
-          return (
-            <span key={i} title={`${p.domain || ''}${p.s === 'run'
-              ? (p.pct == null ? ' · крутит, замеров нет' : ` · ${p.pct} %`)
-              : ready ? ' · согласована, не включена' : ' · не крутит'}`}
-              style={{ width: 5, height: 11, borderRadius: 2,
-                background: ready ? 'transparent' : tone,
-                border: ready ? '1px solid var(--warning-text)' : 'none',
-                boxSizing: 'border-box' }} />
-          )
-        })}
-      </span>
-      <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>
-        {on || 0} / {total || 0}
-      </span>
-    </span>
-  )
-}
 
 /* ── KPI-строка: один этаж, разделители между колонками ───────────────────── */
 
@@ -282,15 +236,33 @@ export const ServiceCell = ({ product, color, surface }) => (
 
 /* ── управление площадкой: старт · пауза · отключить ──────────────────────── */
 
-export const IcoBtn = ({ title, tone, disabled, onClick, children }) => (
-  <button onClick={disabled ? undefined : onClick} title={title} disabled={disabled}
-    style={{ width: 26, height: 26, display: 'inline-flex', alignItems: 'center',
+export const IcoBtn = ({ title, tone, disabled, onClick, children, size = 26, label }) => (
+  <button type="button" onClick={disabled ? undefined : onClick} title={title} disabled={disabled} aria-label={label}
+    style={{ width: size, height: size, flex: `0 0 ${size}px`, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center',
       justifyContent: 'center', borderRadius: 8, background: 'var(--bg-card)',
       border: `1px solid ${disabled ? 'var(--border-inner)' : tone}`,
       color: disabled ? 'var(--text-disabled)' : tone,
       cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1, padding: 0 }}>
     {children}
   </button>
+)
+
+/* Кнопки «старт / пауза» и «стоп» — ОДНИ на весь трафик: строка РК, пульт РК, площадка, креатив, внешний запуск
+   (владелец 17.11.2026: «привести все кнопки пауза/стоп к единообразию»). Вид — обводка цветом действия и значок:
+   старт и пауза синие, стоп красный. Свою кнопку с «II» текстом или заливкой рядом не заводить. */
+const GLYPH = { pause: 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z', play: 'M8 5v14l11-7z', stop: 'M6 6h12v12H6z' }
+const Glyph = ({ d }) => <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={d} /></svg>
+
+export const RunToggle = ({ running, title, disabled, onClick, size, label }) => (
+  <IcoBtn tone="var(--blue)" title={title} disabled={disabled} onClick={onClick} size={size} label={label || (running ? 'Пауза' : 'Запустить')}>
+    <Glyph d={running ? GLYPH.pause : GLYPH.play} />
+  </IcoBtn>
+)
+
+export const StopBtn = ({ title, disabled, onClick, size, label = 'Стоп' }) => (
+  <IcoBtn tone="var(--danger)" title={title} disabled={disabled} onClick={onClick} size={size} label={label}>
+    <Glyph d={GLYPH.stop} />
+  </IcoBtn>
 )
 
 /**
@@ -319,7 +291,7 @@ export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, 
   // запрет (409). «Отключить» остаётся: исключить площадку из распределения можно и до.
   return (
     <span style={{ display: 'inline-flex', gap: 5 }}>
-      <IcoBtn
+      <RunToggle running={running}
         /* Причина с сервера — тем же правилом, что проверяет запуск (02.10.2026). */
         title={titles.start && !running ? (canStart ? titles.start : titles.cannot) : titles.pause && running ? titles.pause
           : running ? 'Пауза: открутка встанет, доля в плане останется'
@@ -327,26 +299,11 @@ export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, 
             : !uploaded ? 'Площадка ещё не выгружена в DSP — сначала «В DSP», потом запуск'
               : canStart ? 'Запустить площадку'
                 : 'Креатив ещё не согласован — площадку нельзя запустить'}
-        tone="var(--blue)"
         disabled={!uploaded || (!running && !canStart)}
-        onClick={running ? onPause : onStart}>
-        {running ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />
-          </svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        )}
-      </IcoBtn>
-      <IcoBtn title={titles.off ? (off ? titles.offDone : titles.off) : off ? 'Площадка уже отключена'
+        onClick={running ? onPause : onStart} />
+      <StopBtn title={titles.off ? (off ? titles.offDone : titles.off) : off ? 'Площадка уже отключена'
         : 'Отключить: немедленная остановка и исключение из распределения'}
-        tone="var(--danger)" disabled={off} onClick={onOff}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M6 6h12v12H6z" />
-        </svg>
-      </IcoBtn>
+        disabled={off} onClick={onOff} label="Отключить" />
     </span>
   )
 }
@@ -358,116 +315,21 @@ export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, 
  * Четыре состояния, и все четыре разные: норма · просадка · провал · нет данных.
  * День впереди сегодняшнего не красится вовсе — красить будущее нечем.
  */
-const cellTone = (c) => {
-  if (c.ahead) return 'var(--bg-subtle)'
-  if (c.ratio == null) return 'var(--border-inner)'
-  if (c.ratio >= 0.95) return 'var(--income)'
-  if (c.ratio >= 0.8) return 'var(--warning-text)'
-  return 'var(--danger)'
+export const cellState = (c) => {
+  if (c.ahead) return 'future'
+  if (c.ratio == null) return 'none'
+  if (c.ratio >= 0.95) return 'ok'
+  if (c.ratio >= 0.8) return 'warn'
+  return 'bad'
 }
-
-/**
- * Оба виджета — ОДНОЙ высоты, и задаёт её самый большой (владелец 05.09.2026).
- *
- * Высота одна на двоих, потому что виджеты стоят рядом: разные низы читаются как
- * недоделанная вёрстка, а растянутый до соседа блок с пустой третью — как потерянные
- * данные. Считаем её из окна виновников (десять строк, владелец 04.09.2026), а стена
- * дней показывает СКОЛЬКО ВЛЕЗЕТ в ту же высоту — восемнадцать рядов вместо прежних
- * двенадцати — и скроллит остаток.
- *
- * Число берётся из шага строки, а не подобрано на глаз: поменяется высота клетки —
- * окно поедет вместе с ней.
- */
-const CULPRIT_ROW = 38  // содержимое 36 + gap 2
-const CULPRITS_SHOWN = 10
-export const WIDGET_BODY = CULPRIT_ROW * CULPRITS_SHOWN
-
-// Отступ снизу и справа внутри окна прокрутки: без него последняя строка упирается в
-// край, и непонятно, кончился список или обрезан. Справа — чтобы данные не липли к
-// полосе прокрутки.
-const SCROLL_PAD = { paddingBottom: 14, paddingRight: 8 }
-
 /* Клетка стены в тех же полях, что столбец графика: карточка дня одна на два места и
    ждёт именно такую форму. У стены клетка всегда один день, а «будущий» приходит флагом
    `ahead` — в карточке это `days_past`. */
-const cellBucket = (c) => ({
+export const cellBucket = (c) => ({
   plan: c.plan, shows: c.shows, clicks: c.clicks,
   days: 1, date_from: c.date, date_to: c.date,
   days_past: c.ahead ? 0 : 1,
 })
-
-export const DayWall = ({ rows, onOpen }) => {
-  // Наведение ловится на КЛЕТКЕ и запоминает её геометрию, а не курсор: клеток в стене
-  // до тысячи, и обновление состояния на каждое движение мыши перерисовывало бы весь
-  // виджет. Родное `title` с клеток снято — иначе поверх карточки всплывала бы ещё и
-  // системная подсказка.
-  const [tip, setTip] = useState(null)
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, ...SCROLL_PAD,
-      height: WIDGET_BODY, overflowY: 'auto', overflowX: 'hidden' }}>
-      {rows.map(r => (
-        <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span onClick={() => onOpen?.(r.id)}
-            style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)',
-              width: 72, flex: '0 0 72px', cursor: onOpen ? 'pointer' : 'default' }}>{r.deal_code}</span>
-          <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0 }}>
-            {r.cells.map((c, i) => {
-              const key = `${r.id}:${i}`
-              return (
-                <span key={i}
-                  onMouseEnter={(e) => {
-                    const box = e.currentTarget.getBoundingClientRect()
-                    setTip({ key, b: cellBucket(c),
-                      label: `${r.deal_code}${r.product ? ` · ${r.product}` : ''}`,
-                      x: box.left + box.width / 2, y: box.top, bottom: box.bottom })
-                  }}
-                  onMouseLeave={() => setTip(t => (t && t.key === key ? null : t))}
-                  style={{ flex: '1 1 0', minWidth: 3, height: 14, borderRadius: 2,
-                    background: cellTone(c),
-                    boxShadow: tip && tip.key === key ? '0 0 0 2px var(--accent)' : 'none' }} />
-              )
-            })}
-          </span>
-          <span style={{ fontFamily: MONO, fontSize: 11, width: 46, textAlign: 'right',
-            flex: '0 0 46px', color: r.done_pct == null ? 'var(--text-faint)' : 'var(--text-secondary)' }}>
-            {r.done_pct == null ? DASH : `${r.done_pct} %`}
-          </span>
-        </div>
-      ))}
-      {!rows.length && (
-        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-          Пока нечего показывать: ни у одной РК нет ни флайта, ни плана.
-        </span>
-      )}
-      {tip && <DayTip {...tip} />}
-    </div>
-  )
-}
-
-/**
- * Легенда таблицы. Первая группа — ОДИН язык на обе колонки: и полоса выполнения, и
- * пипсы площадок красятся одним правилом, только на разных этажах (05.09.2026). Раньше
- * групп было две, и жёлтый означал в них разное.
- *
- * Вторая группа — то, что есть у площадки и чего нет у РК: согласована, но не включена.
- * Это про очередь, а не про открутку, поэтому не цвет, а контур.
- */
-export const TABLE_LEGEND = [
-  ['цвет — как идёт открутка', [
-    ['идёт по темпу', 'var(--income)'],
-    ['отстаёт, но догоняет', 'var(--warning-text)'],
-    ['недокрут', 'var(--danger)'],
-    ['нет данных', 'var(--border-inner)'],
-  ]],
-  ['у пипсов ещё', [
-    ['согласована, не включена', 'transparent', 'var(--warning-text)'],
-  ]],
-]
-
-export const WALL_LEGEND = [
-  ['норма', 'var(--income)'], ['просадка', 'var(--warning-text)'],
-  ['провал', 'var(--danger)'], ['нет данных', 'var(--border-inner)'],
-]
 
 /* ── динамика показов: план светлым, факт поверх ──────────────────────────── */
 
@@ -587,7 +449,7 @@ const DayCard = ({ b, label, at }) => {
    фиксирован. */
 const CARD_H = 208
 
-const DayTip = ({ b, label, x, y, bottom }) => {
+export const DayTip = ({ b, label, x, y, bottom }) => {
   if (typeof document === 'undefined') return null
   const vw = window.innerWidth
   const vh = window.innerHeight
@@ -600,6 +462,9 @@ const DayTip = ({ b, label, x, y, bottom }) => {
       <DayCardBody b={b} label={label} />
     </div>, document.body)
 }
+
+/* Правило долек — `columnOf`/`cellKind` из lib/dynamicsModel, одно с графиком расхлопа v2; здесь только вид. */
+const DYN_BG = { fact: 'var(--blue)', plan: 'var(--blue-soft)', boost: 'var(--warning)', empty: 'var(--bg-subtle)' }
 
 export const Dynamics = ({ data, label }) => {
   // { i, dx, w } — столбец, положение курсора ВНУТРИ графика и его ширина. Именно в
@@ -623,10 +488,8 @@ export const Dynamics = ({ data, label }) => {
     <div ref={box} style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end' }}>
         {data.buckets.map((b, i) => {
-          const planCells = Math.round((b.plan || 0) / max * BAR_ROWS)
           // «Темп размещения»: добавка буста — верхняя часть плана другим цветом, пропорционально.
-          const boostCells = Math.min(planCells, Math.round((b.boost_extra || 0) / max * BAR_ROWS))
-          const factCells = b.days_past ? Math.round((b.shows || 0) / max * BAR_ROWS) : 0
+          const cells = columnOf(b, max, { future: !b.days_past, rows: BAR_ROWS })
           const on = tip && tip.i === i
           const track = (e) => {
             const r = box.current && box.current.getBoundingClientRect()
@@ -641,10 +504,7 @@ export const Dynamics = ({ data, label }) => {
               {Array.from({ length: BAR_ROWS }).map((_, k) => {
                 const rank = BAR_ROWS - k
                 return (
-                  <span key={k} style={{ height: 7, borderRadius: 2,
-                    background: rank <= factCells ? 'var(--blue)'
-                      : rank <= planCells - boostCells ? 'var(--blue-soft)'
-                        : rank <= planCells ? 'var(--warning)' : 'var(--bg-subtle)' }} />
+                  <span key={k} style={{ height: 7, borderRadius: 2, background: DYN_BG[cellKind(rank, cells)] }} />
                 )
               })}
             </span>
@@ -666,129 +526,15 @@ export const Dynamics = ({ data, label }) => {
 
 /* ── креативы под площадкой ───────────────────────────────────────────────── */
 
-/**
- * Счётчик в строке площадки: всего / согласовано / запущено.
- *
- * Три числа, а не одно: они отвечают на разные вопросы и расходятся в жизни. «Согласовано»
- * — одобрено ПЛОЩАДКОЙ, «запущено» — креатив есть в кабинете DSP. Согласованный
- * может ещё не уехать в DSP, и склеить их значило бы обещать открутку, которой нет.
- *
- * Цвет точки — состояние площадки одним взглядом:
- *   зелёная  — всё согласованное крутится;
- *   оранжевая — согласовано больше, чем запущено (в том числе «согласовано, но не
- *               запущено ничего»);
- *   серая    — согласовывать ещё нечего.
- *
- * До 14.09.2026 зелёной считалась площадка, у которой крутится ХОТЬ ЧТО-ТО: «2 / 2 / 1»
- * выглядело благополучно, хотя половина согласованного в DSP не уехала. Владелец: «не
- * всё хорошо». Разница между «что-то идёт» и «идёт всё, что разрешили» — это и есть
- * недокрут, который потом ищут в цифрах.
- */
-export const CreativeCounts = ({ counts }) => {
-  const c = counts || { total: 0, agreed: 0, live: 0 }
+/** Подсказка счётчика креативов — одна на старый и новый (v2) вид строки площадки. */
+export const creativeCountsTitle = (c) => {
   const short = Math.max(0, (c.agreed || 0) - (c.live || 0))
-  const tone = !c.agreed ? 'var(--border-inner)'
-    : short ? 'var(--warning-fg)' : 'var(--income)'
-  const title = `всего ${c.total} · согласовано ${c.agreed} · запущено ${c.live}`
+  return `всего ${c.total} · согласовано ${c.agreed} · запущено ${c.live}`
     + (short ? ` — не запущено ${short} из согласованных` : '')
-  return (
-    <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ width: 7, height: 7, borderRadius: 2, background: tone, flex: '0 0 7px' }} />
-      <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)' }}>
-        {c.total}
-        <span style={{ color: 'var(--text-faint)' }}> / </span>
-        <span style={{ color: c.agreed ? 'var(--income)' : 'var(--text-faint)' }}>{c.agreed}</span>
-        <span style={{ color: 'var(--text-faint)' }}> / </span>
-        {/* Само число «запущено» красится тем же правилом, что и точка: иначе вердикт
-            живёт отдельно от числа, которое его вызвало, и читать приходится подсказку. */}
-        <span style={{ color: !c.live ? 'var(--text-faint)'
-          : short ? 'var(--warning-fg)' : 'var(--blue)' }}>{c.live}</span>
-      </span>
-    </span>
-  )
 }
 
-// Два хеша DSP — РК и креатива — раздельно (владелец 28.09.2026): по хешу РК ищут
-// кампанию в кабинете, по хешу креатива — сам баннер, и путать их нельзя.
-const CR_GRID = 'minmax(0,1.6fr) 96px 128px 128px 80px 90px 132px 68px'
-
-/**
- * Строки креативов внутри площадки. Имя человеческое — первой строкой, полный индекс
- * (`<код сделки>-<код площадки>-cr<№>`) — второй: имя дал человек, а индекс видно в
- * кабинете DSP, и по нему сходятся наши и их цифры.
- *
- * Версия комплекта показывается подписью там, где креатив дорабатывали: сообщение одно,
- * но знать, какая правка сейчас в эфире, нужно.
- */
-export const CreativeRows = ({ rows, manual, mayEdit, onStatus, campaignHash }) => {
-  if (!rows || !rows.length) {
-    return (
-      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '8px 0 2px' }}>
-        Креативов нет: материал этой площадке ещё не отправляли.
-      </div>
-    )
-  }
-  return (
-    <div style={{ padding: '6px 0 2px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: CR_GRID, gap: 9, padding: '0 0 5px',
-        borderBottom: '1px solid var(--border-inner)' }}>
-        {['Креатив', 'ЕРИД', 'Хеш РК в DSP', 'Хеш креатива в DSP', 'Доля', 'План', 'Статус', ''].map((h, i) => (
-          <span key={h + i} style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em',
-            textTransform: 'uppercase', color: 'var(--text-faint)',
-            textAlign: i >= 4 && i <= 5 ? 'right' : 'left' }}>{h}</span>
-        ))}
-      </div>
-      {rows.map(c => (
-        <div key={c.id} style={{ display: 'grid', gridTemplateColumns: CR_GRID, gap: 9,
-          alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, lineHeight: 1.2 }}>
-            <span style={{ fontSize: 11.5, fontWeight: 600, overflow: 'hidden',
-              textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {c.name || `креатив №${c.set_no ?? c.creative_no}`}
-              {c.origin === 'доработка' && (
-                <span title="в эфире доработанная версия сообщения"
-                  style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', borderRadius: 5,
-                    background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
-                  правка №{c.version_no}
-                </span>
-              )}
-            </span>
-            <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>
-              {c.ms_title || DASH}
-            </span>
-          </span>
-          <span style={{ fontFamily: MONO, fontSize: 10, color: c.erid ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
-            {c.erid || DASH}</span>
-          {/* Хеш РК — у креатива он тот же, что у всей кампании; показывается, когда
-              сам креатив в DSP заведён: до того кампания может быть, а баннера в ней нет. */}
-          <span style={{ fontFamily: MONO, fontSize: 10,
-            color: campaignHash ? 'var(--blue)' : 'var(--text-faint)' }}
-            title={campaignHash ? 'Кампания в DSP' : 'Кампания в DSP не заведена'}>
-            {campaignHash || 'не заведена'}</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, whiteSpace: 'nowrap',
-            color: c.ms_creative_xxhash ? 'var(--blue)' : 'var(--text-faint)' }}>
-            {c.ms_creative_xxhash || 'не заведён'}
-            {!!c.ms_creative_xxhash && <BannerCheckMark check={c.banner_check} />}</span>
-          <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>
-            {c.share ? `${(c.share * 100).toFixed(1)} %` : DASH}</span>
-          <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>
-            {num(c.plan_show)}</span>
-          <span><StatusPill value={c.status}
-            title={(manual || []).includes(c.status) ? '' : 'Ставит согласование креативов'} /></span>
-          <span style={{ justifySelf: 'end' }}>
-            {mayEdit && (
-              <PlaceActions status={c.status === 'отклонён' ? 'завершена' : c.status}
-                canStart={!['ждёт сборки', 'у трафика', 'у площадки'].includes(c.status)}
-                onStart={() => onStatus(c, 'запущен')}
-                onPause={() => onStatus(c, 'пауза')}
-                onOff={() => onStatus(c, 'отклонён')} />
-            )}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
+/** Креатив пары можно запустить, когда конвейер согласования его отпустил. */
+export const creativeCanStart = (c) => !['ждёт сборки', 'у трафика', 'у площадки'].includes(c.status)
 
 /**
  * Обратный вид: креатив → площадки. Та же выборка, другая группировка — соединение тех же
@@ -818,55 +564,6 @@ export function byCreative(placements) {
   }
   return [...map.values()].sort((a, b) => b.plan - a.plan)
 }
-
-
-/**
- * Кто ведёт РК с нашей стороны — две строки рядом с управлением: аккаунт и трафик.
- *
- * Аккаунт только показывается: он хозяин сделки до размещения и после сверки, и менять
- * его из дашборда трафика значило бы переставлять чужую ответственность мимо той
- * карточки, где её видно.
- *
- * Трафика мастер МЕНЯЕТ прямо здесь (владелец 04.09.2026): решение «передать кампанию»
- * принимают, глядя на её ход, а не открывая сборку запуска. Рядовому та же строка
- * показывается текстом — знать, на ком РК, нужно всем.
- */
-export const Owners = ({ owners, reps, onPick }) => {
-  if (!owners) return null
-  const line = (label, node) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 26 }}>
-      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em',
-        textTransform: 'uppercase', color: 'var(--text-faint)', width: 62,
-        flex: '0 0 auto' }}>{label}</span>
-      {node}
-    </div>
-  )
-  const txt = (v, faint) => (
-    <span style={{ fontSize: 12.5, fontWeight: 600,
-      color: faint ? 'var(--text-faint)' : 'var(--text-primary)' }}>{v}</span>
-  )
-  return (
-    <div style={{ marginLeft: 'auto', minWidth: 250, display: 'flex',
-      flexDirection: 'column', gap: 4 }}>
-      {line('аккаунт', txt(owners.account || 'не назначен', !owners.account))}
-      {line('трафик', owners.can_change_traffic
-        ? (
-          <select style={{ ...selSm(190), fontSize: 12.5 }}
-            value={owners.traffic_user_id == null ? '' : String(owners.traffic_user_id)}
-            onChange={e => onPick(e.target.value === '' ? null : Number(e.target.value))}>
-            <option value="">— не назначен —</option>
-            {(reps || []).map(r => (
-              <option key={r.user_id} value={String(r.user_id)}>
-                {r.is_master ? '★ ' : ''}{r.name}
-              </option>
-            ))}
-          </select>
-        )
-        : txt(owners.traffic || 'не назначен', !owners.traffic))}
-    </div>
-  )
-}
-
 
 /**
  * KPI приёмки размещения — те же пять и в том же порядке, что в конструкторе медиаплана
@@ -934,21 +631,6 @@ export const TileBadge = ({ n }) => (n > 0 ? (
   </span>
 ) : null)
 
-/* Кнопка «Разбор РК» в блоке управления расхлопа — рядом с «Задачи РК» и того же вида (владелец 11.10.2026).
-   Ведёт на страницу разбора одной РК: срезы, площадки с галочками, выводы. */
-export const RkReportLink = ({ code }) => (
-  <a href={`/traffic/campaign/${encodeURIComponent(code || '')}`} title="Отчёт по РК: срезы, площадки, выводы"
-    style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
-    <span style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, boxSizing: 'border-box', borderRadius: 10,
-      background: 'var(--accent-tint)', border: '1px solid var(--accent-border)' }}>
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-      </svg>
-    </span>
-    <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--accent)', whiteSpace: 'nowrap' }}>отчёт</span>
-  </a>
-)
-
 /* Две вкладки (владелец 29.09.2026): первая — задача аккаунта трафику (`traffic_brief`
    с карточки сделки), вторая — шапка брифа из медиаплана: рекламодатель, юр. лицо,
    бренд, период, агентство, гео и таргетинг. */
@@ -966,7 +648,8 @@ const taskSummary = (deal, title, advertiser) => {
   ) : head
 }
 
-export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
+// `trigger(onOpen, has)` — своя кнопка вместо плитки (пульт дашборда v2, 17.11.2026); окно то же.
+export const TaskDoc = ({ text, brief, deal, title, advertiser, trigger }) => {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('task')
   const has = !!(text || '').trim()
@@ -977,9 +660,10 @@ export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
       color: tab === k ? 'var(--text-primary)' : 'var(--text-faint)',
       borderBottom: `2px solid ${tab === k ? 'var(--accent)' : 'transparent'}`, marginBottom: -1 }}>{label}</span>
   )
+  const openDoc = () => { setTab(has || !brief ? 'task' : 'brief'); setOpen(true) }
   return (
     <>
-      <span onClick={() => { setTab(has || !brief ? 'task' : 'brief'); setOpen(true) }}
+      {trigger ? trigger(openDoc, has) : <span onClick={openDoc}
         title={has ? 'Задачи РК от аккаунта и бриф медиаплана'
           : brief ? 'Задачи от аккаунта нет — есть бриф медиаплана' : 'Аккаунт не заполнил «Цели и особенности РК»'}
         style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
@@ -998,7 +682,7 @@ export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
         </span>
         <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em',
           textTransform: 'uppercase', color: fg, whiteSpace: 'nowrap' }}>задачи</span>
-      </span>
+      </span>}
       {open && (
         <Modal title="Задачи РК" width={760} onClose={() => setOpen(false)}
           summary={taskSummary(deal, title, advertiser)}>
@@ -1023,52 +707,5 @@ export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
         </Modal>
       )}
     </>
-  )
-}
-
-/**
- * Полоса сверки с верификатором.
- *
- * Отвечает на вопрос, который иначе ниоткуда не виден: показы Weborama лежат в той же
- * таблице, что наш факт, но в сумму НЕ входят (`app/ad/stat_sources.py`) — значит их
- * отсутствие на экране ничем себя не выдаёт. Пустая полоса и полоса «всё хорошо»
- * выглядели бы одинаково, поэтому состояние пишется словами, а не значком.
- *
- * Три состояния разведены намеренно: «не настроено» (виноват не код), «не забиралось»
- * (настроено, съём не отработал) и «забрано, но прицепить не к чему» (каждый шаг
- * отчитался успехом, а чисел на дашборде нет). Вердикт приходит С СЕРВЕРА — второй
- * расчёт того же состояния разошёлся бы с первым.
- */
-export const VerifierStrip = ({ state, busy, mayEdit, onRefresh }) => {
-  if (!state) return null
-  const raw = state.raw || {}
-  const cur = state.cursor || {}
-  const bad = !state.configured || !!cur.last_error || !state.mapped_insertions
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-      padding: '9px 13px', marginBottom: 10, borderRadius: 10,
-      background: bad ? 'var(--warning-tint)' : 'var(--bg-card)',
-      border: bad ? 'none' : '1px solid var(--border-card)',
-      color: bad ? 'var(--warning-text)' : 'var(--text-primary)', fontSize: 12.5 }}>
-      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em',
-        textTransform: 'uppercase', color: bad ? 'var(--warning-text)' : 'var(--text-faint)' }}>
-        Сверка с Weborama
-      </span>
-      <span style={{ flex: '1 1 260px', minWidth: 0 }}>{state.verdict}</span>
-      {!!raw.rows && (
-        <span style={{ fontFamily: MONO, fontSize: 11,
-          color: bad ? 'var(--warning-text)' : 'var(--text-muted)' }}>
-          {raw.since}…{raw.until} · вставок {grp(raw.insertions)} · показов {grp(raw.impressions)}
-          {' · прицеплено '}{grp(state.mapped_insertions)}
-        </span>
-      )}
-      {mayEdit && state.configured && (
-        <button onClick={onRefresh} disabled={busy}
-          style={{ ...btnSm(false), cursor: busy ? 'default' : 'pointer',
-            opacity: busy ? 0.6 : 1, whiteSpace: 'nowrap' }}>
-          {busy ? 'Забираю…' : 'Обновить'}
-        </button>
-      )}
-    </div>
   )
 }

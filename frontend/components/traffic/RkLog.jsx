@@ -24,7 +24,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { MONO, Modal, UI as SANS } from '@/components/salesTableKit';
 import { plural as pluralWord } from '@/components/notify/kit';
-import { TileBadge } from '@/components/traffic/dashboardKit';
 
 export const MAX_LEN = 2000;
 
@@ -37,29 +36,6 @@ export const KINDS = {
 
 const Dot = ({ color, size = 7 }) => <span style={{ width: size, height: size, borderRadius: 2, background: color, flex: `0 0 ${size}px`, display: 'inline-block' }} />;
 const plural = (n, a, b, c) => `${n} ${pluralWord(n, a, b, c)}`;
-
-const LogIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M5 3h11l3 3v15H5z" /><path d="M9 9h7M9 13h7M9 17h4" />
-  </svg>
-);
-
-/* ═════════ плитка ═════════ */
-export function RkLogTile({ count = 0, open = false, onToggle }) {
-  return (
-    <span role="button" tabIndex={0} onClick={onToggle} onKeyDown={e => e.key === 'Enter' && onToggle?.()} title="Лог РК — заметки по кампании"
-      style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer', userSelect: 'none' }}>
-      {/* Вид — как у плиток «Отчёт» и «Задачи» (dashboardKit); открытый лог — заливкой */}
-      <span style={{ position: 'relative', display: 'grid', placeItems: 'center', width: 40, height: 40, boxSizing: 'border-box', borderRadius: 10,
-        background: open ? 'var(--accent)' : 'var(--accent-tint)', border: `1px solid ${open ? 'var(--accent)' : 'var(--accent-border)'}`, color: open ? 'var(--on-accent)' : 'var(--accent)',
-        transition: 'background-color 150ms ease, color 150ms ease, border-color 150ms ease' }}>
-        <LogIcon />
-        <TileBadge n={count} />
-      </span>
-      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--accent)', whiteSpace: 'nowrap' }}>лог рк</span>
-    </span>
-  );
-}
 
 /* ═════════ панель ═════════ */
 export default function RkLog({ rkCode, notes = [], canWrite = false, onAdd, onClose }) {

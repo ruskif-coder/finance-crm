@@ -21,6 +21,7 @@ import { downloadMp } from '@/lib/mpDownload'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import Navbar from '@/components/Navbar'
+import { useNavObject } from '@/lib/navObject'
 import Section from '@/components/deal/Section'
 import AccountFlowButton from '@/components/deal/AccountFlowButton'
 import CopyDealButton from '@/components/deal/CopyDealButton'
@@ -506,6 +507,8 @@ export default function DealCard() {
   const { id } = router.query
   const isMobile = useIsMobile()
   const [deal, setDeal] = useState(null)
+  // Код сделки — в пилюлю меню («Продажи · Реестр сделок · H9ZY7B»), а не номер из адреса.
+  useNavObject(router.asPath, deal?.code)
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')

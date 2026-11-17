@@ -1,4 +1,4 @@
-import { IcoBtn } from '@/components/traffic/dashboardKit'
+import { IcoBtn, StopBtn } from '@/components/traffic/dashboardKit'
 
 // Площадка без нашего кода (владелец 29.09.2026): в нашу DSP её не завести, поэтому
 // кнопок старта и стопа у неё нет. Вместо них — отметка «заведён и запущен во внешней
@@ -37,12 +37,8 @@ export default function ExternalLaunch({ status, canStart, onChange }) {
           </svg>
         </IcoBtn>
       ) : (
-        <IcoBtn tone="var(--danger)" onClick={() => onChange('завершена')}
-          title="Отключить: площадка выходит из распределения, её объём уходит остальным. Во внешней DSP креатив остановите сами">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 6h12v12H6z" />
-          </svg>
-        </IcoBtn>
+        <StopBtn onClick={() => onChange('завершена')} label="Отключить"
+          title="Отключить: площадка выходит из распределения, её объём уходит остальным. Во внешней DSP креатив остановите сами" />
       )}
     </span>
   )

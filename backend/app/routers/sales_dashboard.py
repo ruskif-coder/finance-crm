@@ -2510,6 +2510,15 @@ def _report_groups(db, deal_id) -> list:
             .distinct().order_by(S.report_group).all()]
 
 
+def _report_from(db, deal_id):
+    """Начало РК по медиаплану — дата «с» в календарике отчёта клиенту по умолчанию (владелец 17.11.2026). Кампания та же,
+    что берёт выгрузка (`client_report.deal_report`): последняя по id."""
+    from app.ad.models import AdCampaign
+    row = (db.query(AdCampaign.date_start).filter(AdCampaign.deal_id == deal_id)
+           .order_by(AdCampaign.id.desc()).first())
+    return row[0] if row else None
+
+
 @router.get("/deals/{deal_id}")
 def get_deal(deal_id: str, db: Session = Depends(get_db),
              current_user: User = Depends(require_permission("sales_registry", "view"))):
@@ -2592,6 +2601,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "report_ready": _report_ready(db, deal.id),
         # Группы креативов для отчёта клиенту по группе (владелец 24.10.2026)
         "report_groups": _report_groups(db, deal.id),
+        "report_from": _report_from(db, deal.id),
         "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
         if deal.weborama_pixel_at else None,
         "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,
