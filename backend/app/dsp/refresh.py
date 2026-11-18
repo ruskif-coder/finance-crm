@@ -98,9 +98,13 @@ def _short(v, n=90):
 
 
 def _summary(items: dict) -> str:
+    """Подпись пункта в плане. Ставка — в подписи, если не 1 (18.11.2026: у Купера в DSP стоял коэффициент 1.0 вместо 1.61, а план
+    показывал «29 отмечено → 29 отмечено» — расхождение было, но прочитать его было нельзя)."""
     on = _checked(items)
     zero = sum(1 for x in on.values() if not _num(x.get("bid_rate")))
-    return f"{len(on)} отмечено" + (f", bid_rate 0 у {zero}" if zero else "")
+    rates = sorted({round(_num(x.get("bid_rate")), 2) for x in on.values() if _num(x.get("bid_rate")) not in (0, 1)})
+    return (f"{len(on)} отмечено" + (f", ставка ×{', ×'.join(f'{r:g}' for r in rates)}" if rates else "")
+            + (f", bid_rate 0 у {zero}" if zero else ""))
 
 
 # ── креатив ──────────────────────────────────────────────────────────────────

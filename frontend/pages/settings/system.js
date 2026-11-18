@@ -73,13 +73,22 @@ export default function SettingsSystem() {
   }, [load, loadMaint, router])
   useRefreshOnReturn(() => { if (autoRef.current) load() })
 
-  const checkNow = () => {
+  const checkNow = useCallback(() => {
     setChecking(true)
     api.post('/system/status/check', {}, auth())
       .then(r => { setData(r.data); setError(''); setJustChecked(true); setTimeout(() => setJustChecked(false), 2500) })
       .catch(e => setError(detailText(e, 'Прогон проверок не удался')))
       .finally(() => setChecking(false))
-  }
+  }, [])
+  // Кнопка «Проверить» из оповещения об отказе (колокольчик и Телеграм ведут на ?check=1, 18.11.2026): открыли — сразу прогон,
+  // один раз; параметр убираем из адреса, чтобы обновление страницы не запускало проверку снова.
+  const autoChecked = useRef(false)
+  useEffect(() => {
+    if (!router.isReady || autoChecked.current || router.query.check !== '1' || !isAdmin()) return
+    autoChecked.current = true
+    router.replace('/settings/system', undefined, { shallow: true })
+    checkNow()
+  }, [router, checkNow])
   const runJob = (key) => api.post(`/system/jobs/${key}/run`, {}, auth())
     .then(() => { load(); setTimeout(load, 4000) })
     .catch(e => setError(detailText(e, 'Задание не запустилось')))

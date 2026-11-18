@@ -284,7 +284,7 @@ export default function Login() {
         <button
           onClick={handleLogin}
           disabled={loading}
-          style={{ width: '100%', padding: '12px', background: 'var(--primary)', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '500', cursor: 'pointer' }}
+          style={{ width: '100%', padding: '12px', background: 'var(--primary)', color: 'var(--on-accent)', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '500', cursor: 'pointer' }}
         >
           {loading ? 'Вход...' : 'Войти'}
         </button>

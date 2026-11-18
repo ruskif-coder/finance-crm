@@ -1,10 +1,9 @@
 // Шапка дашборда трафика v2 (хендофф design_handoff_traffic_expand_v2, 17.11.2026, раздел 4) и панель списка РК (раздел 6).
 // Свежесть — плашкой с кнопкой «Обновить из сделок» (кнопка — только админу, как на бою); «без факта» — короткой плашкой с
 // прежним текстом баннера в подсказке; сверка с Weborama — плашкой ТОЛЬКО при сбое (владелец 17.11.2026), в норме её нет.
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { MONO, PortalPopover } from '@/components/salesTableKit'
 import { dm as dmShared } from '@/lib/salesFormat'
-import { readTheme, saveTheme } from '@/lib/theme'
 
 const plain = { background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }
 export const headBtn = {
@@ -74,28 +73,6 @@ function WhoPicker({ value, data, onPick }) {
   )
 }
 
-const NIGHT = new Set(['navy-dark', 'dark', 'graphite'])
-
-/** «День / Ночь» — темы NAVY (хендофф design_handoff_traffic_navy, 17.11.2026): выбор у пользователя, общий для всех экранов. */
-function DayNight() {
-  const [theme, setTheme] = useState('light')
-  useEffect(() => { setTheme(readTheme()) }, [])
-  const night = NIGHT.has(theme)
-  const pick = (t) => { saveTheme(t); setTheme(t) }
-  const seg = (on) => ({ ...plain, display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 10px', borderRadius: 8,
-    fontSize: 12, fontWeight: on ? 700 : 600, background: on ? 'var(--hot)' : 'transparent', color: on ? 'var(--hot-fg)' : 'var(--text-secondary)' })
-  return (
-    <span style={{ display: 'inline-flex', padding: 2, borderRadius: 10, background: 'var(--bg-card)', border: '1px solid var(--border-card)' }}>
-      <button type="button" onClick={() => pick('navy')} style={seg(!night)} title="Тема NAVY — день">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-          <circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" /></svg>День</button>
-      <button type="button" onClick={() => pick('navy-dark')} style={seg(night)} title="Тема NAVY — ночь">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
-          <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" /></svg>Ночь</button>
-    </span>
-  )
-}
-
 /**
  * props: data — ответ /dashboard; scope + onScope; archive + onArchive; mayEdit; isAdmin; noFact, total — РК без факта;
  * verifier — состояние съёма Weborama (+ wbBusy, onWbRefresh); widgets + onWidgets; onAdfox; sync: {syncing, syncSaid, onSync}.
@@ -138,7 +115,6 @@ export default function DashHeader({ data, scope, onScope, archive, onArchive, m
           <button type="button" className="tp-head" onClick={onAdfox} style={headBtn}
             title="Импорт ADFOX: загрузить суточный отчёт Adfox — показы площадок вне нашей DSP лягут в факт РК">↑ ADFOX</button>
         )}
-        <DayNight />
         <button type="button" className="tp-head" onClick={onWidgets} title={widgets ? 'Свернуть виджеты в строку-итог' : 'Развернуть виджеты'}
           style={widgets ? { ...headBtn, color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderColor: 'var(--accent-border)' } : headBtn}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">

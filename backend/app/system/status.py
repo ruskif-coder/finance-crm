@@ -619,6 +619,15 @@ def check_external_config():
     return out
 
 
+TG_LIVE_PAUSE = 2.0        # секунд между попытками живой проверки Телеграма (число попыток — notify.telegram.ATTEMPTS)
+
+
+def _sleep(sec: float) -> None:
+    """Пауза между попытками — отдельной функцией: тесты её подменяют."""
+    import time
+    time.sleep(sec)
+
+
 def check_telegram_live():
     """ЖИВАЯ проверка Телеграма: доходит ли запрос, а не задан ли токен.
 
@@ -638,18 +647,28 @@ def check_telegram_live():
     if not token:
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "idle",
                       "не проверялось", "бот не настроен")
-    try:
-        # Через тот же прокси, что и отправка: иначе проверка ходила бы другим путём
-        # и отчитывалась о связи, которой приложение не пользуется.
-        import httpx
-        from app.notify import telegram as _tg
-        r = httpx.get(_tg.API.format(token=token, method="getWebhookInfo"),
-                      timeout=8, proxy=_tg.proxy())
-        info = (r.json() or {}).get("result", {}) if r.status_code == 200 else {}
-    except Exception as e:                       # noqa: BLE001
+    # Через тот же прокси, что и отправка: иначе проверка ходила бы другим путём и отчитывалась о связи, которой приложение
+    # не пользуется. Попыток — те же ATTEMPTS, что у отправки (notify.telegram; одно число на контур, 18.11.2026): обходной прокси примерно раз в час не отвечает с первой попытки,
+    # и одна неудача давала «Отказ» → через 10 мин «Вернулось в норму» почти каждый час, хотя бот работал (за сутки 113 сообщений
+    # дошли, 1 нет). Отказ — только если не ответили все попытки; ответ не с первой — виден в подписи, нестабильность не прячется.
+    import httpx
+    from app.notify import telegram as _tg
+    info, err_text, tries = None, "", 0
+    for tries in range(1, _tg.ATTEMPTS + 1):
+        try:
+            r = httpx.get(_tg.API.format(token=token, method="getWebhookInfo"),
+                          timeout=8, proxy=_tg.proxy())
+            info = (r.json() or {}).get("result", {}) if r.status_code == 200 else {}
+            break
+        except Exception as e:                   # noqa: BLE001
+            err_text = f"{type(e).__name__}: {str(e)[:120]}"
+            if tries < _tg.ATTEMPTS:
+                _sleep(TG_LIVE_PAUSE)
+    if info is None:
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "bad",
-                      "не отвечает", str(e)[:160],
+                      "не отвечает", f"{_tg.ATTEMPTS} попытки подряд · {err_text}",
                       consequence="Бот недоступен — привязка и уведомления не работают")
+    retry_note = f" · {'со' if tries == 2 else 'с'} {tries}-й попытки" if tries > 1 else ""
     pending = info.get("pending_update_count") or 0
     err = info.get("last_error_message")
     if pending > 5:
@@ -659,8 +678,8 @@ def check_telegram_live():
                                   "коды привязки до нас не доходят")
     if err:
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "warn",
-                      f"{pending} в очереди", f"последняя ошибка: {err}")
-    return _check("tg_live", "Внешние связи", "Телеграм: связь", "ok", "очередь пуста")
+                      f"{pending} в очереди{retry_note}", f"последняя ошибка: {err}")
+    return _check("tg_live", "Внешние связи", "Телеграм: связь", "ok", f"очередь пуста{retry_note}")
 
 
 def check_pub_bot_poll(db):

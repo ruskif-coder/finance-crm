@@ -224,6 +224,11 @@ def clear_bad_codes(db, contour: str, chat_id) -> None:
                {"k": _bad_key(contour, chat_id)})
 
 
+# Ссылки-действия: вместо строки с адресом — кнопка под сообщением (18.11.2026, владелец: «кнопку в алерт — „проверить“»).
+# Ключ — относительный адрес ссылки события; остальные ссылки по-прежнему строкой.
+BUTTONS = {"/settings/system?check=1": "Проверить"}
+
+
 def send_message(chat_id: str, text: str, link: Optional[str] = None,
                  base_url: Optional[str] = None, contour: str = STAFF) -> None:
     """Отправить сообщение. Бросает исключение — вызывающий пишет причину в журнал.
@@ -234,7 +239,7 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
     token = bot_token(contour)
     if not token:
         raise RuntimeError(f"{token_var(contour)} не задан")
-    body = text
+    body, markup = text, None
     if link:
         # Площадке — адрес её кабинета, а не внутренней системы (аудит 23.09.2026, 5.H2).
         if contour == PUB and not base_url:
@@ -244,7 +249,11 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
         if domain and not domain.startswith("http"):
             domain = f"https://{domain}"
         if domain:
-            body = f"{text}\n{domain.rstrip('/')}{link}"
+            url = f"{domain.rstrip('/')}{link}"
+            if link in BUTTONS:
+                markup = {"inline_keyboard": [[{"text": BUTTONS[link], "url": url}]]}
+            else:
+                body = f"{text}\n{url}"
     # ОДНА ПОВТОРНАЯ ПОПЫТКА при обрыве соединения (08.09.2026).
     #
     # Связь с Телеграмом у нас рваная по независящей от кода причине: адрес, который
@@ -260,8 +269,8 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
     for attempt in range(1, ATTEMPTS + 1):
         try:
             r = httpx.post(API.format(token=token, method="sendMessage"),
-                           json={"chat_id": chat_id, "text": body,
-                                 "disable_web_page_preview": True},
+                           json={"chat_id": chat_id, "text": body, "disable_web_page_preview": True,
+                                 **({"reply_markup": markup} if markup else {})},
                            timeout=10, proxy=proxy())
             break
         except httpx.TransportError as e:      # таймаут, обрыв, отказ в соединении

@@ -24,6 +24,7 @@ KEY_DIGEST_DAY = "status_alerts_digest_day"
 DEFAULT = {"bad": True, "warn": True, "ok": True, "tg": True, "mail": False}
 DIGEST_HOUR_MSK = 9
 LINK = "/settings/system"
+LINK_CHECK = "/settings/system?check=1"     # кнопка «Проверить» (notify.telegram.BUTTONS)
 
 
 def _get(db: Session, key: str) -> Optional[str]:
@@ -94,7 +95,9 @@ def send(db: Session, transitions: List[dict], now: Optional[datetime] = None) -
             title = f"Вернулось в норму: {c.get('title')}"
             body = f"Простой {_downtime(t.get('down_since'), now)}. Сейчас: {c.get('value') or 'в норме'}"
         try:
-            bus.emit(db, ev, title=title, body=body, link=LINK, tone="bad" if ev == "system_check_failed" else "ok",
+            # у отказа — ссылка-действие «Проверить»: экран откроется и сразу запустит прогон (18.11.2026)
+            bus.emit(db, ev, title=title, body=body, link=LINK_CHECK if ev == "system_check_failed" else LINK,
+                     tone="bad" if ev == "system_check_failed" else "ok",
                      only_channels=channels(cfg))
             n += 1
         except Exception:  # noqa: BLE001 — оповещение справка, состояние уже записано

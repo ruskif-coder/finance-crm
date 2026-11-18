@@ -90,3 +90,12 @@ def test_item_writes_are_locked_and_logged():
     from app.dsp import refresh as R
     assert "only_one(" in inspect.getsource(R.apply_item)
     assert "log_action(" in inspect.getsource(td.dsp_refresh_item)
+
+
+def test_summary_shows_the_rate_so_a_bid_change_is_readable():
+    """«29 отмечено → 29 отмечено» прятало смену ставки Купера 1.0 → 1.61 (18.11.2026)."""
+    from app.dsp.refresh import _summary
+    one = {"b1": {"is_checked": True, "bid_rate": 1}, "b2": {"is_checked": True, "bid_rate": "1"}}
+    kup = {"b1": {"is_checked": True, "bid_rate": 1.61}, "b2": {"is_checked": True, "bid_rate": "1.61"}}
+    assert _summary(one) == "2 отмечено"
+    assert _summary(kup) == "2 отмечено, ставка ×1.61"
