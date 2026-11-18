@@ -3,6 +3,7 @@
  * Только отображение: вердикты, счётчики и медианы приходят с сервера (backend/app/traffic/platform_report.py).
  * Стили — inline на var(--*) из RULES_TIMON_design.md §2.
  */
+import { Segmented as MotionSegmented } from '@/lib/motion';
 import React from 'react';
 
 export { MONO } from '@/components/salesTableKit';   // один шрифт с китом (вставка хендоффа 05.11.2026)
@@ -112,16 +113,12 @@ export function Legend({ metric }) {
   );
 }
 
+// Переключатель — общий lib/motion, вид трафика: тёмная «таблетка» (18.11.2026)
 export function Segmented({ label, value, options, onChange }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       {label && <Cap>{label}</Cap>}
-      <span style={{ display: 'inline-flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)', borderRadius: 10, padding: 2 }}>
-        {options.map(([v, l]) => { const on = v === value; return (
-          <span key={v} role="button" tabIndex={0} onClick={() => onChange(v)} onKeyDown={e => e.key === 'Enter' && onChange(v)}
-            style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
-              background: on ? 'var(--hot)' : 'transparent', color: on ? 'var(--hot-fg)' : 'var(--text-muted)', boxShadow: on ? 'var(--shadow-card)' : 'none' }}>{l}</span>); })}
-      </span>
+      <MotionSegmented tone="hot" size="xs" value={value} options={options} onChange={onChange} />
     </span>
   );
 }

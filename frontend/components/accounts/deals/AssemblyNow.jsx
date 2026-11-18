@@ -34,7 +34,7 @@ function ExternalLaunch({ dealId, canEdit, onDone }) {
         {!!err && <span style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{err}</span>}
       </span>
       {canEdit && <button type="button" disabled={busy} onClick={run}
-        style={{ height: 34, padding: '0 16px', borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12.5, fontWeight: 700,
+        data-act="" style={{ height: 34, padding: '0 16px', borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12.5, fontWeight: 700,
           cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', opacity: busy ? 0.6 : 1 }}>Подтвердить запуск</button>}
     </div>
   )

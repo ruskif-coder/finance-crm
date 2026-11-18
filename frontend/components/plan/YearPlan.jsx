@@ -38,7 +38,7 @@ export const T = {
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
 };
 
 export const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -128,7 +128,7 @@ const Card = ({ delay = 0, pad = '20px 24px 16px', gap = 12, style, className, c
   <section className={className} style={{
     background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow, borderRadius: 18,
     padding: pad, display: 'flex', flexDirection: 'column', gap,
-    animation: `riseIn .4s ${T.ease} ${delay}s both`, ...style,
+    animation: `m-rise var(--dur-slow) ${T.ease} ${delay}s both`, ...style,
   }}>{children}</section>
 );
 
@@ -139,7 +139,7 @@ const Dot = ({ color, size = 8 }) => (
 // Портальная выпадашка из общего кита — не обрезается overflow'ом таблицы и не уходит
 // под соседние карточки (раньше был локальный position:absolute → клип).
 const Popover = ({ children, minWidth = 200 }) => (
-  <PortalPopover open minWidth={minWidth} maxHeight={260} style={{ boxShadow: T.pop, animation: `popIn .18s ${T.ease} both` }}>{children}</PortalPopover>
+  <PortalPopover open minWidth={minWidth} maxHeight={260} style={{ boxShadow: T.pop, animation: `m-drop var(--dur-base) ${T.ease} both` }}>{children}</PortalPopover>
 );
 
 const Option = ({ active, label, onPick }) => (
@@ -156,8 +156,8 @@ const ProgressBar = ({ plan, fact, booked, height = 8, bg = T.inner, delay = 0 }
   const bookedW = plan ? Math.max(0, Math.min(100 - factW, (booked / plan) * 100)) : 0;
   return (
     <span style={{ flex: '1 1 auto', minWidth: 40, display: 'flex', gap: 2, height, borderRadius: 3, background: bg, overflow: 'hidden' }}>
-      <span style={{ height, width: factW + '%', borderRadius: 3, background: pctColor(pct), transformOrigin: 'left', animation: `barGrow .55s ${T.ease} ${delay}s both` }} />
-      <span title="бронь" style={{ height, width: bookedW + '%', borderRadius: 3, background: T.booked, transformOrigin: 'left', animation: `barGrow .55s ${T.ease} ${delay}s both` }} />
+      <span style={{ height, width: factW + '%', borderRadius: 3, background: pctColor(pct), transformOrigin: 'left', animation: `m-grow-x var(--dur-slow) ${T.ease} ${delay}s both` }} />
+      <span title="бронь" style={{ height, width: bookedW + '%', borderRadius: 3, background: T.booked, transformOrigin: 'left', animation: `m-grow-x var(--dur-slow) ${T.ease} ${delay}s both` }} />
     </span>
   );
 };
@@ -541,7 +541,7 @@ export default function YearPlan({
       <div style={{ boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* шапка */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', animation: `m-rise var(--dur-slow) ${T.ease} both` }}>
           <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.025em' }}>Годовой план</span>
           <span data-pop-root style={{ position: 'relative' }}>
             <span className="yp-ghost" onClick={() => setYearOpen(o => !o)}
@@ -593,7 +593,7 @@ export default function YearPlan({
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 {/* цветовая индикация состояния плана */}
                 <span title={dirty ? 'Есть несохранённые правки' : 'Всё сохранено'}
-                  style={{ width: 9, height: 9, borderRadius: '50%', flex: '0 0 9px', background: dirty ? T.warning : T.fact, boxShadow: dirty ? '0 0 0 3px rgba(232,144,32,.18)' : 'none', transition: 'background .2s' }} />
+                  style={{ width: 9, height: 9, borderRadius: '50%', flex: '0 0 9px', background: dirty ? T.warning : T.fact, boxShadow: dirty ? '0 0 0 3px rgba(232,144,32,.18)' : 'none', transition: 'background var(--dur-base)' }} />
                 {dirty && (
                   <span className="yp-ghost" onClick={saving ? undefined : cancelEdits}
                     style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.warning}`, borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: T.warning, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}>
@@ -830,7 +830,7 @@ export default function YearPlan({
 
                     {/* бренды */}
                     {g.open && (
-                      <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `rowIn .24s ${T.ease} both` }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `m-drop var(--dur-base) ${T.ease} both` }}>
                         {g.brands.map(b => {
                           const brandList = (advById[g.adv_id] && advById[g.adv_id].brands) || [];
                           // сумма закреплённых месяцев; если она больше годового плана — план не сходится
@@ -1321,7 +1321,7 @@ export default function YearPlan({
                 </div>
 
                 {open && (
-                  <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `rowIn .24s ${T.ease} both` }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `m-drop var(--dur-base) ${T.ease} both` }}>
                     {g.brands.map(b => {
                       const bf = sumMonths(b, factOf), bb = sumMonths(b, bookedOf);
                       const bplan = effPlan(b);
@@ -1470,7 +1470,7 @@ function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
                 <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: gap >= 0 ? T.fact : T.danger, textAlign: 'right' }}>{(gap >= 0 ? '+' : '−') + kk(Math.abs(gap))}</span>
               </div>
               {isOpen && (
-                <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `rowIn .24s ${T.ease} both` }}>
+                <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `m-drop var(--dur-base) ${T.ease} both` }}>
                   {r.advertisers.map((a, ai) => {
                     const ap = a.plan ? (a.fact / a.plan) * 100 : 0;
                     const agap = a.fact + a.booked - a.plan;
@@ -1503,7 +1503,7 @@ function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
                           можно открыть — переключаемся на план этого сейлза (там он
                           редактируется, если есть права). */}
                       {advOpen && plans.map((pk, pi) => (
-                        <div key={pk.plan_id ?? `p${pi}`} style={{ margin: '2px 0 6px 44px', border: `1px solid ${T.border}`, borderRadius: 10, background: T.card, animation: `rowIn .2s ${T.ease} both` }}>
+                        <div key={pk.plan_id ?? `p${pi}`} style={{ margin: '2px 0 6px 44px', border: `1px solid ${T.border}`, borderRadius: 10, background: T.card, animation: `m-drop var(--dur-base) ${T.ease} both` }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderBottom: pk.brands.length ? `1px solid ${T.inner}` : 'none' }}>
                             <span style={{ fontSize: 11.5, fontWeight: 700, color: T.t1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {pk.title || `План ${year} · ${a.name}`}
@@ -1567,11 +1567,11 @@ function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
 /* ── глобальные стили ───────────────────────────────────────────────── */
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-@keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-@keyframes rowIn  { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-@keyframes popIn  { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
-@keyframes barGrow { from { transform:scaleX(0) } to { transform:scaleX(1) } }
-@media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
+
+
+
+
+
 .yp-row:hover { background:${T.nested} }
 .yp-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
 .yp-field:hover { border-color:${T.hoverBorder} }

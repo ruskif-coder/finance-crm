@@ -65,7 +65,8 @@ export default function CulpritsWidget({ data, onOpenReport, onOpenRk, onExcel, 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '16px 20px 12px', display: 'flex', flexDirection: 'column', gap: 8, height: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <Cap style={{ fontSize: 10 }}>Площадки-виновники</Cap>
+        {/* заголовок — как у «Стены дней» рядом (владелец 18.11.2026: «слева тусклый»), а не капсом */}
+        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>Площадки-виновники</span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>поперёк всех видимых РК · недокрут в показах</span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           <Segmented value={metric} onChange={setMetric} options={[['tempo', 'темп'], ['wr', 'WR']]} />

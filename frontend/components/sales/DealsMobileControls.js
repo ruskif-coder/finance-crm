@@ -80,8 +80,8 @@ export default function DealsMobileControls({
         </div>
         <div onClick={() => setHideArchive(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, padding: '12px 14px', border: '1px solid var(--border-card)', borderRadius: 12, cursor: 'pointer' }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Показывать архивные</span>
-          <span style={{ width: 42, height: 24, borderRadius: 999, background: !hideArchive ? 'var(--accent)' : 'var(--border-inner)', position: 'relative', transition: 'background .18s', flexShrink: 0 }}>
-            <span style={{ position: 'absolute', top: 2, left: !hideArchive ? 20 : 2, width: 20, height: 20, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left .18s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+          <span style={{ width: 42, height: 24, borderRadius: 999, background: !hideArchive ? 'var(--accent)' : 'var(--border-inner)', position: 'relative', transition: 'background var(--dur-base)', flexShrink: 0 }}>
+            <span style={{ position: 'absolute', top: 2, left: !hideArchive ? 20 : 2, width: 20, height: 20, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left var(--dur-base)', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
           </span>
         </div>
       </BottomSheet>

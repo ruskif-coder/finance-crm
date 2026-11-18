@@ -279,7 +279,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{rub(expected)}</span>
       </div>
       <div style={{ height: 8, borderRadius: 2, background: 'var(--border-inner)', overflow: 'hidden', marginBottom: 12 }}>
-        <div style={{ width: grow ? `${pct}%` : 0, height: '100%', background: 'var(--income)', transition: 'width .55s cubic-bezier(0.22,1,0.36,1)' }} />
+        <div style={{ width: grow ? `${pct}%` : 0, height: '100%', background: 'var(--income)', transition: 'width var(--dur-slow) var(--ease-out)' }} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1 }}>Наша сумма</span>
@@ -352,7 +352,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         margin: '4px 0 8px', padding: '12px 16px', background: 'var(--bg-card)',
         border: '1px solid var(--border-card)', borderRadius: 14, fontFamily: UI,
         display: 'grid', gridTemplateColumns: 'minmax(0,1.15fr) minmax(0,0.95fr) minmax(0,1.9fr)', gap: 24,
-        animation: 'riseIn .24s cubic-bezier(0.22,1,0.36,1) both',
+        animation: 'm-rise var(--dur-base) var(--ease-out) both',
       }}>
         <div style={{ minWidth: 0 }}>
           {dataBlock}
@@ -384,7 +384,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
       margin: '2px 0 10px', padding: '18px 20px', background: 'var(--accent-wash)',
       border: '1px solid var(--border-card)', borderRadius: 14, fontFamily: UI,
       display: 'grid', gridTemplateColumns: '1.3fr 1.1fr 1.1fr 1fr', gap: 24,
-      animation: 'riseIn .26s cubic-bezier(0.22,1,0.36,1) both',
+      animation: 'm-rise var(--dur-slow) var(--ease-out) both',
     }}>
       {/* 1. Данные сделки */}
       <div>{dataBlock}</div>

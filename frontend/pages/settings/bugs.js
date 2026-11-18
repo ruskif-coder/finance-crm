@@ -122,7 +122,7 @@ export default function BugsPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head><title>Заявки о сбоях · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)',

@@ -55,7 +55,7 @@ function Bar({ amount, max, color, selected, onClick, axis }) {
   const filled = amount > 0 ? Math.max(1, Math.round(amount / max * 14)) : 0
   return (
     <div onClick={onClick} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer',
-      background: selected ? 'var(--accent-tint)' : 'transparent', borderRadius: 6, padding: '3px 2px', transition: 'background .15s' }}>
+      background: selected ? 'var(--accent-tint)' : 'transparent', borderRadius: 6, padding: '3px 2px', transition: 'background var(--dur-fast)' }}>
       <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 1, height: 112, width: '100%' }}>
         {Array.from({ length: 14 }, (_, i) => (
           <div key={i} style={{ flex: 1, borderRadius: 2, background: i < filled ? color : 'var(--border-inner)' }} />
@@ -87,7 +87,7 @@ function DebtorRow({ r, open, onToggle, notes, setNotes, savedNotes, saveNote, c
         </div>
       </div>
       {open && (
-        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, ...rise(0, '.24s') }}>
+        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, ...rise(0) }}>
           <div style={{ display: 'flex', gap: 14, ...monoLbl, fontSize: 9, marginBottom: 8 }}>
             <span>ИНН {r.inn || '—'}</span><span>отсрочка {r.term_days} дн.</span>
           </div>

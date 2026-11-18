@@ -118,7 +118,7 @@ export default function PL() {
 
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
         <Head><title>P&L · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="pl" />
         <PnlMobile dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} data={data} />
@@ -166,7 +166,7 @@ export default function PL() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Navbar active="pl">
       <Head><title>P&L · Финансы | SIMB-AD ERP</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>

@@ -1,7 +1,7 @@
 // Мелочи строки меню v3: пиктограмма 16×16 с обводкой 1.5 (README §6), счётчик, кривая анимаций (README §8).
 import { MONO } from '@/components/salesTableKit'
 
-export const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
+export const EASE = 'var(--ease-out)'   // = токен --ease-out (styles/globals.css, «Стандарт движения»); имя — для файлов меню
 
 /** Пути пиктограмм кнопок справа — из `icons/ui` хендоффа; сводка руководителя — своя (в макете её нет). */
 export const UI_ICON = {
@@ -22,7 +22,7 @@ const badgeBase = { fontFamily: MONO, display: 'inline-flex', alignItems: 'cente
 export const Badge = ({ children, corner, title }) => (
   <span title={title} style={corner
     ? { ...badgeBase, position: 'absolute', top: -4, right: -2, background: 'var(--accent)', color: 'var(--bg-card)',
-        border: '2px solid var(--bg-card)', height: 18, animation: `nav3Pop 380ms ${EASE} both` }
+        border: '2px solid var(--bg-card)', height: 18, animation: `m-bounce var(--dur-slow) ${EASE} both` }
     : { ...badgeBase, background: 'var(--accent-tint)', color: 'var(--accent-fg)' }}>{children}</span>
 )
 
@@ -33,12 +33,12 @@ export const iconBtn = {
 }
 
 export const NAV3_CSS = `
-  @keyframes nav3Rise { from { opacity:0; transform:translateY(7px) } to { opacity:1; transform:none } }
-  @keyframes nav3Pop { 0% { transform:scale(.6); opacity:0 } 70% { transform:scale(1.12) } 100% { transform:scale(1); opacity:1 } }
+  
+  
   .nav3-row:not([data-on]):hover { background: var(--bg-subtle) !important }
   .nav3-star:hover { color: var(--warning) !important; transform: scale(1.2) }
   .nav3-chip:hover { border-color: var(--border-hover) !important; color: var(--text-primary) !important }
-  .nav3-btn { transition: background 150ms ease, color 150ms ease, transform 120ms ease }
+  .nav3-btn { transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease }
   .nav3-btn:hover { background: var(--bg-subtle) !important; color: var(--accent) !important }
   .nav3-btn:active, .nav3-top:active { transform: scale(0.96) }
   .nav3-dir:hover { border-color: var(--border-hover) !important }

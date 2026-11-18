@@ -241,7 +241,7 @@ export default function Login() {
                 color: checked ? 'white' : 'var(--muted)',
                 border: 'none', borderRadius: '8px', fontSize: '16px',
                 fontWeight: '500', cursor: checked ? 'pointer' : 'not-allowed',
-                transition: 'background 0.2s'
+                transition: 'background var(--dur-base)'
               }}
             >
               {consentLoading ? 'Сохранение...' : 'Принять и войти в систему'}

@@ -40,7 +40,7 @@ export default function EventsStrip({ days, day, onDay }) {
             <span key={d.date} onClick={() => !empty && onDay(on ? null : d.date)}
               title={`${dm(d.date)} · ${empty ? 'событий нет' : Object.entries(d.kinds || {}).map(([k, n]) => `${(EVENT_KIND[k] || [k])[0]}: ${n}`).join(' · ')}`}
               style={{ flex: '1 1 0', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 5, padding: '9px 10px',
-                borderRadius: 11, cursor: empty ? 'default' : 'pointer', transition: 'background-color 150ms ease, border-color 150ms ease',
+                borderRadius: 11, cursor: empty ? 'default' : 'pointer', transition: 'background-color var(--dur-fast) ease, border-color var(--dur-fast) ease',
                 background: on ? 'var(--accent-tint)' : i === 0 ? 'var(--bg-tint)' : (empty ? 'var(--bg-subtle)' : 'var(--bg-card)'),
                 border: `1px solid ${on ? 'var(--accent)' : i === 0 ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>

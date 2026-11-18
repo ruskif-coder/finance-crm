@@ -83,14 +83,14 @@ function useCountUp(value, ms = 850) {
 const CountUp = ({ value }) => <>{fmt(useCountUp(value))}</>
 
 const card = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
-const rise = (delay) => ({ animation: 'rcvRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${delay}s` })
+const rise = (delay) => ({ animation: 'm-rise var(--dur-slow) var(--ease-out) both', animationDelay: `${delay}s` })
 
 // Мини-график: пиксельный вертикальный бар из 14 ячеек
 function PixelBar({ value, max, color, delay }) {
   const filled = value > 0 ? Math.max(1, Math.round(value / max * 14)) : 0
   return (
     <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 2, height: '100%', width: '62%', margin: '0 auto',
-      animation: 'rcvGrow .55s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${delay}s`, transformOrigin: 'bottom' }}>
+      animation: 'm-grow-y var(--dur-slow) var(--ease-out) both', animationDelay: `${delay}s`, transformOrigin: 'bottom' }}>
       {Array.from({ length: 14 }, (_, i) => (
         <div key={i} style={{ flex: 1, borderRadius: 2, background: i < filled ? color : 'var(--border-inner)' }} />
       ))}
@@ -191,14 +191,14 @@ export default function Receivables() {
     }
   }
 
-  if (loading) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности…</div></div>
-  if (denied) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет доступа к разделу «Дебиторка».</div></div>
+  if (loading) return <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности…</div></div>
+  if (denied) return <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет доступа к разделу «Дебиторка».</div></div>
   if ((!data || !Array.isArray(data.rows)) && err) return (
     <LoadErrorScreen title="Дебиторка не загрузилась" text={err}
       nav={<><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /></>}
       onRetry={() => load(localStorage.getItem('token'))} />
   )
-  if (!data || !Array.isArray(data.rows)) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет данных.</div></div>
+  if (!data || !Array.isArray(data.rows)) return <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет данных.</div></div>
 
   const canEditNote = can(getPermissions(), 'receivables', 'edit')
 
@@ -280,7 +280,7 @@ export default function Receivables() {
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="receivables" />
       {/* Цифры ниже — от прошлой удачной загрузки; полоса говорит, что обновление или
@@ -304,7 +304,7 @@ export default function Receivables() {
   const selBtn = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '8px 13px', fontFamily: UI, fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head>
         <title>Дебиторка · Финансы | SIMB-AD ERP</title>
       </Head>
@@ -315,14 +315,14 @@ export default function Receivables() {
         <LoadError text={err} onRetry={() => { setErr(''); load(localStorage.getItem('token')) }} /></div>}
 
       <style>{`
-        @keyframes rcvRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes rcvGrow { from { transform:scaleY(0) } to { transform:scaleY(1) } }
+        
+        
         .rcv-grid { display:grid; ${GRID} gap:16px; }
         .rcv-det { display:grid; ${DET_GRID} gap:14px; }
         .rcv-row:hover { background:var(--bg-subtle) !important; }
         .rcv-x:hover { border-color:var(--border-hover) !important; color:var(--accent) !important; }
         .rcv-inn:hover { text-decoration:underline; color:var(--accent-hover) !important; }
-        @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }
+        
       `}</style>
 
       <div style={{ padding: 32, maxWidth: 1680, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -548,7 +548,7 @@ export default function Receivables() {
                   </div>
 
                   {isOpen && (
-                    <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '2px -8px 8px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, animation: 'rcvRise .25s cubic-bezier(0.22,1,0.36,1) both' }}>
+                    <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '2px -8px 8px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, animation: 'm-rise var(--dur-slow) var(--ease-out) both' }}>
                       <div className="rcv-det" style={{ ...monoLbl, paddingBottom: 6 }}>
                         {['Дата', 'Статья', 'Период', 'Срок оплаты', 'Возраст', 'Сумма', '№ ДС', '№ счёта', 'Дата счёта'].map((h, i) => (
                           <div key={i} style={{ textAlign: i === 5 ? 'right' : 'left' }}>{h}</div>

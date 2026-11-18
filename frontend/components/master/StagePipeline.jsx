@@ -11,6 +11,7 @@ import { MASTER_TONE } from '@/lib/masterStatus'
 import { MONO } from '@/components/salesTableKit'
 import StepConfirm from '@/components/master/StepConfirm'
 import { lineBtn } from '@/components/master/kit'
+import { contrastTone, useThemeKey } from '@/lib/theme'
 
 const TAIL = { 'ждём сканы': 'оплачено, без подписанных в архив не уехать', 'ждём оплату': 'документы у клиента' }
 const WAITING = { 'ждём 1С': 'Ждём счёт и УПД от бухгалтерии', 'ждём оплату': 'Ждём оплату' }
@@ -26,8 +27,11 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
   const [head, ...rest] = (t?.text || '').split(' · ')
   const tail = [rest.join(' · '), TAIL[m.status]].filter(Boolean).join(' — ')
   const btn = lineBtn({ size: 'lg' })
+  // NAVY: главное на экране — контрастный блок (днём тёмный, ночью светлый), кнопка шага — «таблетка» (data-acc-now)
+  const tone = contrastTone(useThemeKey())
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 14, alignItems: 'center', padding: '12px 14px', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 12 }}>
+    <div data-tone={tone} data-acc-now="" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 14, alignItems: 'center', padding: '12px 14px',
+      background: tone ? 'var(--bg-card)' : 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9, minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 3, minWidth: 0 }}>
         {seq.map(({ key, label: s }, i) => {
@@ -35,7 +39,7 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
           const now = i === cur
           return (
             <span key={key} style={{ flex: now ? '2.2 1 0' : '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <span style={{ height: 7, borderRadius: 2, background: now ? tone[3] : i < cur ? 'var(--accent-soft)' : 'var(--border-inner)' }} />
+              <span style={{ height: 7, borderRadius: 2, background: now ? tone[3] : i < cur ? 'var(--stage-done, var(--accent-soft))' : 'var(--border-inner)' }} />
               <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 color: now ? tone[2] : i < cur ? 'var(--text-muted)' : 'var(--text-faint)', fontWeight: now ? 700 : 500 }}>{s}</span>
             </span>
@@ -53,7 +57,7 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
       <span data-pop-root style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
         {step && !step.expand ? (
           <>
-            <button type="button" onClick={() => setAsking(a => !a)} style={{ ...btn, border: 0, background: step.quiet ? 'var(--income-fg)' : 'var(--accent)', color: 'var(--on-accent)' }}>{step.label}</button>
+            <button type="button" data-act={step.quiet ? undefined : 'main'} onClick={() => setAsking(a => !a)} style={{ ...btn, border: 0, background: step.quiet ? 'var(--income-fg)' : 'var(--accent)', color: 'var(--on-accent)' }}>{step.label}</button>
             {asking && <StepConfirm code={m.code} step={step} onClose={() => setAsking(false)} onDone={(v) => { setAsking(false); onDone(v) }} />}
           </>
         ) : step && step.expand ? (
@@ -61,7 +65,7 @@ export default function StagePipeline({ m, canEdit, onDone, onScans }) {
         ) : m.step === 'contract' ? (
           <Link href={`/directory/contracts?q=${encodeURIComponent(m.contract?.number || '')}`} style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--danger-fg)', textDecoration: 'none' }}>в договор</Link>
         ) : act?.link ? (
-          <Link href={act.link.href} style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: 0, background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>{act.link.label}</Link>
+          <Link href={act.link.href} data-act="main" style={{ ...btn, display: 'inline-flex', alignItems: 'center', border: 0, background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>{act.link.label}</Link>
         ) : act?.scroll ? (
           <button type="button" onClick={() => document.querySelector(`[data-step-target="${act.scroll}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
             style={{ ...btn, border: '1px solid var(--accent-border)', background: 'var(--bg-card)', color: 'var(--accent)' }}>{SCROLL_LABEL[act.scroll]}</button>

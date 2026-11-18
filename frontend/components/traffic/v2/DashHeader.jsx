@@ -1,6 +1,7 @@
 // Шапка дашборда трафика v2 (хендофф design_handoff_traffic_expand_v2, 17.11.2026, раздел 4) и панель списка РК (раздел 6).
 // Свежесть — плашкой с кнопкой «Обновить из сделок» (кнопка — только админу, как на бою); «без факта» — короткой плашкой с
 // прежним текстом баннера в подсказке; сверка с Weborama — плашкой ТОЛЬКО при сбое (владелец 17.11.2026), в норме её нет.
+import { Segmented } from '@/lib/motion'
 import { useState } from 'react'
 import { MONO, PortalPopover } from '@/components/salesTableKit'
 import { dm as dmShared } from '@/lib/salesFormat'
@@ -135,18 +136,9 @@ export function ListPanel({ q, onQ, shown, total, tabs, tab, onTab }) {
         style={{ width: 260, height: 32, boxSizing: 'border-box', padding: '0 12px', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 10, fontSize: 12.5, outline: 'none', fontFamily: 'inherit', color: 'var(--text-primary)' }} />
       <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{shown} из {total}</span>
-      <span style={{ marginLeft: 'auto', display: 'inline-flex', padding: 2, borderRadius: 10, background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)' }}>
-        {tabs.filter(([k, , n]) => k === 'all' || k === tab || n > 0).map(([k, label, n, hint]) => {
-          const on = k === tab
-          return (
-            <button key={k} type="button" onClick={() => onTab(k)} title={hint}
-              style={{ ...plain, display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 8,
-                background: on ? 'var(--hot)' : 'transparent', boxShadow: on ? 'var(--shadow-card)' : 'none',
-                color: on ? 'var(--hot-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap' }}>
-              {label}<span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{n}</span>
-            </button>
-          )
-        })}
+      <span style={{ marginLeft: 'auto' }}>
+        <Segmented tone="hot" size="sm" value={tab} onChange={onTab} options={tabs.filter(([k, , n]) => k === 'all' || k === tab || n > 0).map(([k, label, n]) => [k, label, n])}
+          titleOf={k => (tabs.find(x => x[0] === k) || [])[3]} />
       </span>
     </div>
   )

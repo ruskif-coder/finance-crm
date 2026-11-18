@@ -26,9 +26,9 @@ function Cell({ state, busy, disabled, title, onClick }) {
     <span onClick={disabled || busy ? undefined : onClick} title={title} role="button"
       style={{ position: 'relative', display: 'inline-block', width: 32, height: 18, borderRadius: 9, verticalAlign: 'middle',
         background: l.bg, cursor: disabled ? 'not-allowed' : busy ? 'wait' : 'pointer',
-        opacity: busy ? 0.5 : disabled ? 0.6 : 1, transition: 'background-color 150ms ease' }}>
+        opacity: busy ? 0.5 : disabled ? 0.6 : 1, transition: 'background-color var(--dur-fast) ease' }}>
       <span style={{ position: 'absolute', top: 2, left: l.left, width: 14, height: 14, borderRadius: '50%', background: '#fff',
-        boxShadow: '0 1px 2px rgba(28,36,51,.25)', transition: 'left 150ms ease' }} />
+        boxShadow: '0 1px 2px rgba(28,36,51,.25)', transition: 'left var(--dur-fast) ease' }} />
     </span>
   )
 }

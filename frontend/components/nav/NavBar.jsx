@@ -55,11 +55,11 @@ function TopItem({ s, idx, expanded, active, hovered, sub, obj, onEnter, onClick
     <button type="button" data-top={idx} className="nav3-top" onMouseEnter={onEnter} onClick={onClick} title={expanded ? undefined : s.title}
       style={{ position: 'relative', zIndex: 1, border: 'none', background: 'transparent', font: 'inherit', cursor: 'pointer',
         display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 12px', whiteSpace: 'nowrap',
-        color: active ? 'var(--accent-fg)' : hovered ? 'var(--text-primary)' : 'var(--text-muted)', transition: `color 200ms ease, transform 120ms ease` }}>
+        color: active ? 'var(--accent-fg)' : hovered ? 'var(--text-primary)' : 'var(--text-muted)', transition: `color var(--dur-base) ease, transform var(--dur-fast) ease` }}>
       <Ico d={s.icon} />
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, overflow: 'hidden', maxWidth: expanded ? 560 : 0,
         opacity: expanded ? 1 : 0, marginLeft: expanded ? 8 : 0, fontSize: 13.5, fontWeight: active ? 700 : 600,
-        transition: `max-width 340ms ${EASE}, opacity 220ms ease, margin-left 340ms ${EASE}` }}>
+        transition: `max-width var(--dur-slow) ${EASE}, opacity var(--dur-base) ease, margin-left var(--dur-slow) ${EASE}` }}>
         {s.title}
         {!!sub && (
           <span style={{ fontWeight: 500, color: 'var(--accent)', whiteSpace: 'nowrap' }}>
@@ -71,13 +71,13 @@ function TopItem({ s, idx, expanded, active, hovered, sub, obj, onEnter, onClick
           </span>
         )}
         {!!obj && (
-          <span style={{ whiteSpace: 'nowrap', animation: `nav3Pop 320ms ${EASE} both` }}>
+          <span style={{ whiteSpace: 'nowrap', animation: `m-bounce var(--dur-slow) ${EASE} both` }}>
             <span style={{ fontWeight: 500, color: 'var(--accent)', opacity: 0.8 }}>·&nbsp;</span>
             <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{obj}</span>
           </span>
         )}
         {!!badge && <Badge title={tip}>{badge}</Badge>}
-        <span style={{ fontSize: 8, color: 'var(--text-faint)', transition: `transform 220ms ${EASE}`, transform: hovered ? 'rotate(180deg)' : 'none' }}>▾</span>
+        <span style={{ fontSize: 8, color: 'var(--text-faint)', transition: `transform var(--dur-base) ${EASE}`, transform: hovered ? 'rotate(180deg)' : 'none' }}>▾</span>
       </span>
       {!expanded && !!badge && <Badge corner title={tip}>{badge}</Badge>}
     </button>
@@ -87,7 +87,7 @@ function TopItem({ s, idx, expanded, active, hovered, sub, obj, onEnter, onClick
 function SearchField({ open, onOpen, onClose, onNavigate }) {
   return (
     <span style={{ flex: open ? '1 1 auto' : '0 0 150px', maxWidth: open ? 900 : 150, minWidth: 0, display: 'flex', margin: '0 12px 0 10px',
-      transition: `max-width 420ms ${EASE}` }}>
+      transition: `max-width var(--dur-slow) ${EASE}` }}>
       {open ? <SearchBar height={34} onClose={onClose} onNavigate={onNavigate} /> : (
         <button type="button" onClick={onOpen} title="Поиск (Ctrl K)" aria-label="Поиск"
           style={{ flex: '1 1 auto', display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, boxSizing: 'border-box',
@@ -114,6 +114,9 @@ export default function NavBar({ sections, active, path, isAdmin, canSettings, o
   const currentHref = active?.item?.href || null
   const { pinned, recent, pin } = useNavPrefs(currentHref)
   const compact = useCompact()
+  // Высота строки меню — переменной `--nav-h` на <html>: закреплённые строки экранов встают под меню, а не уходят под него
+  // («Мои сделки»: панель фильтров и шапка колонок, 18.11.2026). 58 px, сжатая при прокрутке — 46 px.
+  useEffect(() => { document.documentElement.style.setProperty('--nav-h', compact ? '46px' : '58px') }, [compact])
   const declared = useDeclaredObject(path)
   const [searchOpen, setSearchOpen] = useState(false)
   const [hov, setHov] = useState(-1)            // индекс раздела в panelSecs, чья панель открыта
@@ -169,10 +172,10 @@ export default function NavBar({ sections, active, path, isAdmin, canSettings, o
   return (
     <div data-navbar onMouseLeave={leave} onMouseEnter={keep}
       style={{ position: 'sticky', top: 0, zIndex: 40, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-inner)',
-        boxShadow: compact ? 'var(--shadow-card)' : 'none', transition: 'box-shadow 320ms ease' }}>
+        boxShadow: compact ? 'var(--shadow-card)' : 'none', transition: 'box-shadow var(--dur-slow) ease' }}>
       <style>{NAV3_CSS}</style>
       <div ref={bar} style={{ display: 'flex', alignItems: 'center', height: compact ? 46 : 58, padding: '0 20px',
-        transition: `height 320ms ${EASE}`, color: 'var(--text-primary)' }}>
+        transition: `height var(--dur-slow) ${EASE}`, color: 'var(--text-primary)' }}>
         <button type="button" onClick={onLogo} aria-label="На главную" title="SIMB-AD"
           style={{ flex: '0 0 150px', display: 'flex', alignItems: 'center', border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
           <span style={{ width: 133, height: 16, background: 'var(--logo) left center / contain no-repeat' }} />
@@ -180,10 +183,10 @@ export default function NavBar({ sections, active, path, isAdmin, canSettings, o
 
         <div ref={topsBox} style={{ position: 'relative', display: 'flex', gap: 2, height: 34, flex: '0 1 auto', minWidth: 0 }}>
           {a && <span style={{ position: 'absolute', top: 0, left: a.x, width: a.w, height: 34, borderRadius: 10, background: 'var(--accent-tint)',
-            transition: `left 340ms ${EASE}, width 340ms ${EASE}` }} />}
+            transition: `left var(--dur-slow) ${EASE}, width var(--dur-slow) ${EASE}` }} />}
           <span style={{ position: 'absolute', top: 0, left: (h || a || { x: 0 }).x, width: (h || a || { w: 0 }).w, height: 34, borderRadius: 10,
             background: 'var(--bg-subtle)', opacity: h && hI !== actI ? 1 : 0,
-            transition: `left 340ms ${EASE}, width 340ms ${EASE}, opacity 160ms ease` }} />
+            transition: `left var(--dur-slow) ${EASE}, width var(--dur-slow) ${EASE}, opacity var(--dur-base) ease` }} />
           {tops.map((s, i) => {
             const on = i === actI
             const obj = on && !searchOpen ? (declared?.code || objectOf(path, active.item)) : ''

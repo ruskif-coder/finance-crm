@@ -26,7 +26,7 @@ function Tile({ label, big, unit, sub, fg, active, onClick, first }) {
       onKeyDown={click ? (e => e.key === 'Enter' && onClick()) : undefined}
       title={click ? (active ? 'Снять фильтр' : 'Показать только эти операции') : undefined}
       style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: '14px 22px', cursor: click ? 'pointer' : 'default',
-        borderLeft: first ? 'none' : '1px solid var(--border-inner)', background: active ? 'var(--signal-tint)' : 'transparent', transition: 'background-color 150ms ease' }}>
+        borderLeft: first ? 'none' : '1px solid var(--border-inner)', background: active ? 'var(--signal-tint)' : 'transparent', transition: 'background-color var(--dur-fast) ease' }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={CAP}>{label}</span>
         {active && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: 'var(--signal-text)' }}>фильтр ✕</span>}

@@ -145,7 +145,7 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
 
   return (
     <>
-      <style>{'.mx-row:hover>div{background:var(--accent-wash)!important}.mx-dot{transition:transform .12s}.mx-dot:hover{transform:scale(1.06)}'}</style>
+      <style>{'.mx-row:hover>div{background:var(--accent-wash)!important}.mx-dot{transition:transform var(--dur-fast)}.mx-dot:hover{transform:scale(1.06)}'}</style>
       <div style={{ width: 'max-content', minWidth: '100%' }}>
         <div style={{ ...row, position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-card)' }}>
           <div style={{ ...stick(0, 4, 'var(--bg-subtle)'), padding: '9px 4px 0', display: 'flex', alignItems: 'flex-end', borderRight: LINE }}>

@@ -61,12 +61,12 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
             <Svg d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14" />Скачать для Диадока · zip</span>
         )}
         {!!b.btn && (
-          <button type="button" disabled={busy} onClick={run} title={b.btn.title}
+          <button type="button" data-act="main" disabled={busy} onClick={run} title={b.btn.title}
             style={{ ...BTN, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
             <Svg d="M5 12.5l4.5 4.5L19 7.5" w={2.4} />{b.btn.label}</button>
         )}
         {!!b.link && (
-          <Link href={b.link.href}
+          <Link href={b.link.href} data-act={b.link.tone === 'act' ? 'main' : undefined}
             style={{ ...BTN, background: b.link.tone === 'act' ? 'var(--accent)' : 'var(--bg-card)', border: `1px solid ${b.link.tone === 'act' ? 'var(--accent)' : 'var(--danger-border)'}`,
               color: b.link.tone === 'act' ? 'var(--on-accent)' : 'var(--danger-fg)' }}>{b.link.label}</Link>
         )}

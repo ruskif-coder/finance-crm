@@ -468,7 +468,7 @@ export default function Contracts() {
   // ── МОБИЛЬНАЯ ВЕРСИЯ ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>Договоры · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <ContractsMobile

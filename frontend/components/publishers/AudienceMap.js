@@ -65,7 +65,7 @@ export default function AudienceMap({ publishers, selectedId, onSelect }) {
                   marginLeft: -size / 2, marginBottom: -size / 2, borderRadius: '50%', boxSizing: 'border-box', cursor: 'pointer',
                   background: on ? 'var(--accent)' : est ? 'transparent' : 'var(--accent-soft)',
                   border: est ? `1.5px dashed ${on ? 'var(--accent)' : 'var(--accent-soft)'}` : 'none',
-                  zIndex: on ? 5 : 2, transition: 'background-color 150ms ease' }} />
+                  zIndex: on ? 5 : 2, transition: 'background-color var(--dur-fast) ease' }} />
             )
           })}
           {withX.filter(d => top5.includes(d.p.id)).map(({ p, x }) => (

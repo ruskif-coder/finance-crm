@@ -5,12 +5,12 @@ import { windowLabel } from '@/lib/salesStatus'
 
 const MONO = "'JetBrains Mono', monospace"
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
-const RISE = (d) => ({ animation: `ssRise .4s cubic-bezier(.22,1,.36,1) ${d}s both` })
+const RISE = (d) => ({ animation: `m-rise var(--dur-slow) var(--ease-out) ${d}s both` })
 const seg = { display: 'inline-flex', alignItems: 'center', padding: 3, height: 34, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10 }
 const segItem = (on, mono) => ({
   display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 11px', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap',
   background: on ? (mono ? 'var(--accent-tint)' : 'var(--bg-card)') : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)',
-  fontWeight: on ? 700 : 600, fontSize: mono ? 11.5 : 12, fontFamily: mono ? MONO : undefined, transition: 'background-color 150ms ease',
+  fontWeight: on ? 700 : 600, fontSize: mono ? 11.5 : 12, fontFamily: mono ? MONO : undefined, transition: 'background-color var(--dur-fast) ease',
 })
 
 export function Header({ mode, setMode, quarters, q, setQ, win, canPrev, canNext, step, onNew, canEdit }) {
@@ -91,7 +91,7 @@ export function Pending({ items, saving, onReset, onSave, onRemove }) {
   if (!items.length) return null
   return (
     <div style={{ background: 'var(--bg-tint)', border: '1px solid var(--accent-border)', borderRadius: 14, padding: '10px 16px',
-      display: 'flex', flexDirection: 'column', gap: 6, animation: 'ssPop .2s cubic-bezier(.22,1,.36,1) both' }}>
+      display: 'flex', flexDirection: 'column', gap: 6, animation: 'm-drop var(--dur-base) var(--ease-out) both' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--accent)' }} />
         <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--accent-fg)' }}>

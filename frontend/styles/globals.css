@@ -207,7 +207,7 @@ body {
 }
 
 /* ── Mobile-kit: анимации bottom sheet ── */
-@keyframes sheetFade { from { opacity: 0 } to { opacity: 1 } }
+
 @keyframes sheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
 @media (prefers-reduced-motion: reduce) {
   [style*="sheetUp"], [style*="sheetFade"] { animation: none !important }
@@ -595,6 +595,26 @@ svg [data-tile] { transform-box: fill-box; transform-origin: center; }
   background-position:0 0, 4px 7px;
 }
 
+/* Фон страницы с переливом — во ВСЕХ темах, как в NAVY (владелец 18.11.2026: «по остальным темам такой же фон с переливом»).
+   Градиент из цветов самой темы: светлее у верхнего левого угла → её --bg-canvas → темнее к низу. fixed — не едет при прокрутке,
+   им же красятся подложки закреплённых строк (--sticky-bg), поэтому вокруг них нет полосы другого тона. NAVY задаёт свой (navy.css). */
+:root { --page-bg:linear-gradient(160deg, #F4F6FB 0%, #EBEEF6 45%, #DDE2EF 100%) }
+[data-theme="dark"] { --page-bg:linear-gradient(160deg, #1B2232 0%, #10141C 45%, #0A0D13 100%) }
+[data-theme="graphite"] { --page-bg:linear-gradient(160deg, #1E1F22 0%, #121314 45%, #0B0B0C 100%) }
+[data-theme="pink"] { --page-bg:linear-gradient(160deg, #FCF5F8 0%, #F7ECF1 45%, #EEDAE4 100%) }
+[data-theme="japandi"] { --page-bg:linear-gradient(160deg, #F5F0E7 0%, #EEE7DA 45%, #E2D7C5 100%) }
+body { background:var(--page-bg) fixed }
+/* «Джапанди»: зерно бумаги поверх перелива */
+[data-theme="japandi"] body {
+  background-image:
+    radial-gradient(rgba(110,90,60,.06) 1px, transparent 1.3px),
+    radial-gradient(rgba(110,90,60,.045) 1px, transparent 1.3px),
+    var(--page-bg);
+  background-size:9px 9px, 17px 17px, auto;
+  background-position:0 0, 4px 7px, 0 0;
+  background-attachment:scroll, scroll, fixed;
+}
+
 /* Под открытой модалкой страница не прокручивается — ни колесом, ни пальцем (правило владельца 26.10.2026,
    для всего проекта). Подложку помечает overlayClose (lib/overlay.js) или явный data-overlay; одно правило здесь
    вместо блокировки прокрутки в каждом окне. scrollbar-gutter держит место полосы прокрутки — страница не прыгает. */
@@ -605,4 +625,56 @@ html:has([data-overlay]) { overflow: hidden; scrollbar-gutter: stable }
 :root { --logo: image-set(url(/nav/logo-day-h16.png) 1x, url(/nav/logo-day-h32.png) 2x, url(/nav/logo-day-h48.png) 3x); }
 [data-theme="dark"], [data-theme="graphite"] {
   --logo: image-set(url(/nav/logo-night-h16.png) 1x, url(/nav/logo-night-h32.png) 2x, url(/nav/logo-night-h48.png) 3x);
+}
+
+/* ═══ Стандарт движения (владелец 18.11.2026: «стандартизированно, а не каждый лист подгонять») ═══════════════════════════════
+   Токены времени и кривых, общие анимации — ТОЛЬКО здесь. Экран пишет `animation: m-rise var(--dur-slow) var(--ease-out) both`
+   или ставит `data-motion="rise"`. Сторож сборки — scripts/check-motion.mjs (новый @keyframes вне styles/ и ручная кривая роняют сборку).
+   Что анимируем: появление поповера/модалки/тоста, раскрытие строки, первую загрузку списка, вкладку, подсветку изменённого.
+   Что НЕТ: пересортировку и фильтры, обновление по таймеру, прокрутку, ввод. Ничего дольше --dur-slow, кроме бесконечных. */
+:root {
+  --dur-fast:120ms;      /* наведение, нажатие, смена цвета */
+  --dur-base:200ms;      /* поповер, выпадашка, переключатель, тост */
+  --dur-slow:320ms;      /* раскрытие строки, модалка, панель, появление блока */
+  --ease-out:cubic-bezier(.22,1,.36,1);   /* появление */
+  --ease-in:cubic-bezier(.4,0,1,1);       /* исчезновение — быстрее появления */
+  --ease-move:cubic-bezier(.65,0,.35,1);  /* перемещение: индикатор вкладки, переезд */
+  --stagger:30ms;        /* шаг лесенки списка (data-motion + --i), не больше 10 шагов */
+}
+@keyframes m-rise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }      /* блок, карточка, список */
+@keyframes m-drop { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }      /* меню и поповер под кнопкой */
+@keyframes m-zoom { from { opacity:0; transform:scale(.97) } to { opacity:1; transform:none } }            /* окно */
+@keyframes m-fade { from { opacity:0 } to { opacity:1 } }                                                    /* подложка, смена содержимого */
+@keyframes m-slide { from { opacity:0; transform:translateX(24px) } to { opacity:1; transform:none } }    /* панель справа */
+@keyframes m-grow-x { from { transform:scaleX(0) } to { transform:scaleX(1) } }                              /* полоса прогресса */
+@keyframes m-grow-y { from { transform:scaleY(0) } to { transform:scaleY(1) } }                              /* столбик графика */
+@keyframes m-expand { from { grid-template-rows:0fr; opacity:0 } to { grid-template-rows:1fr; opacity:1 } } /* раскрытие (lib/motion Collapse) */
+@keyframes m-flash { from { background-color:var(--flash-bg, var(--accent-tint)) } to { background-color:transparent } }  /* изменённая строка */
+@keyframes m-pulse { 0%, 100% { opacity:.4 } 50% { opacity:1 } }                                            /* ожидание */
+@keyframes m-blink { 0%, 100% { opacity:1 } 50% { opacity:.25 } }                                           /* значок «новое» */
+@keyframes m-shimmer { from { background-position:200% 0 } to { background-position:-200% 0 } }             /* скелет загрузки */
+@keyframes m-spin { to { transform:rotate(360deg) } }
+@keyframes m-empty-pulse { 0%, 100% { border-color:var(--empty-border) } 50% { border-color:var(--warning) } }  /* пустое обязательное поле */
+/* особые — свои у одного места, но тоже здесь */
+@keyframes m-mp-row-in { from { opacity:0; transform:translateY(-6px) scaleY(.85); max-height:0 } to { opacity:1; transform:none; max-height:60px } }
+@keyframes m-mp-row-out { from { opacity:1; transform:none; max-height:60px }
+                            to { opacity:0; transform:translateX(24px); max-height:0; margin:0; padding-top:0; padding-bottom:0 } }
+@keyframes m-bell {
+          0%, 58%, 100% { transform: rotate(0) }
+          62% { transform: rotate(-12deg) }  68% { transform: rotate(10deg) }
+          74% { transform: rotate(-7deg) }   80% { transform: rotate(4deg) }
+          86% { transform: rotate(-2deg) }
+        }
+@keyframes m-bounce { 0% { transform:scale(.6); opacity:0 } 70% { transform:scale(1.12) } 100% { transform:scale(1); opacity:1 } }
+[data-motion="rise"] { animation:m-rise var(--dur-slow) var(--ease-out) both; animation-delay:calc(min(var(--i, 0), 10) * var(--stagger)) }
+[data-motion="drop"] { animation:m-drop var(--dur-base) var(--ease-out) both }
+[data-motion="zoom"] { animation:m-zoom var(--dur-base) var(--ease-out) both }
+[data-motion="fade"] { animation:m-fade var(--dur-base) var(--ease-out) both }
+[data-motion="slide"] { animation:m-slide var(--dur-slow) var(--ease-out) both }
+[data-motion="flash"] { animation:m-flash 900ms var(--ease-out) both }
+.m-skeleton { display:block; height:12px; background:linear-gradient(90deg, var(--bg-subtle) 0%, var(--border-inner) 50%, var(--bg-subtle) 100%);
+  background-size:200% 100%; animation:m-shimmer 1.4s linear infinite; border-radius:6px }   /* скелет загрузки — один на проект */
+/* «Меньше движения» в настройках системы — ОДНО правило на весь проект (было 23 копии по экранам) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration:1ms !important; animation-iteration-count:1 !important; transition-duration:1ms !important; scroll-behavior:auto !important }
 }

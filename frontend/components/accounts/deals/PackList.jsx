@@ -3,6 +3,7 @@
  * Строка — код, контрагент и договор, рекламодатели, сделки, бюджет, статус, период, «что сделать», действие. Действие и расхлоп —
  * те же, что в реестре мастер-сделок (`ActionCell`, `ExpandedRow`): шаги считает сервер (`master_deal/status.py`).
  */
+import { Collapse } from '@/lib/motion'
 import { Fragment, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MONO } from '@/components/salesTableKit'
@@ -11,14 +12,15 @@ import { monthLabel } from '@/lib/salesFormat'
 import { MasterStatusPill, TODO_DOT } from '@/lib/masterStatus'
 import { mln } from '@/components/accounts/dashboard/ladder'
 import PackAction from '@/components/accounts/deals/packAction'
-import ExpandedRow from '@/components/master/registry/ExpandedRow'
+import ExpandedRow, { navyZone } from '@/components/master/registry/ExpandedRow'
 import { packGroups, packTurn } from '@/components/accounts/deals/contours'
 import { plural } from '@/components/master/kit'
 import { STICKY_TOP } from '@/components/accounts/deals/TurnGroups'
+import { useThemeKey } from '@/lib/theme'
 
 const COLS = '96px minmax(180px,1.4fr) minmax(120px,1fr) 92px 110px 150px 90px minmax(160px,1.2fr) 190px'
 const CAPH = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)', fontWeight: 700 }
-const DOT = { mine: 'var(--danger)', wait: 'var(--text-disabled)' }
+const DOT = { mine: 'var(--acc-turn, var(--danger))', wait: 'var(--text-disabled)' }   // «ваш ход» в NAVY — оранжевый (README §4)
 
 function Row({ p, canEdit, open, asking, setAsking, onDone, onToggle }) {
   const t = p.todo
@@ -28,7 +30,7 @@ function Row({ p, canEdit, open, asking, setAsking, onDone, onToggle }) {
     <div onClick={toggle} style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '10px 18px', borderTop: '1px solid var(--border-row)',
       cursor: 'pointer', background: open ? 'var(--bg-subtle)' : 'transparent' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span aria-hidden style={{ fontSize: 9, color: 'var(--text-faint)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 160ms ease' }}>▸</span>
+        <span aria-hidden style={{ fontSize: 9, color: 'var(--text-faint)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform var(--dur-base) ease' }}>▸</span>
         <Link href={`/accounts/master/${p.code}`} target="_blank" style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', whiteSpace: 'nowrap' }}>{p.code}</Link>
         <CopyIcon text={p.code} size={12} title="Скопировать код мастер-сделки" />
       </span>
@@ -54,6 +56,7 @@ function Row({ p, canEdit, open, asking, setAsking, onDone, onToggle }) {
 }
 
 export default function PackList({ packs, canEdit, onReload }) {
+  const zone = navyZone(useThemeKey())     // расхлоп пакета в NAVY — продолжение строки с зонами (README §2)
   const [expanded, setExpanded] = useState(null)
   const [asking, setAsking] = useState(null)
   const [closed, setClosed] = useState({})
@@ -75,7 +78,7 @@ export default function PackList({ packs, canEdit, onReload }) {
             <div onClick={() => setClosed(c => ({ ...c, [g.key]: !shut }))} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '12px 18px', cursor: 'pointer' }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: DOT[g.tone], alignSelf: 'center' }} />
               <b style={{ fontSize: 14 }}>{g.title}</b>
-              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>{g.rows.length}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: g.tone === 'mine' ? 'var(--acc-turn-num, var(--text-secondary))' : 'var(--text-secondary)' }}>{g.rows.length}</span>
               <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>{mln(g.rows.reduce((s, p) => s + (p.net || 0), 0))}</span>
               {g.tone !== 'mine' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>от вас ничего не нужно</span>}
               <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--accent-fg)' }}>{shut ? 'развернуть ▾' : 'свернуть ▴'}</span>
@@ -90,7 +93,7 @@ export default function PackList({ packs, canEdit, onReload }) {
                 <Fragment key={p.code}>
                   <Row p={p} canEdit={canEdit} open={expanded === p.code} asking={asking} setAsking={setAsking}
                     onDone={() => { setAsking(null); onReload() }} onToggle={toggle} />
-                  {expanded === p.code && <ExpandedRow code={p.code} channel={p.channel} canEdit={canEdit} onChanged={onReload} />}
+                  {expanded === p.code && <Collapse><ExpandedRow code={p.code} channel={p.channel} canEdit={canEdit} onChanged={onReload} zone={zone} /></Collapse>}
                 </Fragment>
               ))}
             </>}

@@ -442,13 +442,13 @@ export default function SalesDashboard2() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head>
         <title>Дашборд · Продажи | SIMB-AD ERP</title>
       </Head>
       <Navbar active="sales" />
       <style>{`
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+        
         .d2-row:hover { background: var(--bg-subtle) !important; }
         .d2-cell { cursor:pointer; border-radius:6px; display:block; box-sizing:border-box;
           /* Кликом должна ловиться ВСЯ ячейка, а не строка текста в ней: по ширине
@@ -459,7 +459,7 @@ export default function SalesDashboard2() {
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .d2-cell:hover { background: var(--accent-tint); color: var(--accent); }
         .d2-gen:hover, .d2-ico:hover { border-color:var(--border-inner) !important; color:var(--accent) !important; }
-        @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }
+        
       `}</style>
 
       {vpop && <ValuePopover anchor={vpop.rect} title={vpop.title} dealLabel={vpop.dealLabel} options={vpop.options} value={vpop.value} clearLabel={vpop.clearLabel} onAddNew={vpop.onAddNew}
@@ -478,7 +478,7 @@ export default function SalesDashboard2() {
       {periodEdit && (<>
         <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setPeriodEdit(null)} />
         <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
-          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 12, width: 232, fontFamily: UI, animation: 'riseIn .22s cubic-bezier(0.22,1,0.36,1) both' }}>
+          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 12, width: 232, fontFamily: UI, animation: 'm-rise var(--dur-base) var(--ease-out) both' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Период размещения</div>
           <MonthInput autoFocus defaultValue={periodEdit.month}
             onChange={e => savePeriod(periodEdit.dealId, e.target.value, periodEdit.current)}
@@ -531,7 +531,7 @@ export default function SalesDashboard2() {
         <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setGenConfirm(null)} />
         <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, width: 300, right: Math.max(8, window.innerWidth - genConfirm.rect.right),
           ...(genConfirm.rect.bottom + 150 > window.innerHeight ? { bottom: window.innerHeight - genConfirm.rect.top + 6 } : { top: genConfirm.rect.bottom + 6 }),
-          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, fontFamily: UI, animation: 'riseIn .22s cubic-bezier(0.22,1,0.36,1) both' }}>
+          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, fontFamily: UI, animation: 'm-rise var(--dur-base) var(--ease-out) both' }}>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Новое название{genConfirm.current ? ' (заменит текущее)' : ''}:</div>
           <div style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 10, wordBreak: 'break-word' }}>{genConfirm.text}</div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -620,7 +620,7 @@ export default function SalesDashboard2() {
                       hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} />
                   ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
+                    <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width var(--dur-base) var(--ease-out), border-color var(--dur-fast)' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" style={{ ...stroke, strokeWidth: 2, flex: '0 0 13px', color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
                       <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
                         placeholder="код, агентство, рекл, бренд, контрагент…" title="Поиск: ID, агентство, рекламодатель, бренд, контрагент, название сделки"

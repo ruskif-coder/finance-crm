@@ -160,7 +160,7 @@ export default function NotificationSettings() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head><title>Уведомления · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       {/* Ширина модуля — 2500 (владелец 16.09.2026). Здесь она нужна не «на всякий

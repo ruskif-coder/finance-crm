@@ -69,7 +69,7 @@ function GroupRow({ g, periods, open, onToggle }) {
         <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>{open ? '▴' : '▾'}</span>
       </div>
       {open && (
-        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0, '.24s') }}>
+        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0) }}>
           {(g.subgroups || []).map((sg, i) => (
             <div key={sg.subgroup || i}>
               {sg.subgroup && (

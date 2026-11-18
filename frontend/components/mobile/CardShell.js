@@ -1,5 +1,5 @@
 import { MONO, UI } from '../salesTableKit'
-import { CARD, RISE_KEYFRAMES, rise } from './kit'
+import { CARD, rise } from './kit'
 
 // Оболочка мобильной карточки сущности (карточка контрагента, карточка сделки):
 // шапка (заголовок · подпись · бейджи) → необязательный слот kpi → ряд табов →
@@ -37,7 +37,6 @@ export default function CardShell({ title, subtitle, badges, kpi, tabs = [], tab
 
   return (
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, paddingBottom: 90 }}>
-      <style>{RISE_KEYFRAMES}</style>
 
       <div style={{ ...CARD, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6, ...headerRise }}>
         <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text-primary)' }}>{title}</span>

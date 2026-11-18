@@ -36,9 +36,9 @@ const anchorOf = (type) => `g-${type}`
 // Карточки групп появляются лесенкой; наведение строк и чипов — классами (инлайн-стиль
 // наведения не умеет). Отступ якоря — под липкую шапку.
 const PAGE_CSS = `
-  @keyframes srchRise { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:none } }
-  @keyframes srchPulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
-  @media (prefers-reduced-motion: reduce) { .srch-card { animation:none !important } }
+  
+  
+  
   .srch-row:hover { background: var(--bg-tint) }
   .srch-chip:hover, .srch-more:hover { border-color: var(--border-hover) !important; color: var(--accent) !important }
   .srch-page-input::placeholder { color: var(--text-disabled) }
@@ -73,7 +73,7 @@ function Group({ group, q, index, onOpen }) {
     <section id={anchorOf(group.type)} className="srch-card" style={{
       ...CARD, padding: '14px 18px 10px', display: 'flex', flexDirection: 'column', minWidth: 0,
       scrollMarginTop: 90,
-      animation: `srchRise .4s cubic-bezier(0.22,1,0.36,1) ${(0.05 + index * 0.05).toFixed(2)}s both`,
+      animation: `m-rise var(--dur-slow) var(--ease-out) ${(0.05 + index * 0.05).toFixed(2)}s both`,
     }}>
       <span style={{ padding: '0 8px 6px', fontFamily: MONO, fontSize: 10, fontWeight: 700,
                      letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
@@ -107,7 +107,7 @@ function Note({ tone = 'plain', title, text, onRetry }) {
       <span style={{
         fontSize: 14, fontWeight: 700,
         color: error ? 'var(--danger-fg)' : tone === 'loading' ? 'var(--accent)' : 'var(--text-secondary)',
-        animation: tone === 'loading' ? 'srchPulse 1.2s ease-in-out infinite' : 'none',
+        animation: tone === 'loading' ? 'm-pulse 1.2s ease-in-out infinite' : 'none',
       }}>{title}</span>
       <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>{text}</span>
       {onRetry && (

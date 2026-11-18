@@ -49,7 +49,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
   const pins = s && (s.may_manual || s.mode === 'manual') ? ['fact', 'plan', 'manual'] : ['fact', 'plan']
   const head = (
     <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', cursor: 'pointer' }}>
-      <span style={{ fontSize: 10, color: 'var(--text-faint)', transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .15s' }}>▾</span>
+      <span style={{ fontSize: 10, color: 'var(--text-faint)', transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform var(--dur-fast)' }}>▾</span>
       <span style={{ ...CAP, fontSize: 11, color: 'var(--text-secondary)' }}>Итоговая сверка</span>
       <span style={{ ...CAP, fontWeight: 600 }}>{s.period || '—'} · расчёт {fmtDateTimeShort(s.calculated_at)}</span>
       {/* На кого закрываем — контрагент доходного договора (у контура аккаунта это посредник; владелец 19.10.2026) */}
@@ -198,7 +198,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
                 s.confirmed ? (
                   <button key="collect" type="button" disabled={blocked} onClick={() => setModal(true)}
                     style={{ height: 44, borderRadius: 12, border: 0, fontFamily: UI, fontSize: 14, fontWeight: 700, color: 'var(--on-accent)',
-                      background: blocked ? 'var(--accent-soft)' : 'var(--accent)', cursor: blocked ? 'not-allowed' : 'pointer', animation: 'popIn .2s ease both' }}>
+                      background: blocked ? 'var(--accent-soft)' : 'var(--accent)', cursor: blocked ? 'not-allowed' : 'pointer', animation: 'm-zoom var(--dur-base) ease both' }}>
                     Собрать ДС</button>
                 ) : (
                   <>
@@ -216,7 +216,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
                 {s.no_docs?.closed_at ? `Закрыто без документов${s.no_docs.closed_by ? ` · ${s.no_docs.closed_by}` : ''} · ${fmtDateTimeShort(s.no_docs.closed_at)}` : 'Отправлено в ДО'} — {pinsOpen ? 'сумму ДС ещё можно поменять: мастер и админ, пока пакет не ушёл в 1С.' : 'правки закрыты, цифры на момент закрытия.'}</span>}
               {!s.frozen && !!s.master && !s.may_manual && <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>Сделка в мастер-сделке — правки у мастера.</span>}
               {s.frozen && !s.no_docs?.closed_at && <CollectDsModal.OpenLink dealId={dealId} />}
-              <style>{'@keyframes popIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}'}</style>
+              <style>{''}</style>
             </div>
           </div>
         </>

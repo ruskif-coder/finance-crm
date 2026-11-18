@@ -3,6 +3,7 @@
  * Настройки меняют ЧЕРНОВИК (`draft`), предпросмотр считает сервер; «Сохранить раскладку» пишет. После выпуска ДС всё погашено.
  */
 import { useState } from 'react'
+import { contrastTone, useThemeKey } from '@/lib/theme'
 import Link from 'next/link'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, btn, inp, Segmented } from '@/components/salesTableKit'
@@ -17,8 +18,8 @@ const SMALL = { padding: '6px 12px', fontSize: 12.5, whiteSpace: 'nowrap', heigh
 const Switch = ({ on, label, disabled, onClick }) => (
   <button type="button" disabled={disabled} onClick={onClick}
     style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 0, padding: '4px 0', cursor: disabled ? 'default' : 'pointer', fontFamily: UI, opacity: disabled ? 0.5 : 1 }}>
-    <span style={{ width: 34, height: 20, flex: '0 0 34px', borderRadius: 10, background: on ? 'var(--income)' : 'var(--border-hover)', position: 'relative' }}>
-      <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left .15s' }} /></span>
+    <span style={{ width: 34, height: 20, flex: '0 0 34px', borderRadius: 10, background: on ? 'var(--md-on, var(--income))' : 'var(--border-hover)', position: 'relative' }}>
+      <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left var(--dur-fast)' }} /></span>
     <b style={{ fontSize: 13, color: 'var(--text-primary)' }}>{label}</b>
   </button>
 )
@@ -28,8 +29,8 @@ const Chip = ({ on, label, disabled, onClick }) => (
     style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 12px', borderRadius: 10, fontFamily: UI, fontWeight: 700, fontSize: 13,
       cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
       background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>
-    <span style={{ width: 15, height: 15, borderRadius: 4, border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border-hover)'}`, background: on ? 'var(--accent)' : 'transparent',
-      color: 'var(--bg-card)', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{on ? '✓' : ''}</span>{label}
+    <span style={{ width: 15, height: 15, borderRadius: 4, border: `1.5px solid ${on ? 'var(--md-on, var(--accent))' : 'var(--border-hover)'}`, background: on ? 'var(--md-on, var(--accent))' : 'transparent',
+      color: 'var(--md-on-fg, var(--bg-card))', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{on ? '✓' : ''}</span>{label}
   </button>
 )
 
@@ -83,7 +84,7 @@ function StartNo({ m, locked, busy, onSave }) {
       <div style={{ display: 'flex', gap: 8 }}>
         <input value={v} onChange={e => check(e.target.value)} placeholder="№" disabled={locked}
           style={{ ...inp, width: 90, fontFamily: MONO, borderColor: bad || (chk && !chk.ok) ? 'var(--danger-border)' : undefined }} />
-        <button type="button" disabled={blocked} onClick={async () => { if (await onSave(n, mayWord ? word : undefined)) setEdit(false) }} style={{ ...btn(true), opacity: blocked ? 0.5 : 1 }}>Сохранить</button>
+        <button type="button" disabled={blocked} onClick={async () => { if (await onSave(n, mayWord ? word : undefined)) setEdit(false) }} data-act="main" style={{ ...btn(true), opacity: blocked ? 0.5 : 1 }}>Сохранить</button>
         {shown != null && !!fixed && <button type="button" onClick={() => setEdit(false)} style={btn(false)}>Отмена</button>}
       </div>
       {chk && !chk.ok && (
@@ -103,6 +104,7 @@ function StartNo({ m, locked, busy, onSave }) {
 }
 
 export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, onSave, onRevert, onStartNo, onTakePrev }) {
+  const tone = contrastTone(useThemeKey())
   const lay = preview || m.layout
   const changed = !sameSettings(draft, m.settings)
   const set = (patch) => onDraft({ ...draft, ...patch })
@@ -151,7 +153,9 @@ export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, 
         </Step>
       </div>
 
-      <div style={{ marginTop: 6, padding: '12px 14px', borderRadius: 12, background: 'var(--bg-tint)', border: '1px solid var(--accent-border)' }}>
+      {/* NAVY: итог раскладки — контрастный блок, как полоса стадий (README §2) */}
+      <div data-tone={tone} style={{ marginTop: 6, padding: '12px 14px', borderRadius: 12, background: tone ? 'var(--bg-card)' : 'var(--bg-tint)',
+        border: `1px solid ${tone ? 'var(--border-card)' : 'var(--accent-border)'}` }}>
         <span style={CAP}>Получится</span>
         <div style={{ display: 'flex', gap: 22, marginTop: 6 }}>
           <span><b style={{ fontFamily: MONO, fontSize: 24, color: 'var(--accent-fg)' }}>{lay.ds.length}</b><span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)' }}>ДС</span></span>

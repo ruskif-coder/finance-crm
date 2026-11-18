@@ -18,6 +18,7 @@
  * Пока коннектор не подключён (этап 2c), факта нет ни у одной РК: факт, процент, прогноз
  * и недокрут показываются ПРОЧЕРКОМ, а не нулём. Это норма экрана, а не поломка.
  */
+import { Collapse } from '@/lib/motion'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -92,10 +93,10 @@ const TargetingPreview = ({ t }) => {
 // зависшим, и человек жмёт повторно или закрывает (владелец 28.09.2026).
 const ExtProgress = ({ wb, n }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 4px' }}>
-    <style>{'@keyframes extSpin { to { transform: rotate(360deg) } }'}</style>
+    <style>{''}</style>
     <span style={{ width: 22, height: 22, borderRadius: '50%', flex: '0 0 22px',
       border: '3px solid var(--accent-tint)', borderTopColor: 'var(--accent)',
-      animation: 'extSpin .8s linear infinite' }} />
+      animation: 'm-spin .8s linear infinite' }} />
     <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <span style={{ fontSize: 13.5, fontWeight: 700 }}>
         {wb ? `Заводим вставки в Weborama (${n})…` : `Выгружаем креативы в DSP (${n} площадок)…`}</span>
@@ -204,6 +205,21 @@ export default function TrafficDashboard() {
   // и два раскрытых сразу уводят реестр за экран — сравнивать всё равно приходится
   // по строкам, а не по расхлопам.
   const [open, setOpen] = useState(null)      // id открытой РК или null
+  // Панель списка прилипла к меню? Подложка нужна только тогда: в обычном положении она закрашивала тень виджетов над ней (18.11.2026)
+  const stickyRef = useRef(null)
+  const [stuck, setStuck] = useState(false)
+  useEffect(() => {
+    const check = () => {
+      const el = stickyRef.current
+      if (!el) return
+      const top = parseFloat(getComputedStyle(el).top) || 0
+      setStuck(el.getBoundingClientRect().top <= top + 0.5 && window.scrollY > 0)
+    }
+    check()
+    window.addEventListener('scroll', check, { passive: true })
+    window.addEventListener('resize', check)
+    return () => { window.removeEventListener('scroll', check); window.removeEventListener('resize', check) }
+  }, [])
   const [detail, setDetail] = useState({})    // id РК → площадки
   // Лог РК (05.11.2026): открыт ли и записи — по id РК; грузится при первом открытии, счётчик до того — из расхлопа
   const [logOpen, setLogOpen] = useState({})
@@ -369,6 +385,7 @@ export default function TrafficDashboard() {
       // Высота липкой шапки: измеряем, но не меньше 58px (её штатная высота) — иначе при нулевом замере строка
       // РК уходит под шапку (11.10.2026, снимок владельца).
       const navH = Math.max(58, ...Array.from(document.querySelectorAll('[data-navbar]')).map(n => n.getBoundingClientRect().height))
+        + (document.querySelector('[data-tp-sticky]')?.getBoundingClientRect().height || 0)   // закреплённая панель списка (18.11.2026)
       const top = el.getBoundingClientRect().top + window.scrollY - navH - 8
       window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
     }, 60)
@@ -682,7 +699,7 @@ export default function TrafficDashboard() {
     <>
       <Head><title>Дашборд · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
-      <div className="tp-dash" style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 28px 60px', fontFamily: UI }}>
+      <div className="tp-dash navy-scr navy-norm" style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 28px 60px', fontFamily: UI }}>
 
         <DashHeader data={data} scope={scope} onScope={setScope} archive={archive} onArchive={() => setArchive(v => !v)}
           mayEdit={mayEdit} isAdmin={isAdmin} noFact={noFact} total={all.length} verifier={verifier} wbBusy={wbBusy}
@@ -727,7 +744,13 @@ export default function TrafficDashboard() {
 
         {/* реестр — v2 (17.11.2026): панель списка, шапка колонок, РК — отдельными карточками */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* Панель списка и шапка колонок закреплены вместе под меню (владелец 18.11.2026); подложка — фон страницы (в NAVY — тот же градиент,
+              fixed, чтобы вокруг не было полосы другого тона). Предупреждение «Факт не боевой» остаётся в потоке. */}
+          <div ref={stickyRef} data-tp-sticky style={{ position: 'sticky', top: 'var(--nav-h, 58px)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10,
+            padding: '6px 0 8px', margin: '-6px 0 -8px', background: stuck ? 'var(--sticky-bg, var(--bg-canvas))' : 'transparent', backgroundAttachment: 'fixed' }}>
           <ListPanel q={q} onQ={setQ} shown={rows.length} total={all.length} tabs={TABS} tab={tab} onTab={setTab} />
+          <RkHead />
+          </div>
 
           {!!(data?.fact_sources || []).length && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
@@ -741,8 +764,6 @@ export default function TrafficDashboard() {
             </div>
           )}
 
-          <RkHead />
-
           {rows.map(r => {
             const d = detail[r.id]
             return (
@@ -754,7 +775,7 @@ export default function TrafficDashboard() {
 
                 {/* Расхлоп v2 (17.11.2026): пульт одной строкой, площадки слева, аналитика справа — тёмной половиной на всю высоту (NAVY: не липкая) */}
                 {open === r.id && (
-                  <div>
+                  <Collapse><div>
                     <RkPult rk={r} d={d} sum={sumOf(r)} mayEdit={mayEdit} mayReport={mayReport} reps={data?.reps}
                       notesCount={rkNotes[r.id] ? rkNotes[r.id].length : (d?.notes_count || 0)} logOpen={!!logOpen[r.id]}
                       onToggleLog={() => toggleLog(r)} onAction={(t, act) => goTo(r, t, act)} onPickTraffic={uid => setTraffic(r, uid)}
@@ -788,7 +809,7 @@ export default function TrafficDashboard() {
                           onWrLinkChange={wl => { setDetail(prev => ({ ...prev, [r.id]: { ...prev[r.id], wr_link: wl } })); loadStat(r.id, grain[r.id] || 'day') }} />
                       </div>
                     </div>
-                  </div>
+                  </div></Collapse>
                 )}
               </div>
             )

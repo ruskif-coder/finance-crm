@@ -34,7 +34,7 @@ const nDeals = (n) => `${n} ${plural(n, ['сделка', 'сделки', 'сде
 const CARD = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const monoLbl = { fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.sec }
 const subLbl = { fontFamily: MONO, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.sec }
-const rise = (d) => ({ animation: `a2rise .4s cubic-bezier(0.22,1,0.36,1) both`, animationDelay: `${d}s` })
+const rise = (d) => ({ animation: `m-rise var(--dur-slow) var(--ease-out) both`, animationDelay: `${d}s` })
 
 function useCountUp(value, ms = 850) {
   const [n, setN] = useState(value)
@@ -123,17 +123,11 @@ export default function Analytics2() {
   const UP = 14, DOWN = 4
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head>
         <title>Аналитика · Продажи | SIMB-AD ERP</title>
       </Head>
       <Navbar active="sales" />
-      <style>{`
-        @keyframes a2rise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes a2up { from { transform:scaleY(0) } to { transform:scaleY(1) } }
-        @media (prefers-reduced-motion: reduce){ [style*="animation"]{ animation:none !important } }
-      `}</style>
-
       <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
         {/* Шапка */}
@@ -286,7 +280,7 @@ export default function Analytics2() {
                           </span>
                         </div>
                         <PixelBar cells={Array.from({ length: 16 }, (_, j) => (j < n ? r.color : EMPTY))}
-                          style={{ animation: 'a2up .55s both', animationDelay: `${ri * 0.05}s`, transformOrigin: 'left' }} />
+                          style={{ animation: 'm-grow-y var(--dur-slow) both', animationDelay: `${ri * 0.05}s`, transformOrigin: 'left' }} />
                       </div>
                     )
                   })}

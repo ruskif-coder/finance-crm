@@ -3,6 +3,7 @@
 // у прежней строки «Сводка»); справа — люди и управление РК, переехавшие из низа правой колонки.
 // Пауза и стоп дублируют кнопки строки РК — осознанно, как на бою.
 import { useState } from 'react'
+import PersonChip from '@/components/PersonChip'
 import { MONO, PortalPopover } from '@/components/salesTableKit'
 import { RunToggle, StopBtn, TaskDoc } from '@/components/traffic/dashboardKit'
 
@@ -75,13 +76,15 @@ function People({ owners, reps, onPick }) {
   const name = owners.traffic || 'не назначен'
   const opts = [{ user_id: null, name: '— не назначен —' }, ...(reps || [])]
   return (
-    <span data-pop-root style={{ position: 'relative', fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', paddingRight: 6,
-      minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={`аккаунт: ${owners.account || 'не назначен'} · трафик: ${owners.traffic || 'не назначен'}`}>
-      акк. <b style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{owners.account || 'не назначен'}</b> · трафик{' '}
-      {owners.can_change_traffic ? (
-        <button type="button" onClick={() => setOpen(o => !o)}
-          style={{ ...plain, fontWeight: 700, color: 'var(--text-primary)', borderBottom: '1px dashed var(--text-faint)' }}>{name} ▾</button>
-      ) : <b style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{name}</b>}
+    // «в 2 этажа с иконкой», как «Команда» в «Моих сделках» (владелец 18.11.2026) — общий PersonChip; трафик меняется кликом по имени
+    <span data-pop-root style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 16, paddingRight: 6, minWidth: 0 }}>
+      <PersonChip role="аккаунт" name={owners.account} />
+      <PersonChip role="трафик" name={owners.traffic}>
+        {owners.can_change_traffic ? (
+          <button type="button" onClick={() => setOpen(o => !o)} title="Сменить трафика"
+            style={{ ...plain, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px dashed var(--text-faint)', whiteSpace: 'nowrap', textAlign: 'left' }}>{name} ▾</button>
+        ) : null}
+      </PersonChip>
       <PortalPopover open={open} align="right" minWidth={200} offset={6}
         style={{ padding: 5, borderRadius: 12, boxShadow: 'var(--shadow-float)' }}>
         {opts.map(o => {
@@ -123,7 +126,8 @@ export default function RkPult({ rk, d, sum, mayEdit, mayReport, reps, notesCoun
       </span>
       <span style={{ flex: `0 0 ${ANALYTICS_W}px`, width: ANALYTICS_W, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
         justifyContent: 'flex-end', gap: 6, padding: '8px 14px', minWidth: 0 }}>
-        <People owners={d?.owners} reps={reps} onPick={onPickTraffic} />
+        {/* люди — к левому краю колонки, кнопки остаются справа (владелец 18.11.2026) */}
+        <span style={{ marginRight: 'auto', minWidth: 0, display: 'inline-flex' }}><People owners={d?.owners} reps={reps} onPick={onPickTraffic} /></span>
         <TaskDoc text={d?.traffic_brief} brief={d?.mp_brief} deal={rk.deal_code} title={rk.deal_title} advertiser={d?.advertiser_label}
           trigger={(openDoc, has) => (
             <button type="button" className="tp-icon" onClick={openDoc} style={iconBtn}

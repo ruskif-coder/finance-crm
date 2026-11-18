@@ -36,7 +36,6 @@ import safeHref from '@/lib/safeHref';
 import { dmy, iso } from '@/lib/readinessApi.mjs';
 import { SCH, BLOCKS, KINDS, NEED_TAG, TONE, blocksForKind, blocksForKinds } from './readinessSchema';
 
-const EASE = 'cubic-bezier(0.22,1,0.36,1)';
 const plural = (n, one, few, many) => `${n} ${pluralWord(n, one, few, many)}`;
 
 /* ═════════ примитивы на ките ═════════ */
@@ -96,7 +95,7 @@ const ClipIcon = () => (
     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
   </svg>
 );
-const rise = delay => ({ animation: `riseIn 0.4s ${EASE} ${delay}s both` });
+const rise = delay => ({ animation: `m-rise var(--dur-slow) var(--ease-out) ${delay}s both` });
 
 /* ═════════ утилиты ═════════ */
 const clone = v => JSON.parse(JSON.stringify(v ?? null));
@@ -1035,10 +1034,10 @@ export default function CounterpartyReadiness({ data, onSaveBlock, onUploadDocum
   return (
     <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '22px 30px 60px', display: 'flex', justifyContent: 'center', background: 'var(--bg-canvas)', fontFamily: SANS, color: 'var(--text-primary)' }}>
       <style>{`
-        @keyframes riseIn { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
+        
         .cr-sitem:hover { background: var(--bg-subtle) }
         @media (max-width: 1023px) { .cr-pair { grid-template-columns: minmax(0,1fr) !important } .cr-slist { grid-template-columns: minmax(0,1fr) !important } .cr-grid { grid-template-columns: repeat(2, minmax(0,1fr)) !important } }
-        @media (prefers-reduced-motion: reduce) { .cr-root * { animation-duration: 1ms !important; animation-delay: 0s !important; transition: none !important } }
+        
       `}</style>
       <div className="cr-root" style={{ width: '100%', maxWidth: 1860, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--text-muted)' }}>

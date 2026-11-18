@@ -21,7 +21,7 @@ const T = {
   emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)', emptyText: 'var(--warning-text)', emptyNum: 'var(--text-disabled)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
 };
 
 const num = v => Math.round(+v || 0).toLocaleString('ru-RU');

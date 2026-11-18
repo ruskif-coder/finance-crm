@@ -146,7 +146,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
 
         {/* режим правки */}
         {editing ? (
-          <div style={{ ...CARD, padding: '16px', animation: 'sheetFade .2s ease both' }}>
+          <div style={{ ...CARD, padding: '16px', animation: 'm-fade var(--dur-base) ease both' }}>
             <div style={{ ...HDR, marginBottom: 14 }}>Редактирование сделки</div>
             <EditField {...ef} label="Название" field="title" type="text" />
             <EditField {...ef} label="Агентство" field="agency_id" clear="— прямой договор —" />
@@ -160,7 +160,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
           </div>
         ) : (<>
         {tab === 'overview' && (
-          <div key="ov" style={{ display: 'flex', flexDirection: 'column', gap: 12, animation: 'sheetFade .24s ease both' }}>
+          <div key="ov" style={{ display: 'flex', flexDirection: 'column', gap: 12, animation: 'm-fade var(--dur-base) ease both' }}>
             {/* поля */}
             <div style={{ ...CARD, padding: '4px 16px 8px' }}>
               <Row k="Агентство" v={d.agency} />
@@ -196,7 +196,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
           </div>
         )}
         {tab === 'finance' && (
-          <div style={{ ...CARD, padding: '4px 16px 8px', animation: 'sheetFade .24s ease both' }}>
+          <div style={{ ...CARD, padding: '4px 16px 8px', animation: 'm-fade var(--dur-base) ease both' }}>
             <Row k="Сумма с НДС" v={`${rub(withVat)} ₽`} strong />
             <Row k="Без НДС" v={`${rub(d.amount)} ₽`} strong />
             <Row k="Услуга" v={productWithSurface(d.product, d.inventory) || d.product} />
@@ -248,7 +248,7 @@ function DealCard({ d, onOpen, canEdit, expanded, onToggle }) {
       </div>
       {/* развёрнутая часть */}
       {expanded && (
-        <div style={{ animation: 'sheetFade .2s ease both' }}>
+        <div style={{ animation: 'm-fade var(--dur-base) ease both' }}>
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-row)', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px', fontSize: 12.5 }}>
             <span style={{ color: 'var(--text-muted)' }}>Аккаунт</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager || '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>Контрагент</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.payer || '—'}</span>

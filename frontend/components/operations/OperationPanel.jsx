@@ -39,11 +39,10 @@ const STYLE = `
 .opp-v { display:flex; flex-wrap:wrap; column-gap:6px; align-items:baseline; min-width:0 }
 .opp-sec { display:flex; flex-direction:column; gap:2px; padding:14px 0; border-top:1px solid var(--border-inner) }
 .opp-no { color:var(--text-disabled); font-weight:700; cursor:not-allowed; border-bottom:1px dashed var(--text-disabled) }
-.opp-sk { display:block; height:12px; border-radius:6px; background:linear-gradient(90deg,var(--bg-subtle),var(--border-inner),var(--bg-subtle)); background-size:200% 100%; animation:oppSk 1.2s linear infinite }
-@keyframes oppSk { from { background-position:200% 0 } to { background-position:-200% 0 } }
-@keyframes oppIn { from { transform:translateX(24px); opacity:0 } to { transform:none; opacity:1 } }
-@keyframes oppBar { from { transform:scaleX(0) } to { transform:none } }
-@media (prefers-reduced-motion: reduce) { .opp * { animation-duration:1ms !important } }`;
+
+
+
+`;
 
 const Row = ({ k, children }) => <div className="opp-row"><span className="k">{k}</span><span className="opp-v">{children}</span></div>;
 const Muted = ({ children }) => <span style={{ color: 'var(--text-muted)' }}>{children}</span>;
@@ -88,9 +87,9 @@ export default function OperationPanel({ op, error, now, hasPrev, hasNext, onPre
     </div>);
   else if (!op) body = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 18 }} aria-busy="true">
-      <span className="opp-sk" style={{ width: '70%', height: 40, borderRadius: 12 }} />
-      <span style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>{[0, 1, 2].map(i => <span key={i} className="opp-sk" style={{ height: 62, borderRadius: 12 }} />)}</span>
-      {['40%', '85%', '60%', '75%'].map(w => <span key={w} className="opp-sk" style={{ width: w }} />)}
+      <span className="m-skeleton" style={{ width: '70%', height: 40, borderRadius: 12 }} />
+      <span style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>{[0, 1, 2].map(i => <span key={i} className="m-skeleton" style={{ height: 62, borderRadius: 12 }} />)}</span>
+      {['40%', '85%', '60%', '75%'].map(w => <span key={w} className="m-skeleton" style={{ width: w }} />)}
       <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>загружаем пакет, документы и оплаты…</span>
     </div>);
   else {
@@ -127,7 +126,7 @@ export default function OperationPanel({ op, error, now, hasPrev, hasNext, onPre
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>«{op.upd.comment}»</span></div>)}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingTop: 10 }}>
           <div style={{ height: 8, borderRadius: 4, background: 'var(--border-inner)', display: 'flex', overflow: 'hidden' }}>
-            {pays.map((p, i) => <span key={i} title={date(p.at) + ' · ' + money(p.amount)} style={{ width: `${p.amount / op.amount * 100}%`, background: i % 2 ? 'var(--income-fg)' : 'var(--income)', transformOrigin: 'left', animation: `oppBar 0.55s cubic-bezier(0.22,1,0.36,1) ${0.1 + i * 0.03}s both` }} />)}</div>
+            {pays.map((p, i) => <span key={i} title={date(p.at) + ' · ' + money(p.amount)} style={{ width: `${p.amount / op.amount * 100}%`, background: i % 2 ? 'var(--income-fg)' : 'var(--income)', transformOrigin: 'left', animation: `m-grow-x var(--dur-slow) var(--ease-out) ${0.1 + i * 0.03}s both` }} />)}</div>
           <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)' }}><span>{paid ? `${out ? 'списано' : 'оплачено'} ${Math.round(paid / op.amount * 100)} %` : 'оплат ещё не было'}</span><Mono>{rest > 0 ? 'осталось ' + money(rest) : 'закрыто'}</Mono></span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', paddingTop: 6 }}>
@@ -191,7 +190,7 @@ export default function OperationPanel({ op, error, now, hasPrev, hasNext, onPre
   }
 
   return (
-    <aside className="opp" role="dialog" aria-label="Операция" style={{ width: 560, boxSizing: 'border-box', background: 'var(--bg-card)', borderLeft: '1px solid var(--border-card)', boxShadow: 'var(--shadow-float)', padding: '20px 26px 28px', display: 'flex', flexDirection: 'column', minHeight: '100%', animation: 'oppIn 0.32s cubic-bezier(0.22,1,0.36,1) both' }}>
+    <aside className="opp" role="dialog" aria-label="Операция" style={{ width: 560, boxSizing: 'border-box', background: 'var(--bg-card)', borderLeft: '1px solid var(--border-card)', boxShadow: 'var(--shadow-float)', padding: '20px 26px 28px', display: 'flex', flexDirection: 'column', minHeight: '100%', animation: 'm-slide var(--dur-slow) var(--ease-out) both' }}>
       <style>{STYLE}</style>{head}{body}
     </aside>);
 }

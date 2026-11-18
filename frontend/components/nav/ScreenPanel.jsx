@@ -33,7 +33,7 @@ function Row({ it, i, n, isDir, current, focused, pinned, full, onGo, onPin }) {
         height: ROW, boxSizing: 'border-box', padding: '0 11px', borderRadius: 10, whiteSpace: 'nowrap', fontSize: 13,
         background: current ? 'var(--accent-tint)' : focused ? 'var(--bg-subtle)' : 'transparent',
         fontWeight: current ? 700 : 600, color: current ? 'var(--accent-fg)' : 'var(--text-primary)',
-        animation: `nav3Rise 300ms ${EASE} ${(n - 1 - i) * 26}ms both` }}>
+        animation: `m-rise var(--dur-slow) ${EASE} ${(n - 1 - i) * 26}ms both` }}>
       {isDir || !it.icon
         ? <span style={{ flex: '0 0 7px', width: 7, height: 7, margin: '0 4px', borderRadius: 2, background: current ? 'var(--accent)' : 'var(--border-hover)' }} />
         : <span style={{ flex: '0 0 16px', display: 'inline-flex', color: current ? 'var(--accent)' : 'var(--text-muted)' }}><Ico d={it.icon} /></span>}

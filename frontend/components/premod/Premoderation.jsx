@@ -99,7 +99,7 @@ export default function Premoderation({ data, onDecide, onBulkApprove, onOpenSna
       <div style={{ width: '100%', maxWidth: 2500, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* шапка */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', animation: 'pmRise 0.4s cubic-bezier(0.22,1,0.36,1) both' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', animation: 'm-rise var(--dur-slow) var(--ease-out) both' }}>
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>Премодерация</span>
@@ -121,7 +121,7 @@ export default function Premoderation({ data, onDecide, onBulkApprove, onOpenSna
           <span style={{ marginLeft: 'auto', width: 340 }}><input className="pm-in" value={q} onChange={e => setQ(e.target.value)} placeholder="⌕  Заказчик, ИНН, ЕРИД или crid" aria-label="Поиск" /></span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '500px minmax(0,1fr)', gap: 14, alignItems: 'start', animation: 'pmRise 0.4s cubic-bezier(0.22,1,0.36,1) 0.07s both' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '500px minmax(0,1fr)', gap: 14, alignItems: 'start', animation: 'm-rise var(--dur-slow) var(--ease-out) 0.07s both' }}>
           {/* ═════ очередь ═════ */}
           <Card style={{ padding: '12px 12px 10px', display: 'flex', flexDirection: 'column', gap: 6, position: 'sticky', top: 14, maxHeight: 'calc(100vh - 110px)', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 6px 4px' }}>
@@ -130,7 +130,7 @@ export default function Premoderation({ data, onDecide, onBulkApprove, onOpenSna
             </div>
             <div style={{ padding: '0 4px 2px' }}><Segmented inCard value={groupBy} onChange={setGroupBy} options={[['adv', 'по рекламодателям'], ['place', 'по площадкам']]} /></div>
             {mSel.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 4px', padding: '7px 10px', borderRadius: 10, background: 'var(--accent-tint)', border: '1px solid var(--accent-border)', animation: 'pmPop 0.16s cubic-bezier(0.22,1,0.36,1) both' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 4px', padding: '7px 10px', borderRadius: 10, background: 'var(--accent-tint)', border: '1px solid var(--accent-border)', animation: 'm-zoom var(--dur-base) var(--ease-out) both' }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent-fg)' }}>Отмечено {mSel.length}{mSel.length > mClean.length ? ' · с нарушениями ' + (mSel.length - mClean.length) : ''}</span>
                 <span role="button" tabIndex={0} onClick={() => setMulti({})} style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', cursor: 'pointer' }}>снять</span>
                 <Btn kind="p" disabled={!mClean.length || !data.can_decide} title={mSel.length > mClean.length ? 'С нарушениями останутся в очереди: ' + mSel.filter(x => !mClean.includes(x)).map(x => A[x.advertiser].short + ' ' + (x.size || x.size_guess)).join(', ') : 'Все отмеченные без нарушений'}
@@ -183,7 +183,7 @@ export default function Premoderation({ data, onDecide, onBulkApprove, onOpenSna
       </div>
 
       {rej.open && p && <RejectModal data={data} p={p} adv={adv} checks={checks} v={v} rej={rej} setRej={setRej} onSubmit={decline} />}
-      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 150, background: 'var(--text-primary)', color: 'var(--bg-card)', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'pmRise 0.24s cubic-bezier(0.22,1,0.36,1) both', zIndex: Z.toast }}>{toast}</div>}
+      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 150, background: 'var(--text-primary)', color: 'var(--bg-card)', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: Z.toast }}>{toast}</div>}
     </div>
   );
 }
@@ -445,7 +445,7 @@ function RejectModal({ data, p, adv, checks, v, rej, setRej, onSubmit }) {
     return <span key={code} role="button" tabIndex={0} onClick={() => setRej(s => ({ ...s, code }))} style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', borderRadius: 9, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, background: on ? 'var(--danger-tint)' : 'var(--bg-card)', color: on ? 'var(--danger-fg)' : 'var(--text-secondary)', border: `1px solid ${on ? 'var(--danger-border)' : 'var(--border-card)'}` }}>{byCode[code].label}</span>; };
   return (<>
     <div {...overlayClose(() => setRej(s => ({ ...s, open: false })))} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: Z.overlay }} />
-    <div role="dialog" aria-modal="true" style={{ ...card, position: 'fixed', left: 'calc(50% - 340px)', top: '9vh', width: 680, /* не transform: его затирает анимация pmPop */ maxHeight: '82vh', overflow: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12, zIndex: Z.overlay + 1, boxShadow: 'var(--shadow-float)', animation: 'pmPop 0.18s cubic-bezier(0.22,1,0.36,1) both' }}>
+    <div role="dialog" aria-modal="true" style={{ ...card, position: 'fixed', left: 'calc(50% - 340px)', top: '9vh', width: 680, /* не transform: его затирает анимация m-zoom */ maxHeight: '82vh', overflow: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12, zIndex: Z.overlay + 1, boxShadow: 'var(--shadow-float)', animation: 'm-zoom var(--dur-base) var(--ease-out) both' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ fontSize: 17, fontWeight: 800 }}>Отклонить {v.nChecked} из {p.requests.length}</span><span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{adv.short} · {p.size || p.size_guess}</span>
         <span role="button" tabIndex={0} aria-label="Закрыть" onClick={() => setRej(s => ({ ...s, open: false }))} style={{ marginLeft: 'auto', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>×</span></div>
       {suggest.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><Cap>по найденным нарушениям</Cap><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{suggest.map(chip)}</span></div>}

@@ -8,6 +8,8 @@
 import { useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { MONO } from '@/components/salesTableKit'
+import { contrastTone, useThemeKey } from '@/lib/theme'
+import PersonChip from '@/components/PersonChip'
 import BusyAct from '@/components/BusyAct'
 import ReportDates, { reportUrl } from '@/components/ReportDates'
 import { downloadMp } from '@/lib/mpDownload'
@@ -65,17 +67,14 @@ function Team({ team, column }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '10px 18px', borderTop: '1px solid var(--border-inner)', flexWrap: 'wrap' }}>
       <span style={CAP}>Команда</span>
-      {team.map(([role, name]) => (
-        <span key={role} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <span style={AV}>{ini(name)}</span>
-          <span style={{ display: 'flex', flexDirection: 'column' }}><span style={{ ...CAP, fontSize: 8.5 }}>{role}</span>
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: name ? 'var(--text-primary)' : 'var(--text-faint)' }}>{name || 'не назначен'}</span></span>
-        </span>))}
+      {team.map(([role, name]) => <PersonChip key={role} role={role} name={name} />)}
     </div>
   )
 }
 
-const ROW_BOX = { display: 'flex', alignItems: 'center', gap: 8, ...BOX, padding: '8px 10px', background: 'var(--bg-card)' }
+// Плашка документа: фон и рамка — переменными; в тёмной колонке NAVY плашка на тон светлее фона (владелец 18.11.2026: «чуть выделить»)
+const ROW_BOX = { display: 'flex', alignItems: 'center', gap: 8, ...BOX, padding: '8px 10px', background: 'var(--acc-doc-bg, var(--bg-card))',
+  borderColor: 'var(--acc-doc-bd, var(--border-inner))' }
 
 function Docs({ d, now, links }) {
   const mp = (d.our_mps || [])[0]
@@ -136,7 +135,7 @@ function Docs({ d, now, links }) {
   )
 }
 
-function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide, tight }) {
+function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide, tight, tone }) {
   const hot = row.urgency === 'overdue'
   const code = row.code || row.id
   // В кампании отставание и площадки уже в показателях — под ними только «осталось N дн.» (макет v5, владелец 13.11.2026).
@@ -151,7 +150,7 @@ function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide
   const prio = now?.flow === 'приоритезация'
   const goOn = now?.slot === 'prep' && !now.external_launch ? (hh.startsWith('#') ? `/sales/deals/${code}${hh}` : hh) : null
   return (
-    <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12, flex: tight ? 'none' : 1 }}>
+    <div data-tone={tone} data-acc-now="" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12, flex: tight ? 'none' : 1 }}>
       {now ? <Steps steps={now.steps} at={now.at} /> : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{err || 'Загрузка…'}</span>}
       {/* Сборка — в виде блока ОРД; итоговая сверка — компактный блок по хендоффу design_handoff_final_recon (14.11.2026) */}
       {now?.slot === 'prep' && <AssemblyNow now={now} code={code} hot={hot} cols={tight ? 2 : 4} dealId={row.id} canEdit={canEdit} onDone={onReload} />}
@@ -188,10 +187,10 @@ function NowBody({ now, err, row, d, canEdit, onAction, onSnooze, onReload, wide
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: tight ? 0 : 'auto' }}>
-        {goOn && <a href={goOn} target="_blank" rel="noopener noreferrer" style={{ height: 32, padding: '0 16px', borderRadius: 9, background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700,
+        {goOn && <a href={goOn} target="_blank" rel="noopener noreferrer" data-act="" style={{ height: 32, padding: '0 16px', borderRadius: 9, background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700,
           display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Продолжить сборку →</a>}
         {/* у приоритезации «Запустить / Дозапустить» — в блоке площадок; кнопка строки «раскрыть» здесь свернула бы расхлоп */}
-        {a && !goOn && now?.slot !== 'recon' && !now?.external_launch && !(prio && a.do === 'expand') && <button type="button" onClick={() => onAction(row, a)} disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
+        {a && !goOn && now?.slot !== 'recon' && !now?.external_launch && !(prio && a.do === 'expand') && <button type="button" data-act="" onClick={() => onAction(row, a)} disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
           style={{ height: 32, padding: '0 16px', borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>}
         <button type="button" onClick={() => onSnooze(row)} style={{ marginLeft: 'auto', height: 32, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border-card)',
           background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>⏱ Отложить</button>
@@ -219,11 +218,16 @@ export default function DealNow({ row, deal, canEdit, onAction, onSnooze, onRelo
 
   const d = deal || row
   const code = row.code || row.id
-  const team = [['сейлз', d.sales_rep], ['аккаунт', d.account_manager], ['трафик', d.traffic_manager]]
+  // Полные имена — из строки очереди (`account-queue`); карточка сделки отдаёт сокращённые «Денис Г.» (владелец 18.11.2026: «пиши полностью»)
+  const team = [['сейлз', row.sales_rep || d.sales_rep], ['аккаунт', row.account_manager || d.account_manager], ['трафик', row.traffic_manager || d.traffic_manager]]
   // Пиктограммы — из хендоффа v5 (бриф — планшет, отчёт — столбики, карточка — «открыть в новой вкладке»).
   const links = [['Бриф клиента', `/sales/deals/${code}#sec-traffic-brief`, ICON.brief],
     ['Отчёт по РК', `/traffic/campaign/${code}`, ICON.report], ['Открыть карточку сделки', `/sales/deals/${code}`, ICON.card]]
-  const body = <NowBody now={now} err={err} row={row} d={d} canEdit={canEdit} onAction={onAction} onSnooze={onSnooze} onReload={onReload || (() => {})} wide={wide && !modal} tight={modal} />
+  // NAVY (README §2 хендоффа design_handoff_account_navy): «Сейчас» днём — тёмный блок, ночью — светлый; «История» и «Медиаплан» ночью тёмные
+  const theme = useThemeKey()
+  const nowTone = modal ? undefined : contrastTone(theme)
+  const sideTone = !modal && theme === 'navy-dark' ? 'dark' : undefined
+  const body = <NowBody now={now} err={err} row={row} d={d} canEdit={canEdit} onAction={onAction} onSnooze={onSnooze} onReload={onReload || (() => {})} wide={wide && !modal} tight={modal} tone={nowTone} />
 
   if (modal) {
     return (
@@ -241,14 +245,16 @@ export default function DealNow({ row, deal, canEdit, onAction, onSnooze, onRelo
   }
   return (
     // Продолжение раскрытой строки (`QueueRow`): та же ширина и рамка, верх — граница со строкой, скругления снизу (17.11.2026)
-    <div style={{ margin: '0 0 10px', display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.05fr)', border: '1px solid var(--border-card)',
-      borderTop: '1px solid var(--border-inner)', borderRadius: '0 0 12px 12px', background: 'var(--bg-card)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+    // NAVY — без отступа, рамки и скругления, фон общий со строкой, черта только снизу (README §3): переменные задаёт .acc-dash в navy.css
+    <div style={{ margin: 'var(--acc-exp-m, 0 0 10px)', display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.05fr)',
+      border: 'var(--acc-exp-bd, 1px solid var(--border-card))', borderTop: 'var(--acc-exp-bdt, 1px solid var(--border-inner))', borderBottom: '1px solid var(--border-card)',
+      borderRadius: 'var(--acc-exp-r, 0 0 12px 12px)', background: 'var(--acc-exp-bg, var(--bg-card))', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
       <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-inner)' }}>
         {body}
         <Team team={team} />
       </div>
-      <div style={{ padding: '14px 18px', borderRight: '1px solid var(--border-inner)', minWidth: 0 }}><History hist={hist} code={code} limit={5} /></div>
-      <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}><Docs d={d} now={now} links={links} /></div>
+      <div data-tone={sideTone} style={{ padding: '14px 18px', borderRight: '1px solid var(--border-inner)', minWidth: 0, background: sideTone ? 'var(--bg-card)' : undefined }}><History hist={hist} code={code} limit={5} /></div>
+      <div data-tone={sideTone} style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, background: sideTone ? 'var(--bg-card)' : undefined }}><Docs d={d} now={now} links={links} /></div>
     </div>
   )
 }

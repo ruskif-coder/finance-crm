@@ -54,8 +54,9 @@ export default function EfficiencyRow({ eff }) {
   const warns = [skWarn, t.missing_cost.length ? `Нет себестоимости: ${t.missing_cost.join(', ')} — ни введённой на сверке, ни факта показов для оценки; прибыль пакета не считается` : ''].filter(Boolean)
   return (
     <>
-      <div style={{ ...GRID, background: 'var(--bg-tint)', border: '1px solid var(--accent-border)' }}>
-        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingRight: 14, borderRight: '1px solid var(--accent-border)' }}>
+      {/* NAVY: мягкая подложка --soft-* днём и ночью (README §2); без неё — как было */}
+      <div style={{ ...GRID, background: 'var(--soft-bg, var(--bg-tint))', border: '1px solid var(--soft-bd, var(--accent-border))' }}>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingRight: 14, borderRight: '1px solid var(--soft-bd, var(--accent-border))' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--accent-fg)' }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Эффективность
           </span>

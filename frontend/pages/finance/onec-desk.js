@@ -179,7 +179,7 @@ export default function OnecDeskPage() {
   if (access === 'denied') return <NoAccessScreen title="Закрывающие документы: нет доступа" what="Закрывающие документы" nav={head} />
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       {head}
       {!!err && <div style={{ maxWidth: 2500, margin: '12px auto 0', padding: '0 30px', fontSize: 13, color: 'var(--danger-fg)', fontFamily: UI }}>{err}</div>}
       {data

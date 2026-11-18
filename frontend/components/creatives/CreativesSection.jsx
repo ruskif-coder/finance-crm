@@ -19,7 +19,7 @@ export const T = {
   danger: 'var(--danger-fg)', dangerSoft: 'var(--danger)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
 };
 
 /** Статус площадки внутри креатива: фон · текст · рамка. */
@@ -161,13 +161,13 @@ export function CreativesBrief({ creatives = [], onPreview, onDownload, renderAi
   return (
     <div style={{ fontFamily: T.sans, color: T.t1 }}>
       <style>{`
-        @keyframes popIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
+        
+        
         .cs-row:hover { background:${T.subtle} }
         .cs-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
       `}</style>
 
-        <div style={{ display: 'flex', flexDirection: 'column', animation: `popIn .2s ${T.ease} both` }}>
+        <div style={{ display: 'flex', flexDirection: 'column', animation: `m-drop var(--dur-base) ${T.ease} both` }}>
           <div style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 16, padding: '0 6px 8px', borderBottom: `1px solid ${T.border}`, ...colHead }}>
             <span>Креатив</span><span style={alignRight}>Согласовано</span>
             <span>Готовность площадок</span><span>Материалы</span>
@@ -269,12 +269,12 @@ export default function CreativesSection({
     <section style={{
       background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow, borderRadius: 18,
       padding: '20px 24px 18px', display: 'flex', flexDirection: 'column', gap: 12,
-      fontFamily: T.sans, color: T.t1, animation: `riseIn .4s ${T.ease} .21s both`,
+      fontFamily: T.sans, color: T.t1, animation: `m-rise var(--dur-slow) ${T.ease} .21s both`,
     }}>
       <style>{`
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes popIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
+        
+        
+        
         .cs-row:hover { background:${T.subtle} }
         .cs-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
         .cs-primary:hover { background:${T.accentHover} }

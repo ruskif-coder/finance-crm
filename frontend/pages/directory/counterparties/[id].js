@@ -344,13 +344,13 @@ export default function CounterpartyCard() {
 
   // ─────────────────────────────────────────────────────────────────────────
   if (loading) return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Navbar />
       <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>Загрузка…</div>
     </div>
   )
   if (error) return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Navbar />
       <div style={{ padding: 60, textAlign: 'center', color: 'var(--dot-overdue)', fontSize: 14 }}>{error}</div>
     </div>
@@ -365,7 +365,7 @@ export default function CounterpartyCard() {
   // ── МОБИЛЬНАЯ ВЕРСИЯ ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
         <Head><title>{card.name} · контрагент | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <CounterpartyCardMobile
@@ -386,7 +386,7 @@ export default function CounterpartyCard() {
     // условия. Ширина до 1600 и прижато к левому краю — как карточка договора (владелец 28.10.2026).
     const showPlan = () => { setOpFilter('plan'); setOpMonth(null); setOpQ('') }
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
         <Head><title>{card.name} · контрагент | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <div style={{ boxSizing: 'border-box', padding: '22px 28px 40px' }}>

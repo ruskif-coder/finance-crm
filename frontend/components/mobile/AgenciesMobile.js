@@ -30,7 +30,7 @@ function AgCard({ a, open, onToggle, onEdit, canEdit }) {
         </div>
       </div>
       {open && (
-        <div style={{ ...rise(0, '.24s'), marginTop: 10 }}>
+        <div style={{ ...rise(0), marginTop: 10 }}>
           <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '2px 12px' }}>
             {[
               ['Английское', a.name_en || '—'],

@@ -25,7 +25,7 @@ const CAP = { fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.1
 const preset = (on) => ({ display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 14px', borderRadius: 10,
   background: on ? 'var(--accent)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
   color: on ? 'var(--bg-card)' : 'var(--text-secondary)', fontFamily: MONO, fontSize: 12.5, fontWeight: 700,
-  cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease' })
+  cursor: 'pointer', transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease' })
 const ghost = { display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 16px', borderRadius: 12,
   background: 'var(--bg-card)', border: '1px solid var(--border-card)', fontSize: 13, fontWeight: 600,
   color: 'var(--text-secondary)', cursor: 'pointer' }

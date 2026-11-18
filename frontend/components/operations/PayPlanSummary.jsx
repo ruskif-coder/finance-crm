@@ -14,8 +14,8 @@ import { plural } from '@/lib/publisherRecon.mjs'
 
 const CAP = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const COL = { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }
-const RISE = 'opRise .4s cubic-bezier(0.22,1,0.36,1) both'
-const GROW = { transformOrigin: 'left', animation: 'ppGrow .55s cubic-bezier(0.22,1,0.36,1) both' }
+const RISE = 'm-rise var(--dur-slow) var(--ease-out) both'
+const GROW = { transformOrigin: 'left', animation: 'm-grow-x var(--dur-slow) var(--ease-out) both' }
 
 // Цвет статьи — по месту в списке (самая крупная первая): так статьи макета получают свои цвета, а новая статья — свой.
 const ART_DOT = ['var(--accent)', 'var(--income)', 'var(--violet-fg)', 'var(--bank-sovkom)', 'var(--warning)', 'var(--bank-opt)', 'var(--danger)']
@@ -198,7 +198,7 @@ export default function PayPlanSummary({ data, filter, onFilter }) {
   return (
     <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', fontFamily: UI }}>
       <style>{`
-        @keyframes ppGrow { from { transform:scaleX(0) } to { transform:scaleX(1) } }
+        
         .pp-pick:hover { color: var(--accent) !important; }
         .pp-row:hover { background: var(--bg-subtle) !important; }
         .pp-pin:hover { border-color: var(--border-hover) !important; }

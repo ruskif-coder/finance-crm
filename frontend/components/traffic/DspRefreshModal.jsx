@@ -89,7 +89,7 @@ export default function DspRefreshModal({ row, auth, onClose, onDone }) {
         <div style={{ margin: '6px 0 12px' }}>
           <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
             <div style={{ width: `${pct}%`, height: '100%', background: res?.failed?.length ? 'var(--warning-text)' : 'var(--accent)',
-              transition: 'width .35s ease' }} />
+              transition: 'width var(--dur-slow) ease' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
             {busy && <Cube variant="spinner" size={12} />}

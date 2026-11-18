@@ -3,6 +3,7 @@
  * (код, сделки, сумма, контрагент, договор, период, «что сделать», действие), остальные — компактным списком «без вашего участия».
  * «Ждут оплату» — сводка: пакеты, сделки, сумма. Действие — `PackAction` (шаг реестра или «что сделать»).
  */
+import { STICKY_TOP } from '@/components/accounts/deals/TurnGroups'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MONO } from '@/components/salesTableKit'
@@ -87,7 +88,7 @@ export default function PackBoard({ packs, picked, canEdit, onReload }) {
         const n = { mine: mineL.length, wait: rest.length }
         return (
           <div key={st.key} style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-            <div style={{ position: 'sticky', top: 64, zIndex: 5, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14, padding: '10px 14px', boxShadow: 'var(--shadow-card)' }}>
+            <div style={{ position: 'sticky', top: STICKY_TOP, zIndex: 5, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14, padding: '10px 14px', boxShadow: 'var(--shadow-card)' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                 <b style={{ fontSize: 14 }}>{st.label}</b>
                 <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>{list.length}</span>

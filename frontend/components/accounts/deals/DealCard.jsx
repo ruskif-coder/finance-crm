@@ -126,7 +126,7 @@ export default function DealCard({ row: r, canEdit, onOpen, onAction, onSnooze }
       </div>
       <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
         {a ? <button type="button" onClick={() => onAction(r, a)} disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
-          style={{ flex: 1, height: 32, borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>
+          data-act="" style={{ flex: 1, height: 32, borderRadius: 9, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>{a.label}</button>
           : <span style={{ flex: 1, height: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--text-faint)' }}>{r.action_note || 'действий нет'}</span>}
         <button type="button" onClick={() => onSnooze(r)} title="Отложить" aria-label="Отложить"
           style={{ width: 32, height: 32, borderRadius: 9, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>⏱</button>

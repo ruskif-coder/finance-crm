@@ -14,6 +14,7 @@
 Сбой функции НЕ роняет вызвавшее действие: вердикт и старт уже записаны, ночной прогон остаётся страховкой.
 """
 import logging
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -77,6 +78,24 @@ def refresh_volumes_now(db: Session, deal_id: int, *, client=None, sync_dsp: boo
     if sync_dsp:
         out["limits"] = push_limits(db, camp, client)
     return out
+
+
+def replan_now(db: Session, deal_id: Optional[int]) -> Optional[dict]:
+    """Медиаплан сделки сохранён — план РК из него и, если он сдвинулся, раскладка и лимиты в DSP (владелец 18.11.2026).
+    Не падает: план уже записан, утренний и ночной прогоны остаются страховкой."""
+    if not deal_id:
+        return None
+    try:
+        res = build.replan_deal(db, deal_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("План РК сделки %s после правки медиаплана не обновлён: %s", deal_id, e)
+        return {"error": str(e)}
+    if not res:
+        return res
+    # Пересборка площадок и лимитов — и когда числа плана те же: сменили поверхность или услугу — меняются веса и доли
+    # (18.11.2026; раньше ждали ночного прогона). Лимиты в DSP уходят только сдвинувшиеся (`dsp.limits.sync_limits`).
+    return {**res, "volumes": refresh_volumes_now(db, deal_id)}
 
 
 def preview_note() -> str:

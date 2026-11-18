@@ -13,7 +13,7 @@ export { MONO, SANS };
 /* ── стили страницы (подключаются один раз) ── */
 export const STYLE = `
 /* Классы — «acc-», не «ad-» (16.11.2026): блокировщики рекламы прячут [class^=ad-], и у части машин экран был пуст */
-.acc-root { --acc-rise: adRise 0.4s cubic-bezier(0.22,1,0.36,1) both; font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
+.acc-root { --acc-rise: m-rise var(--dur-slow) var(--ease-out) both; font-family:${SANS}; color:var(--text-primary); -webkit-font-smoothing:antialiased }
 .acc-root a { color:var(--accent); text-decoration:none } .acc-root a:hover { color:var(--accent-hover); text-decoration:underline }
 .acc-cap { font-family:${MONO}; font-size:10.5px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-cap) }
 .acc-btn { display:inline-flex; align-items:center; gap:6px; height:34px; box-sizing:border-box; padding:0 14px; border:1px solid var(--border-card); background:var(--bg-card); border-radius:12px; font:600 13px ${SANS}; color:var(--text-secondary); white-space:nowrap; cursor:pointer; user-select:none }
@@ -25,9 +25,9 @@ export const STYLE = `
 .acc-in.mono { font-family:${MONO}; font-weight:500 } .acc-in:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint) } .acc-in::placeholder { color:var(--text-disabled); font-weight:500 }
 .acc-row:hover { background:var(--bg-subtle) }
 .acc-copy { cursor:copy } .acc-copy:hover { border-color:var(--accent-border) !important }
-@keyframes adRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-@keyframes adPop { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-@media (prefers-reduced-motion: reduce) { .acc-root * { animation-duration:1ms !important; animation-delay:0s !important } }
+
+
+
 `;
 
 /* ── примитивы ── */

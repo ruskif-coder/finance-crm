@@ -46,8 +46,7 @@ export default function ValuePopover({ anchor, title, dealLabel, options, value,
       <div ref={boxRef} style={{ position: 'fixed', left: x, top: y, width: W, zIndex: Z_BOX, background: 'var(--bg-card)',
         border: '1px solid var(--border-card)', borderRadius: 16, overflow: 'hidden',
         boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)',
-        animation: 'vpRise .22s cubic-bezier(0.22,1,0.36,1) both', fontFamily: "'Manrope', system-ui, sans-serif" }}>
-        <style>{`@keyframes vpRise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}`}</style>
+        animation: 'm-rise var(--dur-base) var(--ease-out) both', fontFamily: "'Manrope', system-ui, sans-serif" }}>
         <div style={{ padding: '10px 10px 8px', borderBottom: '1px solid var(--border-inner)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>

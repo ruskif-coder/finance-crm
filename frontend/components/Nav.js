@@ -37,7 +37,7 @@ export const T = {
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
   bp: 1024,
 }
 
@@ -207,7 +207,7 @@ export function NotifyRow({ n, onOpen, onDismiss }) {
           ...btnReset, width: 24, height: 24, margin: '6px 6px 0 0', flex: '0 0 24px',
           borderRadius: 6, display: 'inline-flex', alignItems: 'center',
           justifyContent: 'center', cursor: 'pointer', color: T.t4, fontSize: 15,
-          lineHeight: 1, opacity: hover ? 1 : 0, transition: 'opacity .12s',
+          lineHeight: 1, opacity: hover ? 1 : 0, transition: 'opacity var(--dur-fast)',
         }}>×</button>
     )}
     </div>
@@ -484,7 +484,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
         <span style={{
           position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 280, zIndex: Z.dropdown,
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: T.pop,
-          overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `popIn .15s ${T.ease} both`,
+          overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `m-drop var(--dur-fast) ${T.ease} both`,
         }}>
           <span style={{ padding: '11px 14px', borderBottom: `1px solid ${T.inner}` }}>
             <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: T.t1 }}>{name || '—'}</span>
@@ -566,7 +566,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36,
           border: `1px solid ${menu ? T.accentBorder : T.border}`, background: menu ? T.accentTint : T.card,
           borderRadius: 10, color: menu ? T.accent : T.t2, flex: '0 0 36px', cursor: 'pointer',
-          transition: 'background-color 150ms ease, color 150ms ease',
+          transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
         }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
             <path d={menu ? 'M6 6l12 12M18 6L6 18' : 'M4 7h16M4 12h16M4 17h16'} />
@@ -619,7 +619,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
         <div style={{
           position: 'fixed', left: 0, right: 0, top: menuTop, bottom: 0, zIndex: 50, background: T.card,
           padding: '12px 14px 18px', display: 'flex', flexDirection: 'column', gap: 8,
-          overflowY: 'auto', animation: `popIn .2s ${T.ease} both`,
+          overflowY: 'auto', animation: `m-drop var(--dur-base) ${T.ease} both`,
         }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '0 2px 2px' }}>
             <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t3 }}>Все разделы</span>
@@ -645,7 +645,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
                 </button>
 
                 {open && (
-                  <div style={{ display: 'flex', flexDirection: 'column', padding: '4px 8px 8px', background: T.card, animation: `popIn .18s ${T.ease} both` }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', padding: '4px 8px 8px', background: T.card, animation: `m-drop var(--dur-base) ${T.ease} both` }}>
                     {allowedItems(s, perms, isAdmin).map(it => {
                       const isActiveItem = active && active.item.href === it.href
                       return (
@@ -735,8 +735,8 @@ export default function Nav({ children, onSearch, asPath }) {
   return (
     <>
       <style>{`
-        @keyframes popIn { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important } }
+        
+        
         .nav-item:hover { background:${T.subtle} }
         .nav-icon:hover { background:${T.subtle}; color:${T.accent} }
         /* Колокольчик мигает, пока есть непоказанное (владелец 15.09.2026). Признак
@@ -745,15 +745,10 @@ export default function Nav({ children, onSearch, asPath }) {
            Общее правило prefers-reduced-motion выше глушит саму анимацию, но цвет
            остаётся — то есть сигнал переживает отключение движения. */
         .nav-bell-new { color:${T.danger} !important }
-        .nav-bell-new svg { animation: bellRing 2.6s ease-in-out infinite; transform-origin: 50% 15% }
-        .nav-bell-new .nav-bell-badge { animation: bellBlink 1.3s ease-in-out infinite }
-        @keyframes bellRing {
-          0%, 58%, 100% { transform: rotate(0) }
-          62% { transform: rotate(-12deg) }  68% { transform: rotate(10deg) }
-          74% { transform: rotate(-7deg) }   80% { transform: rotate(4deg) }
-          86% { transform: rotate(-2deg) }
-        }
-        @keyframes bellBlink { 0%, 100% { opacity:1 } 50% { opacity:.25 } }
+        .nav-bell-new svg { animation: m-bell 2.6s ease-in-out infinite; transform-origin: 50% 15% }
+        .nav-bell-new .nav-bell-badge { animation: m-blink 1.3s ease-in-out infinite }
+        
+        
       `}</style>
       {/* Полоса и заглушка живут ЗДЕСЬ, а не на каждом экране: шапка есть на всех
           страницах, и это единственная точка, где режим появится везде сразу, без

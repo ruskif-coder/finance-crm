@@ -96,8 +96,8 @@ export default function SearchBar({ onClose, onNavigate, height = 38 }) {
   return (
     <div data-search-root style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
       <style>{`
-        @keyframes srchPop { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-        @keyframes srchPulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
+        
+        
         .srch-input::placeholder { color: var(--text-disabled) }
         .srch-all:hover { color: var(--accent-hover) !important; text-decoration: underline !important }
       `}</style>
@@ -115,7 +115,7 @@ export default function SearchBar({ onClose, onNavigate, height = 38 }) {
                    color: 'var(--text-primary)' }} />
         {loading && (
           <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-faint)',
-                         animation: 'srchPulse 1.2s ease-in-out infinite' }}>…</span>
+                         animation: 'm-pulse 1.2s ease-in-out infinite' }}>…</span>
         )}
         <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 7px',
                        border: '1px solid var(--border-card)', borderRadius: 6, fontFamily: MONO,
@@ -124,7 +124,7 @@ export default function SearchBar({ onClose, onNavigate, height = 38 }) {
         <PortalPopover open={drop && !!s && (ready || !!error)} minWidth={width || 420} maxHeight={470} offset={6}
           style={{ width: width || undefined, borderRadius: 14, padding: 8, fontFamily: UI,
                    boxShadow: '0 12px 36px rgba(28,36,51,.16)',
-                   animation: 'srchPop .18s cubic-bezier(0.22,1,0.36,1) both' }}>
+                   animation: 'm-drop var(--dur-base) var(--ease-out) both' }}>
           {error && <div style={{ ...NOTE, color: 'var(--danger-fg)' }}>{error}</div>}
           {!error && ready && !flat.length && (
             <div style={NOTE}>Ничего не найдено. {SEARCH_HINT_TEXT}</div>

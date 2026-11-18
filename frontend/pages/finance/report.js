@@ -207,7 +207,7 @@ export default function FinReport() {
 
   if (loading || !data) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="finreport" />
         <div style={{ padding: '20px 24px' }}>
@@ -291,7 +291,7 @@ export default function FinReport() {
 
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="finreport" />
         <FinReportMobile
@@ -304,7 +304,7 @@ export default function FinReport() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
       <Navbar active="finreport" />
 

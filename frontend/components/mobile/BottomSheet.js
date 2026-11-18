@@ -34,14 +34,14 @@ export default function BottomSheet({ open, onClose, title, children, footer, ma
   return (
     <div {...overlayClose(onClose)} role="dialog" aria-modal="true"
       style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.35)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center', animation: 'sheetFade .18s ease both' }}>
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center', animation: 'm-fade var(--dur-base) ease both' }}>
       <div onClick={(e) => e.stopPropagation()}
         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         style={{ width: '100%', maxWidth: 540, margin: '0 auto', maxHeight, overflowY: 'auto', background: 'var(--bg-card)',
           borderRadius: '18px 18px 0 0', padding: '10px 14px 20px', fontFamily: UI,
           transform: drag ? `translateY(${drag}px)` : undefined,
           transition: drag ? 'none' : 'transform .2s',
-          animation: drag ? undefined : 'sheetUp .28s cubic-bezier(0.22,1,0.36,1) both' }}>
+          animation: drag ? undefined : 'sheetUp .28s var(--ease-out) both' }}>
         {/* ручка + свайп-зона */}
         <div style={{ padding: '4px 0 10px', cursor: 'grab' }}>
           <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border-card)', margin: '0 auto' }} />

@@ -28,7 +28,7 @@ export function PixelBar({ cells, height = 12, gap = 2, style }) {
 export function PixelColumn({ cells, width = '58%', gap = 2, dir = 'up', animate = false, delay = 0 }) {
   return (
     <div style={{ width, height: '100%', margin: '0 auto', display: 'flex', flexDirection: dir === 'up' ? 'column-reverse' : 'column', gap,
-      ...(animate ? { animation: 'a2up .55s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${delay}s`, transformOrigin: dir === 'up' ? 'bottom' : 'top' } : {}) }}>
+      ...(animate ? { animation: 'm-grow-y var(--dur-slow) var(--ease-out) both', animationDelay: `${delay}s`, transformOrigin: dir === 'up' ? 'bottom' : 'top' } : {}) }}>
       {cells.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}
     </div>
   )

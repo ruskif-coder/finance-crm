@@ -51,7 +51,7 @@ function Toggle({ on, label, flip }) {
     <span onClick={flip} style={{ ...chip, gap: 7, padding: '0 11px', fontSize: 12, background: on ? 'var(--accent-tint)' : 'var(--bg-card)',
       border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`, color: on ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>
       <span style={{ position: 'relative', width: 26, height: 14, borderRadius: 7, background: on ? 'var(--accent)' : 'var(--text-disabled)', flex: '0 0 26px' }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 10, height: 10, borderRadius: 3, background: 'var(--bg-card)', transition: 'left 150ms ease' }} />
+        <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 10, height: 10, borderRadius: 3, background: 'var(--bg-card)', transition: 'left var(--dur-fast) ease' }} />
       </span>{label}
     </span>
   )
@@ -220,14 +220,9 @@ export default function SalesStatusPage() {
   const accOpts = Array.from(new Set((data?.deals || []).map(d => d.account).filter(Boolean))).sort()
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI, color: 'var(--text-primary)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI, color: 'var(--text-primary)' }}>
       <Head><title>Статусы продаж · Продажи | SIMB-AD ERP</title></Head>
       <Navbar active="sales" />
-      <style>{`
-        @keyframes ssRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes ssPop { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }
-      `}</style>
       <div style={{ boxSizing: 'border-box', padding: '22px 28px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Header mode={mode} setMode={(m) => { setMode(m); if (m === 'm') setMon(months[0]); set({ drag: null, over: null }) }} quarters={quarters} q={q}
           setQ={(x) => { setQ(x); set({ drag: null, over: null }) }} win={months} canPrev={canPrev} canNext={canNext} step={(n) => setMon(shiftMonth(mon, n))}
@@ -237,7 +232,7 @@ export default function SalesStatusPage() {
         <Pending items={pending} saving={saving} onReset={() => setMoves({})} onSave={save}
           onRemove={(p) => setMoves(ms => { const n = { ...ms }; delete n[p.id]; return n })} />
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, display: 'flex',
-          flexDirection: 'column', overflow: 'hidden', animation: 'ssRise .4s cubic-bezier(.22,1,.36,1) .1s both' }}>
+          flexDirection: 'column', overflow: 'hidden', animation: 'm-rise var(--dur-slow) var(--ease-out) .1s both' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '12px 16px', borderBottom: '1px solid var(--border-inner)' }}>
             <input value={st.search} onChange={e => set({ search: e.target.value })} placeholder="клиент, бренд, РА, код, комментарий"
               style={{ height: 32, padding: '0 11px', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12.5, minWidth: 240, outline: 'none' }} />

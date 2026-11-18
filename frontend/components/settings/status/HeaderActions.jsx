@@ -15,8 +15,8 @@ const POP = { width: 360, padding: 14, gap: 10, borderRadius: 14, boxShadow: 'va
 
 export function Toggle({ on }) {
   return (
-    <span style={{ flex: '0 0 26px', position: 'relative', width: 26, height: 15, borderRadius: 8, background: on ? 'var(--accent)' : 'var(--text-disabled)', transition: 'background 150ms ease' }}>
-      <span style={{ position: 'absolute', top: 2, left: on ? 13 : 2, width: 11, height: 11, borderRadius: 6, background: 'var(--bg-card)', transition: 'left 150ms ease' }} />
+    <span style={{ flex: '0 0 26px', position: 'relative', width: 26, height: 15, borderRadius: 8, background: on ? 'var(--accent)' : 'var(--text-disabled)', transition: 'background var(--dur-fast) ease' }}>
+      <span style={{ position: 'absolute', top: 2, left: on ? 13 : 2, width: 11, height: 11, borderRadius: 6, background: 'var(--bg-card)', transition: 'left var(--dur-fast) ease' }} />
     </span>
   )
 }

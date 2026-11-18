@@ -336,6 +336,8 @@ def apply_moves(data: ApplyIn, db: Session = Depends(get_db), user: User = Depen
             d.period_to = _shift_end(d.period_to, delta) if d.period_to else None
             notes.append(f"период {old[0]}–{old[1]} → {d.period_from}–{d.period_to}")
             notes += _shift_media_plans(db, d.id, delta)
+            from app.sales import mp_follow
+            mp_follow.follow_period(db, d.id, *old, d.period_from, d.period_to)   # период сборки — со сделкой (18.11.2026)
         if mv.light != d.probability_color:
             notes.append(f"светофор {d.probability_color or 'не задан'} → {mv.light or 'не задан'}")
             d.probability_color = mv.light
@@ -345,6 +347,8 @@ def apply_moves(data: ApplyIn, db: Session = Depends(get_db), user: User = Depen
     db.commit()
     for x in saved:
         log_action(db, user, "sales_status_move", "sales_deal", x["id"], f"{x['code']}: " + "; ".join(x["changes"]))
+    from app.sales import mp_follow
+    mp_follow.follow_plan_change(db, [x["id"] for x in saved], user)   # РК и черновые ДС — за сдвинутым месяцем (18.11.2026)
     return {"saved": saved}
 
 

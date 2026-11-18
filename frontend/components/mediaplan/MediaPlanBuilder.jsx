@@ -3,6 +3,7 @@
  * Зависимость только React. Стили инлайновые, токены — из design_system/ds.jsx.
  * Данные-справочники в CATALOG / EXTRA_CATALOG / STAFF — заменить на API.
  */
+import { DUR } from '@/lib/motion'
 import MonthInput from '@/components/MonthInput'
 import { MODE_FIX, MODES, MODE_PCT, PCT_DEFAULT, pctOf, pctMode, totalFor } from '@/lib/mpExtraMode.mjs';
 import React, { useMemo, useRef, useState, useEffect } from 'react';
@@ -32,7 +33,7 @@ export const T = {
   shadow: 'var(--shadow-card)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: MONO, sans: UI,
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
 };
 // С НДС — до копеек, а не до рубля: цена услуги копейки имеет (см. lib/mpRow.rowNet),
 // и округление здесь возвращало бы их в целое уже на экране.
@@ -112,7 +113,7 @@ const Card = ({ delay = 0, pad = '14px 22px 12px', gap = 10, style, className, c
   <section className={className} style={{
     background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow, borderRadius: 18,
     padding: pad, display: 'flex', flexDirection: 'column', gap,
-    animation: `riseIn .4s ${T.ease} ${delay}s both`, ...style,
+    animation: `m-rise var(--dur-slow) ${T.ease} ${delay}s both`, ...style,
   }}>{children}</section>
 );
 
@@ -139,7 +140,7 @@ const Popover = ({ open, minWidth = 240, children }) => {
           position: 'fixed', top: pos.top, left: pos.left, zIndex: Z.dropdown, minWidth,
           background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 12,
           padding: 6, display: 'flex', flexDirection: 'column', maxHeight: 320, overflowY: 'auto',
-          animation: `popIn .18s ${T.ease} both`,
+          animation: `m-drop var(--dur-base) ${T.ease} both`,
         }}>{children}</span>,
         document.body
       )}
@@ -282,7 +283,7 @@ const Pencil = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
 const DeleteBtn = ({ onClick }) => (
   <span className="mp-del" onClick={onClick} title="Удалить строку" style={{
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 24,
-    borderRadius: 7, color: T.t4, cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
+    borderRadius: 7, color: T.t4, cursor: 'pointer', transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
   }}><Cross /></span>
 );
 
@@ -297,20 +298,20 @@ function useAnimatedRows(initial) {
     const id = ++seq.current;
     setRows(r => [...r, { id, ...blank }]);
     setEntering(e => ({ ...e, [id]: true }));
-    setTimeout(() => setEntering(e => { const n = { ...e }; delete n[id]; return n; }), 420);
+    setTimeout(() => setEntering(e => { const n = { ...e }; delete n[id]; return n; }), DUR.slow + 100);   // длительность m-mp-row-in (lib/motion)
     return id;
   };
   const remove = id => {
-    setLeaving(l => ({ ...l, [id]: true }));               // 260ms — длительность rowOut
+    setLeaving(l => ({ ...l, [id]: true }));               // ждём конца m-mp-row-out (--dur-slow)
     setTimeout(() => {
       setRows(r => r.filter(x => x.id !== id));
       setLeaving(l => { const n = { ...l }; delete n[id]; return n; });
-    }, 260);
+    }, DUR.slow);
   };
   const patch = (id, p) => setRows(r => r.map(x => (x.id === id ? { ...x, ...p } : x)));
   const motion = id => leaving[id]
-    ? { animation: `rowOut .26s ${T.ease} both`, pointerEvents: 'none' }
-    : entering[id] ? { animation: `rowIn .36s ${T.ease} both` } : {};
+    ? { animation: `m-mp-row-out var(--dur-slow) ${T.ease} both`, pointerEvents: 'none' }
+    : entering[id] ? { animation: `m-mp-row-in var(--dur-slow) ${T.ease} both` } : {};
   return { rows, setRows, add, remove, patch, motion };
 }
 
@@ -538,15 +539,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-        body { margin:0; background:${T.canvas}; color:${T.t1}; font-family:${T.sans}; -webkit-font-smoothing:antialiased }
+        body { margin:0; color:${T.t1}; font-family:${T.sans}; -webkit-font-smoothing:antialiased }
         a { color:${T.accent}; text-decoration:none } a:hover { color:${T.accentHover}; text-decoration:underline }
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes popIn { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
-        @keyframes pulseEmpty { 0%,100% { border-color:${T.emptyBorder} } 50% { border-color:${T.warning} } }
-        @keyframes rowIn { from { opacity:0; transform:translateY(-6px) scaleY(.85); max-height:0 } to { opacity:1; transform:none; max-height:60px } }
-        @keyframes rowOut { from { opacity:1; transform:none; max-height:60px }
-                            to { opacity:0; transform:translateX(24px); max-height:0; margin:0; padding-top:0; padding-bottom:0 } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
         .mp-field:hover { border-color:${T.hoverBorder} }
         .mp-cell:hover { text-decoration:underline; text-decoration-style:dotted; text-underline-offset:3px; color:${T.accent} }
         .mp-opt:hover { background:${T.subtle} }
@@ -607,7 +601,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* хлебные крошки + действия */}
-          <div className="mp-open" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
+          <div className="mp-open" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `m-rise var(--dur-slow) ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
             <span onClick={onBack} style={{ fontSize: 13, fontWeight: 600, color: T.t3, cursor: onBack ? 'pointer' : 'default' }}>← {backLabel}</span>
             <span style={{ color: T.hoverBorder }}>/</span>
             <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>Конструктор медиаплана</span>
@@ -961,7 +955,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                           padding: '8px 6px', margin: '2px 0', borderRadius: 11,
                           border: `1px solid ${empty ? T.emptyBorder : 'transparent'}`,
                           background: empty ? T.emptyBg : T.card,
-                          animation: mo.animation || (empty ? `pulseEmpty 2.4s ease-in-out infinite` : undefined),
+                          animation: mo.animation || (empty ? `m-empty-pulse 2.4s ease-in-out infinite` : undefined),
                           pointerEvents: mo.pointerEvents,
                         }}>
                           <span style={{ fontFamily: T.mono, fontSize: 10, color: T.t4 }}>{i + 1}</span>
@@ -1096,7 +1090,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         display: 'grid', gridTemplateColumns: EXTRA_COLS, gap: 4, alignItems: 'center', minWidth: 0,
                         boxSizing: 'border-box', padding: '8px 6px', margin: '2px 0', borderRadius: 11,
                         border: `1px solid ${empty ? T.emptyBorder : T.inner}`, background: empty ? T.emptyBg : T.card,
-                        animation: mo.animation || (empty ? 'pulseEmpty 2.4s ease-in-out infinite' : undefined),
+                        animation: mo.animation || (empty ? 'm-empty-pulse 2.4s ease-in-out infinite' : undefined),
                         pointerEvents: mo.pointerEvents,
                       }}>
                         <span style={{ fontFamily: T.mono, fontSize: 10, color: T.t4 }}>{i + 1}</span>

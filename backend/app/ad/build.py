@@ -234,6 +234,41 @@ def _fill_campaign(camp: AdCampaign, d, plan: dict) -> None:
     camp.plan_budget = plan["plan_budget"]
 
 
+def _campaign_deals(db: Session, stage_ids: list, deal_id: Optional[int] = None) -> list:
+    """Сделки, у которых РК держит план из медиаплана: стадии сборки и дальше, кроме контура аккаунта.
+    ОДНО условие на ночной прогон (`sync_campaigns`) и на событие (`replan_deal`)."""
+    return db.execute(text(
+        "SELECT d.id, d.code, d.period_from, d.period_to FROM sales_deals d "
+        "LEFT JOIN sales_services s ON s.id = d.service_id "
+        "LEFT JOIN sales_pipelines p ON p.id = COALESCE(d.realization_pipeline_id, s.realization_pipeline_id) "
+        # Контур аккаунта (14.10.2026, app/final_recon/flow.py): РК не нужна — трафик сделку не ведёт, факт вносится вручную.
+        "WHERE d.our_stage_id = ANY(:st) AND p.closing_flow IS DISTINCT FROM 'контур аккаунта' "
+        "AND (CAST(:d AS integer) IS NULL OR d.id = :d) ORDER BY d.id"),
+        {"st": stage_ids, "d": deal_id}).mappings().all()
+
+
+def replan_deal(db: Session, deal_id: int, commit: bool = True) -> Optional[dict]:
+    """План и сроки РК ОДНОЙ сделки — из её последнего медиаплана, сразу после сохранения плана (владелец 18.11.2026).
+
+    Раньше план РК подтягивал только утренний прогон: аккаунт уменьшила объём, а трафик до следующего утра видел старый
+    план, и DSP крутила по старым лимитам. Расчёт тот же, что у `sync_campaigns` (`_fill_campaign`), и то же уведомление
+    «ручные планы больше плана». None — у сделки нет РК или она вне стадий, где РК ведётся."""
+    camp = db.query(AdCampaign).filter(AdCampaign.deal_id == deal_id).first()
+    deals = _campaign_deals(db, assembly_stage_ids(db), deal_id) if camp is not None else []
+    if not deals:
+        return None
+    before = (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end)
+    _fill_campaign(camp, deals[0], deal_plan(db, deal_id))
+    if (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end) == before:
+        return {"campaign_id": camp.id, "changed": False}
+    db.flush()
+    from app.ad.realloc import alert_plan_cut
+    alert_plan_cut(db, {camp.id: before[0]})
+    if commit:
+        db.commit()
+    return {"campaign_id": camp.id, "changed": True, "plan_before": before[0], "plan_after": camp.plan_show}
+
+
 def sync_campaigns(db: Session, commit: bool = True) -> dict:
     """Заводит РК недостающим сделкам и подтягивает план у существующих.
 
@@ -243,13 +278,7 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
     if not stage_ids:
         return {"created": 0, "updated": 0, "no_media_plan": 0, "stages": 0}
 
-    deals = db.execute(text(
-        "SELECT d.id, d.code, d.period_from, d.period_to FROM sales_deals d "
-        "LEFT JOIN sales_services s ON s.id = d.service_id "
-        "LEFT JOIN sales_pipelines p ON p.id = COALESCE(d.realization_pipeline_id, s.realization_pipeline_id) "
-        # Контур аккаунта (14.10.2026, app/final_recon/flow.py): РК не нужна — трафик сделку не ведёт, факт вносится вручную.
-        "WHERE d.our_stage_id = ANY(:st) AND p.closing_flow IS DISTINCT FROM 'контур аккаунта' ORDER BY d.id"),
-        {"st": stage_ids}).mappings().all()
+    deals = _campaign_deals(db, stage_ids)
     existing = {c.deal_id: c for c in db.query(AdCampaign).all()}
     plan_before = {c.id: c.plan_show for c in existing.values()}
 

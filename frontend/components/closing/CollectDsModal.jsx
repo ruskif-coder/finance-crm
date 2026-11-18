@@ -75,8 +75,8 @@ export default function CollectDsModal({ dealId, gross, onClose, onDone }) {
     <div {...overlayClose(() => !busy && onClose())}
       style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: UI }}>
       <div style={{ width: 860, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', background: 'var(--bg-card)', borderRadius: 18,
-        boxShadow: 'var(--shadow-modal)', animation: 'popIn .2s ease both' }}>
-        <style>{'@keyframes popIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}'}</style>
+        boxShadow: 'var(--shadow-modal)', animation: 'm-zoom var(--dur-base) ease both' }}>
+        <style>{''}</style>
         <div style={{ display: 'flex', alignItems: 'center', padding: '20px 26px' }}>
           <b style={{ fontSize: 20 }}>{fork?.in_master ? `Мастер-сделка ${fork.in_master.code}` : 'Собрать ДС'}</b>
           <button type="button" onClick={onClose} aria-label="Закрыть" style={{ marginLeft: 'auto', border: 0, background: 'none', fontSize: 18, color: 'var(--text-faint)', cursor: 'pointer' }}>✕</button>

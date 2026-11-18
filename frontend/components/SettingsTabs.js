@@ -101,7 +101,7 @@ export default function SettingsTabs({ active, actions }) {
               fontWeight: isActive ? 700 : 600, fontSize: 14, whiteSpace: 'nowrap', ...(isMobile ? { flex: '0 0 auto' } : null),
               background: isActive ? 'var(--accent-tint)' : 'transparent',
               color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
-              transition: 'background-color 150ms ease, color 150ms ease',
+              transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
             }}>
             {t.label}
           </button>

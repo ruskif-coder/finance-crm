@@ -467,7 +467,7 @@ export default function DashboardV2() {
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Navbar active="dds" />
         <Head><title>ДДС · Финансы | SIMB-AD ERP</title></Head>
         {/* При сбое «Загрузка…» держалась вечно: loading снимался, summary
@@ -490,7 +490,7 @@ export default function DashboardV2() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Navbar active="dds" />
       <Head><title>ДДС · Финансы | SIMB-AD ERP</title></Head>
 

@@ -236,7 +236,7 @@ export default function AdfoxImportModal({ auth, onClose, onDone }) {
         <div style={{ margin: '6px 0 12px' }}>
           <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
             <div style={{ width: `${stage.pct == null ? 100 : stage.pct}%`, height: '100%',
-              background: 'var(--accent)', opacity: stage.pct == null ? 0.45 : 1, transition: 'width .35s ease' }} />
+              background: 'var(--accent)', opacity: stage.pct == null ? 0.45 : 1, transition: 'width var(--dur-slow) ease' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
             {busy && <Cube variant="spinner" size={12} />}{stage.text}{stage.pct != null && stage.pct < 100 ? ` · ${stage.pct} %` : ''}

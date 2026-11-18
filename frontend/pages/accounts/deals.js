@@ -7,6 +7,7 @@
  * Часть 2: расхлоп с виджетами стадий (`DealNow`). Часть 4: режим «Карточки» (`Board`, `DealCard`) и модалка сделки (`DealModal`).
  * Контур «Документы» — пакеты мастер-сделок списком (`PackList`) и карточками (`PackBoard`). «События и сроки» — `EventsModal`.
  */
+import { Segmented } from '@/lib/motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -22,7 +23,7 @@ import DealNow from '@/components/accounts/deals/DealNow'
 import QueueToolbar, { applyToolbar, pinOptions, emptyFilters } from '@/components/accounts/dashboard/QueueToolbar'
 import useQueueActions from '@/components/accounts/useQueueActions'
 import ContourCards from '@/components/accounts/deals/ContourCards'
-import TurnGroups from '@/components/accounts/deals/TurnGroups'
+import TurnGroups, { BAR_TOP } from '@/components/accounts/deals/TurnGroups'
 import Board from '@/components/accounts/deals/Board'
 import DealModal from '@/components/accounts/deals/DealModal'
 import PackList from '@/components/accounts/deals/PackList'
@@ -86,6 +87,11 @@ export default function MyDeals() {
       .catch(e => { if (fresh()) setPacksErr(detailText(e, 'Не удалось загрузить мастер-сделки')) })
   }, [repId, latest])
   useEffect(() => { if (ready) load() }, [ready, load])
+  // ?c=sandbox|work|docs — открыть сразу этот контур (возврат «Дашборд» из меню карточки пакета, 18.11.2026)
+  useEffect(() => {
+    const c = router.isReady && router.query.c
+    if (c === 'sandbox' || c === 'work' || c === 'docs') setContour(c)
+  }, [router.isReady, router.query.c])
   useRefreshOnReturn(load)
   useEffect(() => {
     if (!ready) return
@@ -93,13 +99,36 @@ export default function MyDeals() {
   }, [ready])
 
   const openRef = useRef(null)
+  // Высота закреплённой панели фильтров → `--acc-bar-h` на корне страницы: шапка колонок встаёт под панелью и при переносе в две строки
+  const barRef = useRef(null)
+  const rootRef = useRef(null)
+  useEffect(() => {
+    const bar = barRef.current, root = rootRef.current
+    if (!bar || !root) return undefined
+    const put = () => root.style.setProperty('--acc-bar-h', `${bar.offsetHeight}px`)
+    put()
+    const ro = new ResizeObserver(put)
+    ro.observe(bar)
+    return () => ro.disconnect()
+  }, [])
   const loadDetail = (r) => api.get(`/sales/deals/${r.code || r.id}`, auth())
     .then(res => { if (openRef.current === r.id) setDetail({ id: r.id, deal: res.data }) })
     .catch(() => { if (openRef.current === r.id) setDetail({ id: r.id, deal: null }) })
+  // Раскрытую сделку — к верху экрана, под меню, панель фильтров и шапку колонок (владелец 18.11.2026: «как у трафиков»)
+  const alignRow = (id) => setTimeout(() => {
+    const el = document.querySelector(`.acc-dash [data-row-id="${id}"]`)
+    if (!el) return
+    const nav = document.querySelector('[data-navbar]')?.getBoundingClientRect().height || 58
+    const bar = barRef.current?.getBoundingClientRect().height || 0
+    const head = el.closest('.acc-dash')?.querySelector('[data-col-head]')?.getBoundingClientRect().height || 0
+    const top = el.getBoundingClientRect().top + window.scrollY - nav - bar - head - 12
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  }, 60)
   const toggleRow = (r) => {
     if (expandedId === r.id) { openRef.current = null; setExpandedId(null); setDetail(null); return }
     openRef.current = r.id
     setExpandedId(r.id); setDetail(null); loadDetail(r)
+    alignRow(r.id)
   }
   const { runAction, setSnoozeFor, unsnooze, dialogs } = useQueueActions({
     router, load, onExpand: (row) => (view === 'cards' ? setOpenRow(row) : expandedId === row.id ? null : toggleRow(row)) })
@@ -128,6 +157,7 @@ export default function MyDeals() {
     if (view === 'cards') { setOpenRow(r); return }
     setContour(r.__contour); setPicked([]); setF({ ...emptyFilters(), qtext: r.code }); setWhose('all')
     openRef.current = r.id; setExpandedId(r.id); setDetail(null); loadDetail(r)
+    alignRow(r.id)
   }
   // Пакеты на экране: поиск (код пакета или сделки, договор, контрагент, рекламодатель, бренд), стадии, «только мой ход».
   const shownPacks = useMemo(() => {
@@ -163,7 +193,8 @@ export default function MyDeals() {
   const total = contour === 'docs' ? myPacks.length : inContour.length
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    // `acc-dash` — вид экрана в темах NAVY (styles/navy.css, хендофф design_handoff_account_navy); в прежних темах класс ничего не меняет
+    <div ref={rootRef} className="acc-dash navy-scr navy-norm" style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head><title>Мои сделки · Аккаунты | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ boxSizing: 'border-box', padding: '22px clamp(28px, 1.9vw, 48px) 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -176,19 +207,16 @@ export default function MyDeals() {
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <Link href="/accounts/dashboard" style={{ fontSize: 12, color: 'var(--text-muted)', textDecoration: 'underline dotted', whiteSpace: 'nowrap' }}>Старый дашборд</Link>
             <button type="button" onClick={() => setEventsOpen(true)} disabled={!data}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-                cursor: 'pointer', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-              события · просрочено <b style={{ color: lateN ? 'var(--danger-fg)' : 'var(--text-secondary)' }}>{lateN}</b>
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 12px', borderRadius: 10, cursor: 'pointer', fontFamily: MONO,
+                fontSize: 11.5, whiteSpace: 'nowrap',
+                // NAVY: пока есть просрочка — оранжевая («ваш ход»), README §4; в прежних темах переменные не заданы — вид прежний
+                border: `1px solid ${lateN ? 'var(--acc-late-bd, var(--border-card))' : 'var(--border-card)'}`,
+                background: lateN ? 'var(--acc-late-bg, var(--bg-card))' : 'var(--bg-card)',
+                color: lateN ? 'var(--acc-late-fg, var(--text-secondary))' : 'var(--text-secondary)' }}>
+              события · просрочено <b style={{ color: lateN ? 'var(--acc-late-num, var(--danger-fg))' : 'var(--text-secondary)' }}>{lateN}</b>
               {!!nextDay && <> · {nextDay.date.slice(8, 10)}.{nextDay.date.slice(5, 7)} — {nextN}</>}
             </button>
-            <span style={{ display: 'inline-flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)', borderRadius: 10, padding: 2 }}>
-              {[['list', 'Список'], ['cards', 'Карточки']].map(([k, l]) => (
-                <button key={k} type="button" onClick={() => pickView(k)} aria-pressed={view === k}
-                  style={{ height: 30, padding: '0 14px', border: 0, borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                    background: view === k ? 'var(--bg-card)' : 'transparent', color: view === k ? 'var(--accent-fg)' : 'var(--text-secondary)',
-                    boxShadow: view === k ? 'var(--shadow-card)' : 'none' }}>{l}</button>
-              ))}
-            </span>
+            <Segmented value={view} onChange={pickView} options={[['list', 'Список'], ['cards', 'Карточки']]} />
             {(data?.can_view_others ?? true) && (
               <select value={repId} onChange={e => setRepId(e.target.value)} style={{ ...sel, minWidth: 210, padding: '8px 11px' }}>
                 {!!myRepId && <option value="">★ {myName || 'Мои сделки'}</option>}
@@ -204,22 +232,15 @@ export default function MyDeals() {
         <ContourCards rows={filtered} packs={myPacks} contour={contour} picked={picked} onContour={pickContour}
           onStage={pickStage} />
 
-        {/* Панель фильтров — одна строка, липкая (README §3). */}
-        <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+        {/* Панель фильтров — одна строка, липкая (README §3): под меню, а не под ним (18.11.2026); её высота — `--acc-bar-h` для шапок колонок */}
+        <div ref={barRef} style={{ position: 'sticky', top: BAR_TOP, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 16, boxShadow: 'var(--shadow-card)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 600px', minWidth: 0 }}>
             <QueueToolbar f={f} setF={setF} options={options} filtersOn={filtersOn} onReset={resetAll} />
           </div>
           <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
             показано {contour === 'docs' ? shownPacks.length : shown.length} из {total}</span>
-          <span style={{ display: 'inline-flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)', borderRadius: 10, padding: 2 }}>
-            {[['all', 'Все'], ['mine', 'Только мой ход']].map(([k, l]) => (
-              <button key={k} type="button" onClick={() => setWhose(k)} aria-pressed={whose === k}
-                style={{ height: 28, padding: '0 12px', border: 0, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                  background: whose === k ? 'var(--bg-card)' : 'transparent', color: whose === k ? 'var(--accent-fg)' : 'var(--text-secondary)',
-                  boxShadow: whose === k ? 'var(--shadow-card)' : 'none' }}>{l}</button>
-            ))}
-          </span>
+          <Segmented size="sm" value={whose} onChange={setWhose} options={[['all', 'Все'], ['mine', 'Только мой ход']]} />
         </div>
 
         {!data && !err && <div style={{ padding: 40, color: 'var(--text-muted)' }}>Загрузка…</div>}

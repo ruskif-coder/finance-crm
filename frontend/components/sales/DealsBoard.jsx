@@ -31,7 +31,7 @@ const T = {
   gray: 'var(--bank-sovkom)',
   danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
   pop: '0 10px 30px rgba(28,36,51,.16)',
-  mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
+  mono: MONO, sans: UI, ease: 'var(--ease-out)',
 }
 
 // Слой денег — ключи наши, серверные (money_layer из каталога стадий).
@@ -253,7 +253,7 @@ function DealCard({ c, open, onToggle, canEdit, onAdvance, onOpenCard, onBrief, 
 
       {open && (
         <div onClick={e => e.stopPropagation()}
-          style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8, borderTop: `1px solid ${T.row}`, animation: `riseIn .26s ${T.ease} both` }}>
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8, borderTop: `1px solid ${T.row}`, animation: `m-rise var(--dur-slow) ${T.ease} both` }}>
           {c.rows.map(([label, value]) => (
             <span key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span style={{ fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t4 }}>{label}</span>
@@ -293,7 +293,7 @@ function BoardColumn({ col, openId, setOpenId, tipId, setTipId, canEdit, handler
     <div style={{
       width: COL_W, flex: `0 0 ${COL_W}px`, boxSizing: 'border-box', background: col.colBg,
       border: `1px solid ${col.colBorder}`, borderRadius: 16, padding: '12px 12px 14px',
-      display: 'flex', flexDirection: 'column', gap: 10, animation: `riseIn .4s ${T.ease} ${col.delay} both`,
+      display: 'flex', flexDirection: 'column', gap: 10, animation: `m-rise var(--dur-slow) ${T.ease} ${col.delay} both`,
     }}>
       <div onMouseEnter={() => setTipId(col.id)} onMouseLeave={() => setTipId(null)}
         style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 7, paddingBottom: 10, borderBottom: `1px solid ${col.headBorder}` }}>
@@ -313,7 +313,7 @@ function BoardColumn({ col, openId, setOpenId, tipId, setTipId, canEdit, handler
           <span style={{
             position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: Z.dropdown, minWidth: 200,
             background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 12,
-            padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 5, animation: `popIn .16s ${T.ease} both`,
+            padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 5, animation: `m-drop var(--dur-base) ${T.ease} both`,
           }}>
             <span style={{ fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t4 }}>По услугам</span>
             {col.tip.map(t => (
@@ -360,7 +360,7 @@ export const BoardTabs = ({ items, value, onChange, mono }) => (
           display: 'inline-flex', alignItems: 'center', height: 26, padding: mono ? '0 11px' : '0 12px',
           borderRadius: 8, background: on ? T.accentTint : 'transparent', color: on ? T.accent : T.t2,
           fontFamily: mono ? T.mono : T.sans, fontSize: mono ? 11.5 : 12.5, fontWeight: on ? 700 : 600,
-          whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
+          whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
         }}>{label}</span>
       )
     })}
@@ -391,9 +391,9 @@ export default function DealsBoard({ deals = [], view = 'months', range = 6, sta
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontFamily: T.sans, color: T.t1 }}>
       <style>{`
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @keyframes popIn { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { .db-anim * { animation-duration:1ms !important; animation-delay:0s !important } }
+        
+        
+        
         .db-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
         .db-primary:hover { background:${T.accentHover} }
         .db-ghostadd:hover { border-color:${T.accent}; background:${T.tint} }

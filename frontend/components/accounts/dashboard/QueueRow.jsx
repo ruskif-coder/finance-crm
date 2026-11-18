@@ -59,7 +59,7 @@ function Cta({ row, canEdit, onAction }) {
   }
   const calm = row.urgency === 'normal'
   return (
-    <button disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
+    <button data-act="" disabled={!canEdit && a.do !== 'link' && a.do !== 'expand'}
       onClick={(e) => { e.stopPropagation(); onAction(row, a) }} title={a.hint || ''}
       style={{ height: 28, padding: '0 11px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'inherit',
@@ -84,7 +84,7 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
   const surface = surfaceTag(r.inventory)
   const layer = r.our_stage?.money_layer
   return (
-    <div onClick={() => onToggle(r)}
+    <div data-row-id={r.id} onClick={() => onToggle(r)}
       style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center', boxSizing: 'border-box',
         padding: '7px 10px', cursor: 'pointer',
         // Раскрытая строка и расхлоп — один блок (владелец 17.11.2026: «расхлоп продолжением строки, а не отдельный бабл»):
@@ -92,10 +92,10 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
         // `joined` — только «Мои сделки»; старый дашборд рисует под строкой свою карточку
         border: open && joined ? '1px solid var(--border-card)' : '1px solid transparent',
         borderBottom: open && joined ? 'none' : '1px solid var(--border-row)',
-        borderRadius: open && joined ? '12px 12px 0 0' : 9,
+        borderRadius: open && joined ? 'var(--acc-open-r, 12px 12px 0 0)' : 9,
         // Строку не красим (дизайн 22.10.2026) — срочность квадратом у кода, как в дашборде трафика.
-        background: open ? 'var(--bg-tint)' : 'transparent',
-        transition: 'background-color 150ms ease' }}>
+        background: open ? 'var(--acc-open-bg, var(--bg-tint))' : 'transparent',
+        transition: 'background-color var(--dur-fast) ease' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
         <span title={URGENCY_HINT[r.urgency] || ''} style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 8px',
           background: r.urgency === 'overdue' || r.urgency === 'today' ? tone.dot : 'transparent' }} />

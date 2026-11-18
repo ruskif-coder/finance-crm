@@ -3,17 +3,22 @@
  * при выбранной стадии раскрыты все. Строка — та же, что в «Дашборде» (`QueueRow`: колонки как на проде), клик — расхлоп.
  * Сортировка по заголовкам действует внутри каждой группы.
  */
+import { Collapse } from '@/lib/motion'
 import { Fragment, useState } from 'react'
 import { MONO } from '@/components/salesTableKit'
 import QueueRow, { QueueHead } from '@/components/accounts/dashboard/QueueRow'
 import { compareRows, mln } from '@/components/accounts/dashboard/ladder'
 import { groups, hot } from './contours'
 
-const DOT = { mine: 'var(--danger)', wait: 'var(--text-faint)', good: 'var(--income)' }
+// «Ваш ход» в NAVY — оранжевый --signal (README §4 хендоффа design_handoff_account_navy); в прежних темах переменная не задана
+const DOT = { mine: 'var(--acc-turn, var(--danger))', wait: 'var(--text-faint)', good: 'var(--income)' }
 const NOTE = { mine: null, wait: 'от вас ничего не нужно', good: 'идёт по плану' }
 
-// Шапка колонок прилипает под верхним меню (его высота — 58 px; шапки колонок доски — на том же уровне).
-export const STICKY_TOP = 64
+// Шапка колонок прилипает под меню и закреплённой панелью фильтров (владелец 18.11.2026: закрепляться должна и панель):
+// высота меню — `--nav-h` (NavBar), высота панели — `--acc-bar-h` (страница меряет её сама). Шапки доски — на том же уровне.
+export const STICKY_TOP = 'calc(var(--nav-h, 58px) + var(--acc-bar-h, 0px) + 6px)'
+// Панель фильтров — сразу под меню
+export const BAR_TOP = 'var(--nav-h, 58px)'
 
 export default function TurnGroups({ rows, allOpen, sortKey, sortDir, onSort, renderDetail, expandedId, rowProps }) {
   const [open, setOpen] = useState({ mine: true })
@@ -37,7 +42,7 @@ export default function TurnGroups({ rows, allOpen, sortKey, sortDir, onSort, re
                 background: g.tone === 'mine' ? 'var(--bg-card)' : 'var(--bg-subtle)' }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: DOT[g.tone] }} />
               <span style={{ fontSize: 14, fontWeight: 800 }}>{g.title}</span>
-              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>{g.rows.length}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: g.tone === 'mine' ? 'var(--acc-turn-num, var(--text-secondary))' : 'var(--text-secondary)' }}>{g.rows.length}</span>
               <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>{mln(g.rows.reduce((s, r) => s + (r.amount || 0), 0))}</span>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {g.tone === 'mine' ? `по срочности${hotN ? `: ${hotN} горит` : ''}` : NOTE[g.tone]}</span>
@@ -46,13 +51,13 @@ export default function TurnGroups({ rows, allOpen, sortKey, sortDir, onSort, re
             {isOpen && (
               <div style={{ padding: '0 8px 6px' }}>
                 {/* сверху 12 px — по замеру равно нижнему отступу подписей (SortHead: 0 8px 10px + межстрочное), чтобы шапка стояла посередине (16.11.2026) */}
-                <div style={{ position: 'sticky', top: STICKY_TOP, zIndex: 4, background: 'var(--bg-card)', paddingTop: 12 }}>
+                <div data-col-head style={{ position: 'sticky', top: STICKY_TOP, zIndex: 4, background: 'var(--bg-card)', paddingTop: 12 }}>
                   <QueueHead sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 </div>
                 {sorted.map(r => (
                   <Fragment key={r.id}>
                     <QueueRow row={r} open={expandedId === r.id} {...rowProps} />
-                    {expandedId === r.id && renderDetail(r)}
+                    {expandedId === r.id && <Collapse>{renderDetail(r)}</Collapse>}
                   </Fragment>
                 ))}
               </div>

@@ -49,7 +49,7 @@ function EmptyToggle({ on, onClick }) {
     <span onClick={onClick} title="Проверить, как шаблон ведёт себя на сделке с незаполненными полями"
           style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
       <span style={{ position: 'relative', display: 'inline-block', width: 28, height: 16, borderRadius: 8, background: on ? 'var(--danger-border)' : 'var(--border-card)' }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12, borderRadius: 4, background: on ? 'var(--danger)' : 'var(--text-disabled)', transition: 'left 150ms ease' }} />
+        <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12, borderRadius: 4, background: on ? 'var(--danger)' : 'var(--text-disabled)', transition: 'left var(--dur-fast) ease' }} />
       </span>
       образец с пустыми полями
     </span>

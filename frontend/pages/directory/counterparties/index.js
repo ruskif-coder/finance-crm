@@ -178,7 +178,7 @@ export default function Counterparties() {
   // ── МОБИЛЬНАЯ ВЕРСИЯ ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>Контрагенты · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <CounterpartiesMobile
@@ -216,7 +216,7 @@ export default function Counterparties() {
           {/* строка фильтров */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Контрагенты</h1>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width 200ms ease' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width var(--dur-base) ease' }}>
               <svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'var(--text-faint)', strokeWidth: 1.8, strokeLinecap: 'round' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
               <input value={search} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onChange={e => setSearch(e.target.value)} placeholder="Название, ИНН…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, fontFamily: UI, color: 'var(--text-primary)' }} />
             </div>

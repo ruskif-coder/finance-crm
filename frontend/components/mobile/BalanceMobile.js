@@ -79,7 +79,7 @@ function DebtRow({ r, isReceivables, open, onToggle, notes, setNotes, savedNotes
         <AgingBadges aging={r.aging} />
       </div>
       {open && (
-        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, ...rise(0, '.24s') }}>
+        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, ...rise(0) }}>
           {isReceivables && (
             <div style={{ display: 'flex', gap: 14, ...monoLbl, fontSize: 9, marginBottom: 8 }}>
               <span>ИНН {r.inn || '—'}</span>

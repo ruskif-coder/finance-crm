@@ -86,7 +86,7 @@ function Flag({ on, onClick, title, color, diamond }) {
       style={{ ...plain, flex: '0 0 16px', width: 16, height: 16, marginLeft: 4, borderRadius: 4,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         background: on ? color : 'var(--bg-card)', border: `1px solid ${on ? color : 'var(--border-hover)'}`,
-        transform: diamond ? 'rotate(45deg)' : 'none', transition: 'background-color 120ms ease' }}>
+        transform: diamond ? 'rotate(45deg)' : 'none', transition: 'background-color var(--dur-fast) ease' }}>
       {on && <span style={{ color: 'var(--bg-card)', fontSize: 9, fontWeight: 700, transform: diamond ? 'rotate(-45deg)' : 'none' }}>✓</span>}
     </button>
   )
@@ -389,7 +389,7 @@ export default function SettingsRoles() {
                         const dirty = changes[r.id].includes(s.key)
                         return (
                           <span key={r.id} style={{ display: 'flex', alignItems: 'center', padding: '0 10px', borderRight: '1px solid var(--border-row)', minWidth: 0 }}>
-                            <span style={{ display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0, height: 26, boxSizing: 'border-box', padding: '0 4px 0 8px', borderRadius: 7, background: bg, border: `1px solid ${dirty ? 'var(--accent)' : border}`, transition: 'background-color 120ms ease' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0, height: 26, boxSizing: 'border-box', padding: '0 4px 0 8px', borderRadius: 7, background: bg, border: `1px solid ${dirty ? 'var(--accent)' : border}`, transition: 'background-color var(--dur-fast) ease' }}>
                               <button type="button" onClick={() => cycle(r.id, s)} title={`Клик — «${next}»`}
                                 style={{ ...plain, flex: '1 1 auto', minWidth: 0, color: fg, fontSize: 11, fontWeight: weight, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', userSelect: 'none' }}>{label}</button>
                               {canDelete && <Flag on={!!p.delete} color="var(--danger)" onClick={() => setFlag(r.id, s, 'delete')}

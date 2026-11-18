@@ -21,8 +21,7 @@ import { MONO, VERDICT, isProblem, C, TINT, FG, nf, pct, sgn, minus, plural, val
 
 import { card } from '@/components/salesTableKit';   // та же карточка, что в ките
 const btn = { display: 'inline-flex', alignItems: 'center', height: 32, boxSizing: 'border-box', padding: '0 13px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 12, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'pointer' };
-const EASE = 'cubic-bezier(0.22,1,0.36,1)';
-const rise = d => ({ animation: `prRise 0.4s ${EASE} ${d}s both` });
+const rise = d => ({ animation: `m-rise var(--dur-slow) var(--ease-out) ${d}s both` });
 const LIST_COLS = '170px 190px minmax(300px,1fr) 80px 130px 90px 90px';
 
 const FILTERS = [['problems', 'с проблемами', null], ['fail', 'системный провал', 'var(--danger)'], ['sysund', 'системный недокрут', 'var(--warning)'],
@@ -109,9 +108,9 @@ export default function PlatformsReport({ data, traffic, trafficOptions = [], on
 function Shell({ children, sub, traffic, trafficOptions, onTraffic, onExcel, onBack }) {
   return (
     <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '18px 28px 40px', display: 'flex', justifyContent: 'center', background: 'var(--bg-canvas)', fontFamily: "'Manrope', sans-serif", color: 'var(--text-primary)' }}>
-      <style>{`@keyframes prRise { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
+      <style>{`
         .pr-row:hover { background: var(--bg-subtle) }
-        @media (prefers-reduced-motion: reduce) { .pr-root * { animation-duration: 1ms !important; animation-delay: 0s !important } }`}</style>
+        `}</style>
       <div className="pr-root" style={{ width: '100%', maxWidth: 2500,   /* под 2560, как дашборд (владелец 05.11.2026); в макете — 1860 */ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, ...rise(0) }}>
           <span style={btn} onClick={onBack}>← Дашборд</span>

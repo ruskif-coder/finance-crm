@@ -56,7 +56,7 @@ export const PaceBar = ({ pct, pace, height = 8 }) => (
   <span style={{ position: 'relative', display: 'block', height, borderRadius: 4,
     background: 'var(--bg-subtle)', overflow: 'hidden' }}>
     <span style={{ position: 'absolute', inset: 0, width: `${Math.min(100, Math.max(0, pct || 0))}%`,
-      background: pctTone(pct, pace), borderRadius: 4, transition: 'width .35s ease' }} />
+      background: pctTone(pct, pace), borderRadius: 4, transition: 'width var(--dur-slow) ease' }} />
     {pace != null && (
       <span title="где РК должна быть по календарю"
         style={{ position: 'absolute', top: -1, bottom: -1, left: `${Math.min(100, pace * 100)}%`,

@@ -144,7 +144,8 @@ export function DocButton({ label, off, offText = 'ждём 1С', onDoc, paper, 
 
 /** Кнопки следующей отметки подписи документа (ДС — `annex_id`, УПД — `upd_no`). Отказ — с причиной; отправка бумаги — трек
  * по желанию; подпись бумаги ставит скан, а не кнопка. Правила и запреты — на сервере (`doc_sign.py`). */
-export function SignActions({ code, url, target, sign, onDone, setErr, small = false }) {
+/** `stack` — кнопки столбиком в правой ячейке строки ДС/комплекта (владелец 18.11.2026: справа в конце, две — в две строки). */
+export function SignActions({ code, url, target, sign, onDone, setErr, small = false, stack = false }) {
   const [busy, setBusy] = useState(false)
   const next = sign?.next || []
   if (!next.length) return null
@@ -162,7 +163,8 @@ export function SignActions({ code, url, target, sign, onDone, setErr, small = f
     catch (e) { setErr?.(detailText(e, 'Не удалось отметить')) } finally { setBusy(false) }
   }
   return (
-    <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center' }}>
+    <span data-noexp onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignSelf: 'center',
+      ...(stack ? { flexDirection: 'column', alignItems: 'stretch' } : {}) }}>
       {next.map(n => (
         <button key={n} type="button" disabled={busy} onClick={() => run(n)}
           style={{ height: small ? 22 : 24, padding: '0 9px', borderRadius: 7, border: `1px solid ${n === 'отклонён' ? 'var(--danger-border)' : 'var(--accent-border)'}`,
@@ -204,9 +206,11 @@ export function ScansPanel({ m, picked, setPicked, canEdit, onChanged }) {
   if (!targets.length) return null
   const dot = (c) => <span aria-hidden style={{ width: 6, height: 6, borderRadius: 2, background: c, flex: '0 0 6px' }} />
   return (
-    <div data-scans style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 14px', background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 12 }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--warning-fg)' }}>
-        {dot('var(--warning)')}Ждём скан подписанного: {targets.map(t => t.label).join(', ')} — скан и есть отметка «подписан»</span>
+    // NAVY (README §3): на «ждём сканы» ход за нами — оранжевый --signal; раньше сканы можно приложить заранее — морской (как было)
+    <div data-scans data-scans-due={m.status === 'ждём сканы' ? '' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 14px',
+      background: 'var(--scans-bg, var(--warning-bg))', border: '1px solid var(--scans-bd, var(--warning-border))', borderRadius: 12 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--scans-fg, var(--warning-fg))' }}>
+        {dot('var(--scans-dot, var(--warning))')}Ждём скан подписанного: {targets.map(t => t.label).join(', ')} — скан и есть отметка «подписан»</span>
       {canEdit && (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ ...CAPS, paddingRight: 2 }}>что загружаем</span>
@@ -221,7 +225,7 @@ export function ScansPanel({ m, picked, setPicked, canEdit, onChanged }) {
               </span>
             )
           })}
-          <span onClick={() => !busy && fileRef.current?.click()} title="Один файл — один документ: pdf, jpg, png, tif до 20 МБ"
+          <span data-act="main" onClick={() => !busy && fileRef.current?.click()} title="Один файл — один документ: pdf, jpg, png, tif до 20 МБ"
             style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 12px', borderRadius: 8, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1, fontFamily: UI }}>
             <Svg d="M12 16V4M8 8l4-4 4 4M5 20h14" size={12} w={2.1} />{busy ? 'Загружаю…' : `Загрузить · ${target ? target.label : ''}`}
           </span>

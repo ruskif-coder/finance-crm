@@ -12,7 +12,7 @@ const pin = (on, hot) => ({
   background: on ? 'var(--accent-tint)' : 'var(--bg-card)',
   border: `1px solid ${on ? 'var(--accent-border)' : hot ? 'var(--danger-border)' : 'var(--border-card)'}`,
   color: on ? 'var(--accent)' : 'var(--text-secondary)', fontSize: 12, fontWeight: on ? 700 : 600,
-  whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
+  whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
 })
 const num = (on, hot) => ({ fontFamily: MONO, fontSize: 10, fontWeight: 700,
   color: hot ? 'var(--danger-fg)' : on ? 'var(--accent)' : 'var(--text-faint)' })

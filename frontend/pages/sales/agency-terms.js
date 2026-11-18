@@ -55,7 +55,7 @@ export default function AgencyTermsPage() {
   const side = tab === 'advertiser' ? 'advertiser' : 'agency'
   const ruleEdit = rule && (rule.kind === 'партнёрская' ? perm.specialEdit : perm.edit)
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Head><title>Агентские условия · Продажи</title></Head>
       {nav}
       <div style={{ maxWidth: 1700, margin: '0 auto', padding: '22px 28px 40px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 14 }}>

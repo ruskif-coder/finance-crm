@@ -22,7 +22,7 @@ function Toggle({ on, onClick, label, title, disabled, color }) {
     <span onClick={disabled ? undefined : onClick} title={title}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: disabled ? 'var(--text-disabled)' : 'var(--text-primary)', cursor: disabled ? 'not-allowed' : 'pointer' }}>
       <span style={{ position: 'relative', display: 'inline-block', width: 30, height: 16, borderRadius: 8, background: on ? color[0] : 'var(--border-card)' }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 12, height: 12, borderRadius: 4, background: on ? color[1] : 'var(--text-disabled)', transition: 'left 150ms ease' }} />
+        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 12, height: 12, borderRadius: 4, background: on ? color[1] : 'var(--text-disabled)', transition: 'left var(--dur-fast) ease' }} />
       </span>
       {label}
     </span>

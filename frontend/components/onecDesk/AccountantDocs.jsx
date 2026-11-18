@@ -32,7 +32,7 @@ import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow,
 import { parseDocFileName } from '@/lib/docFileName.mjs';   // стенд: № и дата из имени файла 1С (10.11.2026)
 import { pctComma } from '@/lib/salesFormat';
 
-const AD_RISE = 'adRise 0.4s cubic-bezier(0.22,1,0.36,1) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
+const AD_RISE = 'm-rise var(--dur-slow) var(--ease-out) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
 const TABS = [['wait', 'Заявки на документы', 'var(--accent)'], ['returned', 'Возвращены аккаунту', 'var(--warning)'], ['done', 'Внесены', 'var(--income)'], ['scan', 'Ждут сканов', 'var(--warning)'], ['all', 'Все', null], ['archive', 'Архив', null]];   // архив — по кнопке (владелец 12.11.2026)   // стенд: «Ждут сканов» — после «Внесены» (владелец 09.11.2026)
 const RETURN_REASONS = ['реквизиты покупателя', 'сумма не та', 'нет подписанного ДС', 'основание / период'];
 const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
@@ -249,7 +249,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
       </div>
-      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: '#FFFFFF', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'adRise 0.24s cubic-bezier(0.22,1,0.36,1) both', zIndex: 10 }}>{toast}</div>}
+      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: '#FFFFFF', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: 10 }}>{toast}</div>}
     </div>
   );
 }
@@ -490,7 +490,7 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
       {/* нижняя панель */}
       <Card style={{ position: 'sticky', bottom: 12, marginTop: 'auto', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 14, boxShadow: 'var(--shadow-float)', zIndex: 5 }}>
         {ret.open ? <>
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 auto', animation: 'adPop 0.2s cubic-bezier(0.22,1,0.36,1) both' }}>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 auto', animation: 'm-drop var(--dur-base) var(--ease-out) both' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--warning-fg)' }}>Вернуть аккаунту — что исправить?</span>
             <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{RETURN_REASONS.map(x => { const on = ret.reason === x;
               return <span key={x} role="button" tabIndex={0} onClick={() => setRet(s => ({ ...s, reason: x }))} style={{ display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 11px', borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', background: on ? 'var(--warning-tint)' : 'var(--bg-card)', color: on ? 'var(--warning-fg)' : 'var(--text-secondary)', border: `1px solid ${on ? 'var(--warning-border)' : 'var(--border-card)'}` }}>{x}</span>; })}</span>

@@ -2,6 +2,7 @@
  * Режим «Карточки» «Моих сделок» (экраны 10–11 хендоффа v5): колонка на стадию контура. Шапка колонки — число, сумма,
  * подпись, полоса «ваш ход / всё хорошо / ждём»; шапки липкие. В колонке — «Ваш ход», затем «Ждём», затем «Всё хорошо».
  */
+import { STICKY_TOP } from '@/components/accounts/deals/TurnGroups'
 import { MONO } from '@/components/salesTableKit'
 import { mln } from '@/components/accounts/dashboard/ladder'
 import { CONTOURS, good, mine } from '@/components/accounts/deals/contours'
@@ -13,7 +14,7 @@ const SUB = {
   'work:booking': 'подтвердить за 15 дней до старта', 'work:prep': 'креативы, площадки, ЕРИД, РК',
   'work:live': 'следим за откруткой', 'work:recon': 'сверить и отправить в ДО · норма 3 дня',
 }
-const PARTS = [['mine', 'ваш ход', 'var(--accent)'], ['good', 'всё хорошо', 'var(--income)'], ['wait', 'ждём', 'var(--border-hover)']]
+const PARTS = [['mine', 'ваш ход', 'var(--acc-turn, var(--accent))'], ['good', 'всё хорошо', 'var(--income)'], ['wait', 'ждём', 'var(--border-hover)']]
 const partOf = (r) => (mine(r) ? 'mine' : good(r) ? 'good' : 'wait')
 const SECTION = { mine: 'Ваш ход', wait: 'Ждём', good: 'Всё хорошо' }
 
@@ -21,7 +22,7 @@ function Head({ st, contour, rows }) {
   const n = { mine: 0, good: 0, wait: 0 }
   rows.forEach(r => { n[partOf(r)] += 1 })
   return (
-    <div style={{ position: 'sticky', top: 64, zIndex: 5, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14,
+    <div style={{ position: 'sticky', top: STICKY_TOP, zIndex: 5, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14,
       padding: '10px 14px', boxShadow: 'var(--shadow-card)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <b style={{ fontSize: 14 }}>{st.label}</b>

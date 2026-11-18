@@ -4,26 +4,28 @@
  * считаются по ней, полоски остаются полными. Выбранный контур — белый фон и тень, без синей обводки.
  */
 import { MONO } from '@/components/salesTableKit'
+import { useThemeKey } from '@/lib/theme'
 import { CONTOURS, DOC_STAGES, summary, hot, mine, good, packMine } from './contours'
 import { mln } from '@/components/accounts/dashboard/ladder'
 
 const BAR = { sandbox: 'var(--text-faint)', work: 'var(--warning)', docs: 'var(--income)' }
 
-function Block({ no, title, sub, on, count, unit, sum, mineN, hotN, goodN, aside, asideTitle, bars, contour, picked, onPick, onStage }) {
+function Block({ no, title, sub, on, count, unit, sum, mineN, hotN, goodN, aside, asideTitle, bars, contour, picked, onPick, onStage, tone }) {
   return (
-    <button type="button" onClick={onPick} aria-pressed={on}
+    <button type="button" onClick={onPick} aria-pressed={on} data-tone={tone}
       style={{ minWidth: 0, overflow: 'hidden', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 8, padding: '14px 18px',
-        borderRadius: 16, cursor: 'pointer', background: on ? 'var(--bg-card)' : 'var(--bg-subtle)', border: '1px solid var(--border-card)',
+        borderRadius: 16, cursor: 'pointer', background: on ? 'var(--ct-on, var(--bg-card))' : 'var(--ct-off, var(--bg-subtle))',
+        border: `1px solid ${on ? 'var(--ct-on-bd, var(--border-card))' : 'var(--ct-off-bd, var(--border-card))'}`,
         boxShadow: on ? 'var(--shadow-card)' : 'none', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', minWidth: 0 }}>
         <span style={{ fontFamily: MONO, flex: '0 0 22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22,
-          borderRadius: 7, background: on ? 'var(--accent)' : 'var(--bg-card)', color: on ? 'var(--bg-card)' : 'var(--text-muted)', fontSize: 11.5, fontWeight: 700 }}>{no}</span>
+          borderRadius: 7, background: on ? 'var(--acc-no-on, var(--accent))' : 'var(--bg-card)', color: on ? 'var(--acc-no-fg, var(--bg-card))' : 'var(--text-muted)', fontSize: 11.5, fontWeight: 700 }}>{no}</span>
         <span style={{ flex: '0 0 auto', fontSize: 15.5, fontWeight: 800, whiteSpace: 'nowrap' }}>{title}</span>
         <span title={sub} style={{ flex: '1 1 0', minWidth: 0, fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>
         {mineN > 0 && (
           <span style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', borderRadius: 8,
-            background: 'var(--accent-tint)', color: 'var(--accent-fg)', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
-            <span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--accent)' }} />ваш ход {mineN}</span>)}
+            background: 'var(--acc-turn-bg, var(--accent-tint))', color: 'var(--acc-turn-fg, var(--accent-fg))', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            <span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--acc-turn, var(--accent))' }} />ваш ход {mineN}</span>)}
         {hotN > 0 && (
           <span style={{ fontFamily: MONO, flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
             <span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--danger)' }} />горит {hotN}</span>)}
@@ -68,6 +70,8 @@ const unitOf = (key, picked, labels) => {
 
 /** rows — строки очереди (сделки), packs — пакеты мастер-сделок (могут быть null — нет права или ещё не загружены). */
 export default function ContourCards({ rows, packs, contour, picked, onContour, onStage }) {
+  // «Navy ночь»: контуры — светлые блоки (README §2 хендоффа design_handoff_account_navy); днём и в прежних темах — без тона
+  const tone = useThemeKey() === 'navy-dark' ? 'light' : undefined
   const blocks = CONTOURS.map(c => {
     const all = rows.filter(r => r.__contour === c.key)
     const sel = contour === c.key && picked.length ? all.filter(r => c.stages.some(st => picked.includes(st.key) && st.match(r))) : all
@@ -78,7 +82,7 @@ export default function ContourCards({ rows, packs, contour, picked, onContour, 
       unit={(contour === c.key && unitOf(c.key, picked, labels)) || c.unit} sum={s.sum} mineN={sel.filter(mine).length}
       hotN={sel.filter(r => mine(r) && hot(r)).length} goodN={sel.filter(good).length}
       bars={full.stages} contour={c.key} picked={contour === c.key ? picked : []}
-      onPick={() => onContour(c.key)} onStage={onStage} />
+      onPick={() => onContour(c.key)} onStage={onStage} tone={tone} />
   })
   const pk = packs || []
   const active = pk.filter(p => p.status !== 'ждём оплату')
@@ -96,7 +100,7 @@ export default function ContourCards({ rows, packs, contour, picked, onContour, 
       aside={pay.length ? `ждут оплату: ${pay.length} пак. · ${pay.reduce((s, p) => s + (p.deals || 0), 0)} сделок · ${mln(pay.reduce((s, p) => s + (p.net || 0), 0))}` : ''}
       asideTitle="После выставления пакет уходит из фокуса аккаунта — оплату ведут финансы"
       bars={docBars} contour="docs" picked={contour === 'docs' ? picked : []}
-      onPick={() => onContour('docs')} onStage={onStage} />)
+      onPick={() => onContour('docs')} onStage={onStage} tone={tone} />)
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.25fr) minmax(0,1.25fr)', gap: 10 }}>{blocks}</div>
   )

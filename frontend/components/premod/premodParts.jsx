@@ -3,6 +3,7 @@
  * Шрифты и карточка — из кита (salesTableKit); остальное — виды этого экрана, в ките их нет:
  * у кита Segmented без счётчиков и вида «в карточке», флажка и метки очереди нет вовсе.
  */
+import { Segmented as MotionSegmented } from '@/lib/motion';
 import React from 'react';
 import { MONO, UI, card } from '@/components/salesTableKit';
 
@@ -23,9 +24,9 @@ export const STYLE = `
 .pm-in:focus, .pm-ta:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint) } .pm-in::placeholder, .pm-ta::placeholder { color:var(--text-disabled); font-weight:500 }
 .pm-ta { font:600 13.5px ${SANS}; box-sizing:border-box; width:100%; padding:10px 12px; border:1px solid var(--border-card); border-radius:12px; outline:none; resize:vertical; line-height:1.45 }
 .pm-row:hover { background:var(--bg-subtle) }
-@keyframes pmRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-@keyframes pmPop { from { opacity:0; transform:scale(0.98) } to { opacity:1; transform:none } }
-@media (prefers-reduced-motion: reduce) { .pm-root * { animation-duration:1ms !important; animation-delay:0s !important } }
+
+
+
 `;
 
 export const TONE = {
@@ -51,14 +52,9 @@ export const Check = ({ on, onClick, size = 18, dim, title }) => (
   <span role="checkbox" aria-checked={!!on} tabIndex={0} title={title} onClick={onClick} onKeyDown={e => e.key === ' ' && (e.preventDefault(), onClick(e))}
     style={{ width: size, height: size, borderRadius: size > 16 ? 5 : 4, boxSizing: 'border-box', border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border-hover)'}`, background: on ? 'var(--accent)' : 'var(--bg-card)', color: 'var(--on-accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: size - 6, fontWeight: 800, cursor: 'pointer', opacity: dim ? 0.35 : 1, flex: '0 0 auto' }}>{on ? '✓' : ''}</span>
 );
+// Переключатель — общий lib/motion (18.11.2026): в карточке — белым с тенью, на фоне — подсветкой акцентом
 export const Segmented = ({ value, options, onChange, inCard }) => (
-  <span style={{ display: 'inline-flex', background: inCard ? 'var(--bg-subtle)' : 'var(--bg-card)', border: `1px solid ${inCard ? 'var(--border-inner)' : 'var(--border-card)'}`, borderRadius: inCard ? 10 : 12, padding: inCard ? 2 : 3 }}>
-    {options.map(([v, label, count]) => { const on = value === v;
-      return <span key={v} role="button" tabIndex={0} onClick={() => onChange(v)} onKeyDown={e => e.key === 'Enter' && onChange(v)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: inCard ? 26 : 28, padding: '0 11px', borderRadius: inCard ? 8 : 9, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer',
-          background: on ? (inCard ? 'var(--bg-card)' : 'var(--accent-tint)') : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-muted)', boxShadow: on && inCard ? 'var(--shadow-card)' : 'none' }}>
-        {label}{count != null && <span style={{ fontFamily: MONO, fontSize: 11.5 }}>{count}</span>}</span>; })}
-  </span>
+  <MotionSegmented tone={inCard ? 'card' : 'tint'} size={inCard ? 'xs' : 'sm'} value={value} options={options} onChange={onChange} />
 );
 /** Отметка проверки: ✓ ✗ ! – ○ */
 export const CHECK_MARK = { ok: ['✓', 'var(--income-fg)', 'transparent', 'var(--text-primary)', 'var(--text-secondary)'], bad: ['✗', 'var(--danger-fg)', 'var(--danger-tint)', 'var(--danger-fg)', 'var(--danger-fg)'],

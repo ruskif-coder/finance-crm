@@ -339,8 +339,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
   return (
     <div {...overlayClose(onClose)}
       style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
-      <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'visible', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
-        <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
+      <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'visible', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'm-rise var(--dur-slow) var(--ease-out) both' }}>
         {header}
         <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border-inner)', background: 'var(--bg-subtle)', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>

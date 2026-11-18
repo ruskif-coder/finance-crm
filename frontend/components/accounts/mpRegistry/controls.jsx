@@ -11,12 +11,12 @@ const segItem = (on) => ({
   display: 'inline-flex', alignItems: 'center', gap: 7, height: 28, padding: '0 11px', borderRadius: 9, border: 'none',
   background: on ? 'var(--accent-tint)' : 'transparent', boxShadow: on ? 'inset 0 0 0 1px var(--accent-border)' : 'none',
   color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontFamily: UI, fontSize: 12.5, fontWeight: on ? 700 : 600,
-  whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background 160ms ease',
+  whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background var(--dur-base) ease',
 })
 const dot = (bg, size = 7) => ({ width: size, height: size, borderRadius: '50%', background: bg, flex: `0 0 ${size}px` })
 
 export const Chevron = ({ open, color }) => (
-  <span style={{ display: 'inline-flex', color, transform: `rotate(${open ? 90 : 0}deg)`, transition: 'transform 220ms cubic-bezier(0.22,1,0.36,1)' }}>
+  <span style={{ display: 'inline-flex', color, transform: `rotate(${open ? 90 : 0}deg)`, transition: 'transform var(--dur-base) var(--ease-out)' }}>
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
   </span>
 )
@@ -48,8 +48,8 @@ export function Toggle({ on, label, n, title, onClick }) {
       style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 12px 0 8px', boxSizing: 'border-box',
         borderRadius: 10, background: 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
         fontFamily: UI, fontSize: 12.5, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-      <span style={{ position: 'relative', width: 26, height: 15, borderRadius: 8, background: on ? 'var(--accent)' : 'var(--text-disabled)', transition: 'background 160ms ease' }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 13 : 2, width: 11, height: 11, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left 160ms ease' }} />
+      <span style={{ position: 'relative', width: 26, height: 15, borderRadius: 8, background: on ? 'var(--accent)' : 'var(--text-disabled)', transition: 'background var(--dur-base) ease' }}>
+        <span style={{ position: 'absolute', top: 2, left: on ? 13 : 2, width: 11, height: 11, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left var(--dur-base) ease' }} />
       </span>
       {label}
       {n != null && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{n}</span>}

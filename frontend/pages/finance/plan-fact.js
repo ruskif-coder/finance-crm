@@ -137,7 +137,7 @@ export default function PlanFact() {
 
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
         <Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="planfact" />
         <PlanFactMobile dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} data={data} />
@@ -171,7 +171,7 @@ export default function PlanFact() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Navbar active="planfact">
       <Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>

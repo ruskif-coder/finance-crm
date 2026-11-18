@@ -24,13 +24,12 @@ function Kit({ k, rows, rate, doc, code, onPick, setErr, basis, busy, onBasis, c
   const [open, setOpen] = useState(false)
   const sign = doc?.sign?.state || 'upd'
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-tint)', border: `1px solid ${signFrame(sign, true)}`, borderRadius: 12, minWidth: 0, transition: 'border-color 300ms ease' }}>
+    <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-tint)', border: `1px solid ${signFrame(sign, true)}`, borderRadius: 12, minWidth: 0, transition: 'border-color var(--dur-slow) ease' }}>
     <div onClick={() => setOpen(o => !o)} style={{ flex: '0 1 420px', minWidth: 'min(360px,100%)', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', columnGap: 14, rowGap: 5, padding: '11px 13px',
       minHeight: 0, cursor: 'pointer', alignContent: 'start' }}>
       <span style={{ gridColumn: 1, display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ ...HEAD, fontWeight: 700, color: 'var(--accent-fg)' }}>УПД № {k.upd_no}</span>
         {!!doc && <SignBadge s={sign} small />}
-        {canEdit && !!doc && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={doc.sign} onDone={onDone} setErr={setErr} small />}
         <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{open ? '▴' : '▾'}</span>
       </span>
       <span style={{ gridColumn: 1, fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupLabel(k)}</span>
@@ -39,8 +38,10 @@ function Kit({ k, rows, rate, doc, code, onPick, setErr, basis, busy, onBasis, c
         <span style={{ ...HEAD, letterSpacing: '.06em' }}>с НДС</span>
       </span>
       <span style={{ gridColumn: 1, fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>сделки: {k.deals.join(', ')}</span>
-      <span style={{ gridColumn: 2, gridRow: '1 / span 4', alignSelf: 'start' }}>
+      {/* отметки подписи — справа, под документами комплекта, столбиком (владелец 18.11.2026: как в реестре) */}
+      <span style={{ gridColumn: 2, gridRow: '1 / span 4', alignSelf: 'start', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
         <KitDocs kit={doc} upd_no={k.upd_no} paper={scanOpen(doc)} code={code} onPick={onPick} setErr={setErr} canEdit={canEdit} onDone={onDone} />
+        {canEdit && !!doc && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={doc.sign} onDone={onDone} setErr={setErr} small stack />}
       </span>
       {open && (
         <div onClick={e => e.stopPropagation()} style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, paddingTop: 8, borderTop: '1px solid var(--accent-border)', cursor: 'default' }}>
@@ -83,7 +84,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
   return (
     <div style={{ background: 'var(--bg-card)', border: `1px solid ${doc ? signFrame(sign) : 'var(--border-card)'}`, boxShadow: 'var(--shadow-card)', borderRadius: 18,
       padding: '16px 20px 18px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
-      outline: flash ? '2px solid var(--accent)' : 'none', transition: 'outline .2s, border-color 300ms ease' }}>
+      outline: flash ? '2px solid var(--accent)' : 'none', transition: 'outline var(--dur-base), border-color var(--dur-slow) ease' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{doc?.number || `ДС № ${ds.no}`}</span>
         {!!doc && !doc.edo_link && <SignBadge s={sign || 'none'} />}      {/* «уже в ЭДО» — свой статус ниже */}
@@ -106,7 +107,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
         {/* Текст ДС и основание к закрытию правятся в конструкторе ДС — на «согласовании» сюда и идут (владелец 20.10.2026). */}
         {!!doc && (
           <Link href={`/directory/annexes/${doc.annex_id}`} data-noexp onClick={e => e.stopPropagation()}
-            style={{ ...lineBtn({ tone: 'accent', size: 'sm' }), alignSelf: 'center', textDecoration: 'none' }}>
+            data-act="main" style={{ ...lineBtn({ tone: 'accent', size: 'sm' }), alignSelf: 'center', textDecoration: 'none' }}>
             {doc.confirmed ? 'Открыть в конструкторе →' : 'Править ДС →'}</Link>
         )}
         {/* пересобрать ДС и комплекты по текущим данным — с «было → станет»; до «ждём 1С» включительно, дальше через возврат стадии (17.11.2026) */}
@@ -114,7 +115,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
           <button type="button" data-noexp disabled={!mayRefresh} onClick={e => { e.stopPropagation(); onRefresh() }}
             title={mayRefresh ? 'ДС и комплекты — по текущим данным сделок и справочников (бренд, реквизиты); сначала покажет, что поменяется'
               : 'Обновить можно до «ждём 1С» включительно. Сначала «Вернуть стадию» на «ждём 1С», потом «Обновить»'}
-            style={{ ...lineBtn({ tone: 'secondary', size: 'sm' }), alignSelf: 'center', opacity: mayRefresh ? 1 : 0.45, cursor: mayRefresh ? 'pointer' : 'not-allowed' }}>Обновить</button>
+            style={{ ...lineBtn({ tone: 'secondary', size: 'sm' }), fontWeight: 600, alignSelf: 'center', opacity: mayRefresh ? 1 : 0.45, cursor: mayRefresh ? 'pointer' : 'not-allowed' }}>Обновить</button>
         )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
           <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em' }}>{rub2(ds.net)}</span>
@@ -163,7 +164,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
               })}
             </div>
           ))}
-          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '10px 8px', background: 'var(--bg-subtle)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '10px 8px', background: 'var(--soft-bg, var(--bg-subtle))' }}>
             <span style={{ fontSize: 12.5, fontWeight: 700 }}>Итого</span><span /><span /><span /><span />
             {[ds.net, ds.vat, ds.gross].map((v, i) => <span key={i} style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>{rub2(v)}</span>)}
           </div>

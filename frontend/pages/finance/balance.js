@@ -523,7 +523,7 @@ export default function Balance() {
 
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
         <Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="balance" />
         <BalanceMobile
@@ -550,7 +550,7 @@ export default function Balance() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Navbar active="balance" />
       <Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head>
 

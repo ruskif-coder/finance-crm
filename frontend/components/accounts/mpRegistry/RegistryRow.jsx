@@ -148,9 +148,9 @@ export default function RegistryRow({ it, open, onToggle, cellsOpen, canEditLock
 /** Расхлоп строки: план только для чтения. Растянут на видимую ширину таблицы и при прокрутке вбок не уезжает. */
 export function RowDetail({ it, detail, onRetry }) {
   const wrap = { position: 'sticky', left: 0, width: 'var(--mpr-vw, 100cqw)', boxSizing: 'border-box', padding: '20px 30px 24px 46px',
-    borderBottom: '1px solid var(--border-inner)', animation: 'mprOpen 300ms cubic-bezier(0.22,1,0.36,1) both' }
+    borderBottom: '1px solid var(--border-inner)', animation: 'm-drop var(--dur-slow) var(--ease-out) both' }
   if (!detail || detail.status === 'loading') {
-    return <div style={wrap}><div style={{ height: 220, borderRadius: 12, background: 'var(--bg-subtle)', animation: 'mprPulse 1.4s ease-in-out infinite' }} /></div>
+    return <div style={wrap}><div style={{ height: 220, borderRadius: 12, background: 'var(--bg-subtle)', animation: 'm-pulse 1.4s ease-in-out infinite' }} /></div>
   }
   if (detail.status === 'error') {
     return (

@@ -60,7 +60,7 @@ export function DownloadOverlay({ label = 'Готовим файл…', progress
         </span>
         {pct != null && (
           <div style={{ width: 220, height: 6, borderRadius: 3, background: 'var(--border-inner)', overflow: 'hidden' }}>
-            <div style={{ width: pct + '%', height: '100%', background: 'var(--accent)', transition: 'width .25s ease' }} />
+            <div style={{ width: pct + '%', height: '100%', background: 'var(--accent)', transition: 'width var(--dur-slow) ease' }} />
           </div>
         )}
       </div>

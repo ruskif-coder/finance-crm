@@ -79,9 +79,9 @@ function SelfPromoChip({ on, canEdit, canUnset, onToggle }) {
       {/* Тумблер, а не галочка: признак включают один раз и он остаётся видимым
           состоянием блока, а не действием, которое ищут в меню. */}
       <span style={{ position: 'relative', width: 28, height: 16, borderRadius: 999, flex: '0 0 28px',
-        background: on ? 'var(--warning)' : 'var(--border-hover)', transition: 'background .18s' }}>
+        background: on ? 'var(--warning)' : 'var(--border-hover)', transition: 'background var(--dur-base)' }}>
         <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12,
-          borderRadius: '50%', background: 'var(--bg-card)', transition: 'left .18s' }} />
+          borderRadius: '50%', background: 'var(--bg-card)', transition: 'left var(--dur-base)' }} />
       </span>
       <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', fontWeight: 700,
         textTransform: 'uppercase', color: on ? 'var(--warning-text)' : 'var(--text-muted)' }}>
@@ -960,7 +960,7 @@ export default function DealCard() {
                         style={{
                           flex: cur ? '2 1 0' : '1 1 0', minWidth: 6, height: 8, borderRadius: 4,
                           background: cur ? 'var(--accent)' : past ? 'var(--income)' : 'var(--border-inner)',   // пройденные — зелёные (владелец 14.10.2026)
-                          transition: 'flex .25s cubic-bezier(0.22,1,0.36,1)',
+                          transition: 'flex var(--dur-slow) var(--ease-out)',
                         }} />
                     )
                   })}

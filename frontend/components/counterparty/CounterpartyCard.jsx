@@ -17,13 +17,13 @@ export const T = {
   danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', mixed: 'var(--mixed)', mixedTint: 'var(--mixed-tint)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
-  ease: 'cubic-bezier(0.22,1,0.36,1)',
+  ease: 'var(--ease-out)',
 };
 
 const card = (delay = 0) => ({
   background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow,
   borderRadius: 18, display: 'flex', flexDirection: 'column',
-  animation: `riseIn .4s ${T.ease} ${delay}s both`,
+  animation: `m-rise var(--dur-slow) ${T.ease} ${delay}s both`,
 });
 const capTitle = {
   fontFamily: T.mono, fontSize: 11, letterSpacing: '.08em',
@@ -122,7 +122,7 @@ function TurnoverChart({ months, income, expense }) {
                 flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4,
                 padding: '3px 0', borderRadius: 5, border: 'none', cursor: 'pointer',
                 background: sel === i ? T.pick : 'transparent',
-                transition: 'background-color 150ms ease',
+                transition: 'background-color var(--dur-fast) ease',
               }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {cells(income[i], T.income, true, maxMln).map((bg, k) => (
@@ -181,8 +181,8 @@ export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, on
     }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
+        
+        
         .cc-row:hover { background:${T.subtle} }
         .cc-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
         .cc-primary:hover { background:${T.accentHover} }
@@ -191,7 +191,7 @@ export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, on
       `}</style>
 
       {/* Хлебные крошки */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `m-rise var(--dur-slow) ${T.ease} both` }}>
         <span className="cc-link" onClick={onBack} style={{ fontSize: 13, fontWeight: 600, color: T.t3, cursor: 'pointer' }}>← Контрагенты</span>
         <span style={{ color: T.hoverBorder }}>/</span>
         <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', paddingRight: 2 }}>{name}</span>

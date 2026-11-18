@@ -71,7 +71,7 @@ function GroupRow({ g, open, onToggle }) {
         <PfRow label={`${open ? '▾' : '▸'} ${g.group}`} plan={g.totals.plan} fact={g.totals.fact} diff={g.totals.diff} pct={g.totals.pct} isIncome={g.is_income} weight={700} size={13.5} />
       </div>
       {open && (
-        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0, '.24s') }}>
+        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0) }}>
           {(g.subgroups || []).map((sg, i) => (
             <div key={sg.subgroup || i}>
               {sg.subgroup && (

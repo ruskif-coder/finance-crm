@@ -700,6 +700,23 @@ def reopen_refused(target) -> bool:
     return True
 
 
+def _switch_surface(db: Session, target, pub, surface: str, set_id: Optional[int]) -> None:
+    """Площадка уже в сделке с другой поверхностью. Пока ей ничего не отправляли и другой креатив её не адресует —
+    поверхность меняется (владелец 18.11.2026: копии еФарм WEB перевели в медиаплане на APP, а скопированные получатели
+    оставались web и «+ Площадки» отказывал). Иначе — отказ: отправленный запрос по вебу молча стал бы запросом по
+    приложению, а материал другого креатива сделан под прежнюю поверхность."""
+    sent = db.query(LaunchPrepPair.id).filter(LaunchPrepPair.target_id == target.id).first()
+    others = db.query(LaunchPrepSetTarget.set_id).filter(LaunchPrepSetTarget.target_id == target.id,
+                                                         LaunchPrepSetTarget.set_id != (set_id or 0)).first()
+    if sent or others:
+        why = "ей уже отправляли комплект" if sent else "её адресует другой креатив"
+        raise HTTPException(
+            status_code=400,
+            detail=f"«{pub.name}» уже добавлена в эту сделку с поверхностью «{target.surface_kind}», и {why}. "
+                   f"Две поверхности одной площадки в одной сделке модель пока не описывает — заведите вторую сделку")
+    target.surface_kind = surface
+
+
 def _attach(db: Session, deal, service, items, set_id: Optional[int]) -> List[str]:
     """Завести площадку у сделки (если её там нет) и адресовать ЭТОМУ креативу.
 
@@ -728,13 +745,10 @@ def _attach(db: Session, deal, service, items, set_id: Optional[int]) -> List[st
         # площадки одна услуга не подключена на обеих поверхностях — замер 28.08.2026, ноль
         # случаев, — но ключ здесь по площадке, и появись такая связка, вторая поверхность
         # МОЛЧА взяла бы строку первой: запрос по приложению стал бы запросом по вебу.
-        # Отказ вместо тишины: неверная поверхность в задании не видна ни нам, ни площадке.
+        # Отказ вместо тишины: неверная поверхность в задании не видна ни нам, ни площадке. С 18.11.2026 отказ — только когда
+        # площадке уже отправляли или её адресует другой креатив; неотправленная меняет поверхность (`_switch_surface`).
         if target is not None and surface and target.surface_kind != surface:
-            raise HTTPException(
-                status_code=400,
-                detail=f"«{pub.name}» уже добавлена в эту сделку с поверхностью "
-                       f"«{target.surface_kind}». Две поверхности одной площадки в одной "
-                       f"сделке модель пока не описывает — заведите вторую сделку")
+            _switch_surface(db, target, pub, surface, set_id)
         if target is None:
             target = LaunchPrepTarget(deal_id=deal.id, publisher_id=pub_id,
                                       service_id=service.id, surface_kind=surface,

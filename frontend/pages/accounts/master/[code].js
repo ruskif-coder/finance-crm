@@ -11,6 +11,8 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import Navbar from '@/components/Navbar'
+import { useNavObject } from '@/lib/navObject'
+import { contrastTone, useThemeKey } from '@/lib/theme'
 import { UI, primaryBtn } from '@/components/salesTableKit'
 import { rub2 } from '@/lib/salesFormat'
 import MasterHeader from '@/components/master/MasterHeader'
@@ -33,6 +35,14 @@ function docOf(m, ds) {
 export default function MasterDealPage() {
   const router = useRouter()
   const { code } = router.query
+  // Меню (владелец 18.11.2026: «остаётся дашборд аккаунтов, а не мастер-сделка №»): раздел — откуда пришли, объект — номер пакета.
+  // Из реестра (?from=registry) — «Финансы · Мастер-сделки · M-…», иначе «Аккаунты · Дашборд · мастер-сделка M-…»; клик по
+  // «Дашборд» / «Мастер-сделки» возвращает в список (дашборд — сразу в контур «Документы»).
+  const fromRegistry = router.query.from === 'registry'
+  const navPath = fromRegistry ? '/finance/master-deals' : '/accounts/deals'
+  const navBack = useCallback(() => router.push(fromRegistry ? '/finance/master-deals' : '/accounts/deals?c=docs'), [router, fromRegistry])
+  const bottomTone = contrastTone(useThemeKey())
+  useNavObject(navPath, code ? (fromRegistry ? String(code) : `мастер-сделка ${code}`) : '', navBack)
   const [m, setM] = useState(null)
   const [draft, setDraft] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -73,7 +83,7 @@ export default function MasterDealPage() {
   }
 
   if (!m || !draft) {
-    return (<><Navbar asPath="/accounts/deals" /><div style={{ padding: 24, fontFamily: UI, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{err || 'Загружаю…'}</div></>)
+    return (<><Navbar asPath={navPath} /><div style={{ padding: 24, fontFamily: UI, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>{err || 'Загружаю…'}</div></>)
   }
   const lay = preview || m.layout
   const locked = !!m.issued_ds || m.status !== 'черновик'      // ДС созданы — раскладка только для чтения до «Вернуть в раскладку»
@@ -121,7 +131,7 @@ export default function MasterDealPage() {
                       Раскладка готова · {lay.ds.length} ДС, {lay.upd_count} {plural(lay.upd_count, ['комплект', 'комплекта', 'комплектов'])}, {rub2(lay.total_net)} до НДС</span>
                   )}
                   <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-faint)' }}>Номер ДС занимается при подтверждении в конструкторе ДС.</span>
-                  <button type="button" data-step-target="to-annex" disabled={!!why.length || busy} style={{ ...primaryBtn, opacity: why.length ? 0.5 : 1, cursor: why.length ? 'not-allowed' : 'pointer' }}
+                  <button type="button" data-act="main" data-step-target="to-annex" disabled={!!why.length || busy} style={{ ...primaryBtn, opacity: why.length ? 0.5 : 1, cursor: why.length ? 'not-allowed' : 'pointer' }}
                     onClick={async () => {
                       setBusy(true); setErr('')
                       try {
@@ -138,7 +148,9 @@ export default function MasterDealPage() {
   return (
     <>
       <Head><title>{`Закрытие ${m.code}`} · Аккаунты | SIMB-AD ERP</title></Head>
-      <Navbar asPath="/accounts/deals" />
+      <Navbar asPath={navPath} />
+      {/* .navy-scr — единый вид мастер-сделки в NAVY: карточка, реестр и «Документы» «Моих сделок» (navy.css, 18.11.2026) */}
+      <div className="navy-scr md-card" style={{ minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '18px 24px 40px', fontFamily: UI }}>
         <MasterHeader m={m} locked={locked} busy={busy}
           canEdit={mayEdit} onApply={apply}
@@ -204,9 +216,11 @@ export default function MasterDealPage() {
                 )
             )}
             {/* ДС пакета: с «выставления» — нижней строкой панели «Выставление» (владелец 19.10.2026: «эти 2 блока в один»), до — своей карточкой */}
-            {!issueShown && <div style={{ ...CARD, display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', flexWrap: 'wrap' }}>{docsRow}</div>}
+            {/* NAVY: нижняя строка действия — контрастный блок, закрывает страницу так же, как полоса стадий открывает (README §2) */}
+            {!issueShown && <div data-tone={bottomTone} data-acc-now="" style={{ ...CARD, display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', flexWrap: 'wrap' }}>{docsRow}</div>}
           </div>
         </div>
+      </div>
       </div>
     </>
   )

@@ -25,7 +25,7 @@ const T = {
   income: 'var(--income)', warning: 'var(--warning)',
   danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
-  mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
+  mono: MONO, sans: UI, ease: 'var(--ease-out)',
 }
 
 // Словарь тона — общий (`lib/tone.js`). Своя карта здесь стояла на СТАРЫХ словах
@@ -81,7 +81,7 @@ function Row({ n, onOpen, onAction }) {
         display: 'flex', gap: 10, padding: 10, borderRadius: 12, cursor: 'pointer',
         borderBottom: `1px solid ${T.row}`,
         background: hover ? T.hoverBg : (n.unread ? T.unreadBg : T.card),
-        transition: 'background-color 150ms ease', animation: `riseIn .24s ${T.ease} both`,
+        transition: 'background-color var(--dur-fast) ease', animation: `m-rise var(--dur-base) ${T.ease} both`,
       }}>
       <span style={{ width: 8, height: 8, borderRadius: 2, marginTop: 5, flex: '0 0 8px', background: TONE[toneOf(n.tone)].dot }} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
@@ -103,7 +103,7 @@ function Row({ n, onOpen, onAction }) {
               background: toneOf(n.tone) === 'bad' ? T.dangerTint : T.card,
               border: `1px solid ${toneOf(n.tone) === 'bad' ? T.dangerBorder : T.accentBorder}`,
               color: toneOf(n.tone) === 'bad' ? T.danger : T.accent,
-              transition: 'background-color 150ms ease, color 150ms ease',
+              transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
             }}>{n.action}</span>
         )}
       </div>
@@ -134,13 +134,8 @@ export default function NotificationsWidget({ items = [], onOpen, onAction, onRe
       position: 'absolute', inset: 0, boxSizing: 'border-box',
       background: T.card, border: `1px solid ${T.border}`, borderRadius: dense ? 18 : 28, boxShadow: T.shadow,
       padding: dense ? '18px 20px 14px' : '24px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden',
-      fontFamily: T.sans, color: T.t1, animation: `riseIn .4s ${T.ease} both`,
+      fontFamily: T.sans, color: T.t1, animation: `m-rise var(--dur-slow) ${T.ease} both`,
     }}>
-      <style>{`
-        @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
-        @media (prefers-reduced-motion: reduce) { * { animation-duration:1ms !important; animation-delay:0s !important } }
-      `}</style>
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: dense ? 17 : 19, fontWeight: 700, letterSpacing: '-0.02em' }}>Уведомления</span>
         {unread > 0 && (
@@ -169,7 +164,7 @@ export default function NotificationsWidget({ items = [], onOpen, onAction, onRe
               display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 9,
               background: on ? T.accentTint : T.tabBg, color: on ? T.accent : T.t2,
               fontSize: 12, fontWeight: on ? 700 : 600, cursor: 'pointer',
-              transition: 'background-color 150ms ease, color 150ms ease',
+              transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease',
             }}>
               {t}
               <span style={{ fontFamily: T.mono, fontSize: 9.5, color: on ? T.accentSoft : T.t4 }}>{counts[t] || 0}</span>

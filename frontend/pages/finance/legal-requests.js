@@ -91,7 +91,7 @@ export default function LegalRequestsPage() {
   if (access === 'denied') return <NoAccessScreen title="Юр запросы: нет доступа" what="Юр запросы" nav={head} />
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       {head}
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '20px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>

@@ -136,7 +136,7 @@ export function WideRow({ rows, counts, stage, onStage, months, budgets, notifs,
               return (
                 <div key={s.key} onClick={() => onStage(on ? null : s.key)} title={on ? 'Снять фильтр' : 'Показать в таблице'}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 8px', margin: '0 -8px', borderTop: '1px solid var(--border-row)',
-                    borderRadius: 8, cursor: 'pointer', background: on ? 'var(--accent-tint)' : 'transparent', transition: 'background-color 150ms ease' }}>
+                    borderRadius: 8, cursor: 'pointer', background: on ? 'var(--accent-tint)' : 'transparent', transition: 'background-color var(--dur-fast) ease' }}>
                   <Cells fill={s.fill} />
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: on ? 'var(--accent)' : 'var(--text-primary)', flex: '1 1 auto', minWidth: 0,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>

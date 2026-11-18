@@ -83,7 +83,7 @@ export default function ContractCard() {
   const c = d && d.contract
   const tplWin = (extra) => setTpl({ id: c.id, number: c.contract_number, format: c.cooperation_format, ...extra })
   return (
-    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Head><title>{c ? `Договор № ${c.contract_number || c.id}` : 'Договор'} | SIMB-AD ERP</title></Head>
       <Navbar />
       {/* Ширина до 1600 и прижато к левому краю экрана (владелец 28.10.2026: 1920 на экране 2560 при масштабе 125 % — «куча места»). */}

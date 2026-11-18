@@ -17,14 +17,14 @@ export default function StatusBar({ tabs, value, onPick }) {
   return (
     <span ref={box} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', padding: 3, height: 36, boxSizing: 'border-box', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10 }}>
       {pos && <span aria-hidden style={{ position: 'absolute', top: 3, bottom: 3, left: pos.left, width: pos.width, background: 'var(--accent-tint)', borderRadius: 8,
-        transition: 'left 320ms cubic-bezier(0.22,1,0.36,1), width 320ms cubic-bezier(0.22,1,0.36,1)' }} />}
+        transition: 'left var(--dur-slow) var(--ease-out), width var(--dur-slow) var(--ease-out)' }} />}
       {tabs.map(t => {
         const on = value === t.key
         return (
           <span key={t.key} data-tab={t.key} onClick={() => onPick(t.key)}
             style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 12px', borderRadius: 8,
               color: on ? 'var(--accent-fg)' : t.count ? 'var(--text-secondary)' : 'var(--text-disabled)', fontSize: 12.5, fontWeight: on ? 700 : 600,
-              whiteSpace: 'nowrap', cursor: 'pointer', transition: 'color 200ms ease' }}>
+              whiteSpace: 'nowrap', cursor: 'pointer', transition: 'color var(--dur-base) ease' }}>
             {t.key !== KEEP && <span aria-hidden style={{ width: 6, height: 6, borderRadius: 2, background: statusDot(t.key) }} />}
             {t.key}
             <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: on ? 'var(--accent)' : 'var(--text-faint)' }}>{t.count}</span>

@@ -190,7 +190,7 @@ const Tick = ({ on, onChange, title, dim }) => (
       cursor: onChange ? 'pointer' : 'default', opacity: dim ? 0.55 : 1,
       background: on ? (onChange ? 'var(--accent)' : 'var(--accent-tint)') : 'var(--bg-card)',
       border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
-      transition: 'background 120ms ease' }}>
+      transition: 'background var(--dur-fast) ease' }}>
     {on && (
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
         stroke={onChange ? 'var(--on-accent)' : 'var(--accent)'} strokeWidth="3.6"

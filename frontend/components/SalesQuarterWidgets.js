@@ -194,7 +194,7 @@ export default function SalesQuarterWidgets({
           .qw-cell { padding:22px !important; }
           .qw-portfolio { flex-direction:column; align-items:stretch; gap:16px; }
         }
-        .qw-btn { transition:background-color 120ms ease, border-color 120ms ease; }
+        .qw-btn { transition:background-color var(--dur-fast) ease, border-color var(--dur-fast) ease; }
         .qw-btn:hover { background:${C.accentHover} !important; }
         .qw-sel:hover { border-color:var(--text-faint) !important; }
       `}</style>

@@ -199,7 +199,7 @@ export default function StuckView() {
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 12px', borderRadius: 10, fontSize: 12.5, whiteSpace: 'nowrap',
                   background: on ? 'var(--accent-tint)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
                   color: off ? 'var(--text-disabled)' : on ? 'var(--accent-fg)' : 'var(--text-secondary)', fontWeight: on ? 700 : 600,
-                  cursor: off ? 'default' : 'pointer', transition: 'background-color 150ms ease, color 150ms ease' }}>
+                  cursor: off ? 'default' : 'pointer', transition: 'background-color var(--dur-fast) ease, color var(--dur-fast) ease' }}>
                 {label}
                 <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: off ? 'var(--text-disabled)' : on ? 'var(--accent)' : 'var(--text-faint)' }}>{n}</span>
               </span>

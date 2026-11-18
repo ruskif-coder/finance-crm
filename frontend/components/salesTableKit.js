@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useLayoutEffect, Fragment } from 'react'
+import { Segmented as MotionSegmented } from '@/lib/motion'
 import { createPortal } from 'react-dom'
 import { overlayClose } from '@/lib/overlay'
 
@@ -21,7 +22,7 @@ export const PAGE_W = { base: 1600, wide: 1920, xl: 2560 }
 export const Z = { base: 1, sticky: 20, dropdown: 3000, tooltip: 3500, overlay: 10000, toast: 20000 }
 
 // ─── Modal — модальная панель ──────────────────────────────────────────
-// Геометрия та же, что у формы создания сделки (радиус 18, та же тень и riseIn):
+// Геометрия та же, что у формы создания сделки (радиус 18, та же тень и m-rise):
 // заводить третий визуальный язык для окон незачем. Нужна там, где решение
 // принимается по списку, который в window.confirm не читается.
 // Закрытие — кликом строго по подложке (e.target === e.currentTarget), иначе
@@ -41,9 +42,8 @@ export function Modal({ title, summary, footer, width = 760, onClose, children, 
         margin: 'auto', display: 'flex',
         flexDirection: 'column', background: 'var(--bg-card)', borderRadius: 18,
         boxShadow: 'var(--shadow-modal)',
-        animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both',
+        animation: 'm-rise var(--dur-slow) var(--ease-out) both',
       }}>
-        <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
         <div style={{
           padding: '14px 20px', borderBottom: '1px solid var(--border-card)',
           fontSize: 16, fontWeight: 700, color: 'var(--text-primary)',
@@ -853,7 +853,7 @@ export function Seg({ value, opts, onPick, disabled, size = 'md', slide = false 
     <span ref={box} style={{ position: 'relative', display: 'inline-flex', padding: 3, gap: 2, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10 }}>
       {slide && pos && (
         <span aria-hidden style={{ position: 'absolute', top: 3, bottom: 3, left: pos.left, width: pos.width, borderRadius: 7,
-          background: 'var(--accent)', boxShadow: 'var(--shadow-card)', transition: 'left .22s ease, width .22s ease' }} />
+          background: 'var(--accent)', boxShadow: 'var(--shadow-card)', transition: 'left var(--dur-base) ease, width var(--dur-base) ease' }} />
       )}
       {opts.map(([v, label, title]) => {
         const on = value === v, off = disabled && disabled(v)
@@ -879,25 +879,9 @@ export function Seg({ value, opts, onPick, disabled, size = 'md', slide = false 
  * `disabled` — нет права менять: значение ВИДНО, но не переключается. Прятать тумблер
  * целиком нельзя — тогда непонятно, каким словом называются ДС этого договора.
  */
+// Переключатель — общий lib/motion (подложка выбранного переезжает); здесь вид кита продаж: подсветка акцентом на белом (18.11.2026)
 export function Segmented({ value, options, onChange, disabled = false, title }) {
-  return (
-    <div role="radiogroup" title={title} style={{ display: 'inline-flex', border: '1px solid var(--border-card)',
-      borderRadius: 10, background: 'var(--bg-card)', padding: 2, gap: 2, fontFamily: UI }}>
-      {options.map(o => {
-        const on = o.value === value
-        return (
-          <button key={o.value} type="button" role="radio" aria-checked={on} disabled={disabled}
-            onClick={() => { if (!on && !disabled && onChange) onChange(o.value) }}
-            style={{ border: 'none', borderRadius: 8, padding: '5px 12px', fontSize: 12.5, fontFamily: UI,
-              fontWeight: on ? 700 : 500, cursor: disabled || on ? 'default' : 'pointer',
-              background: on ? 'var(--accent-tint)' : 'transparent',
-              color: on ? 'var(--accent-fg)' : (disabled ? 'var(--text-disabled)' : 'var(--text-muted)') }}>
-            {o.label}
-          </button>
-        )
-      })}
-    </div>
-  )
+  return <MotionSegmented tone="tint" size="sm" value={value} options={options} onChange={onChange} disabled={disabled} title={title} />
 }
 
 /**

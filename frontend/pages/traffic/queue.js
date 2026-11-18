@@ -196,7 +196,7 @@ function useOpenSets() {
 
 const Chevron = ({ open }) => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" style={{ flex: '0 0 auto',
-    transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>
+    transform: open ? 'rotate(90deg)' : 'none', transition: 'transform var(--dur-fast)' }}>
     <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.5"
       strokeLinecap="round" strokeLinejoin="round" />
   </svg>
@@ -1087,7 +1087,7 @@ export default function TrafficQueue() {
               e.preventDefault(); setDragOver(false)
               if (mayEdit) addShots(shots.row, e.dataTransfer?.files)
             }}
-            style={{ borderRadius: 12, transition: 'background .12s',
+            style={{ borderRadius: 12, transition: 'background var(--dur-fast)',
               outline: dragOver ? '2px dashed var(--accent)' : '2px dashed transparent',
               outlineOffset: 4,
               background: dragOver ? 'var(--accent-tint)' : 'transparent' }}>

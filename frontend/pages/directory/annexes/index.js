@@ -241,7 +241,7 @@ export default function AnnexRegistry() {
           {tab === 'templates' ? <TemplatesTab onOpen={openTpl} reloadKey={tplReload} /> : (<>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Приложения</h1>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width 200ms ease' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width var(--dur-base) ease' }}>
               <svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'var(--text-faint)', strokeWidth: 1.8, strokeLinecap: 'round' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
               <input value={search} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onChange={e => setSearch(e.target.value)} placeholder="Номер, ИНН, договор…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, fontFamily: UI, color: 'var(--text-primary)' }} />
             </div>

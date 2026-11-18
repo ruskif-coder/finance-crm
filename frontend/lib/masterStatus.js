@@ -5,15 +5,21 @@
 // [подложка, рамка, текст, маркер] — как в хендоффе «мастер и шапка» (19.10.2026)
 import { MONO } from '@/components/salesTableKit'
 
+// В NAVY (хендофф design_handoff_master_deal_navy §3, 18.11.2026) цвета стадий задаёт navy.css переменными `--mst-<группа>-*`:
+// оранжевый `--signal` — где ход за нами (сборка, выставление, сканы), морской `--attn` — ждём других, `--ok` — архив. Без них
+// (прежние темы) — запасные значения, как было.
+const st = (g, bg, bd, fg, dot) => [`var(--mst-${g}-bg, ${bg})`, `var(--mst-${g}-bd, ${bd})`, `var(--mst-${g}-fg, ${fg})`, `var(--mst-${g}-dot, ${dot})`]
+const ACC = ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)']
+const WARN = ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)']
 export const MASTER_TONE = {
-  'черновик': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],      // §6: сборка и согласование — синие
-  'согласование': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],
-  'ждём закрытия': ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)', 'var(--accent)'],   // ДС на старте — до итоговой сверки
-  'ждём 1С': ['var(--violet-tint)', 'var(--violet-border)', 'var(--violet-fg)', 'var(--violet-fg)'],
-  'выставление': ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],
-  'ждём оплату': ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],
-  'ждём сканы': ['var(--warning-tint)', 'var(--warning-border)', 'var(--warning-fg)', 'var(--warning)'],
-  'архив': ['var(--income-tint)', 'var(--income-border)', 'var(--income-fg)', 'var(--income)'],
+  'черновик': st('our', ...ACC),                 // §6: сборка и согласование — синие
+  'согласование': st('wait', ...ACC),
+  'ждём закрытия': st('wait', ...ACC),            // ДС на старте — до итоговой сверки
+  'ждём 1С': st('wait', 'var(--violet-tint)', 'var(--violet-border)', 'var(--violet-fg)', 'var(--violet-fg)'),
+  'выставление': st('our', ...WARN),
+  'ждём оплату': st('wait', ...WARN),
+  'ждём сканы': st('our', ...WARN),
+  'архив': st('done', 'var(--income-tint)', 'var(--income-border)', 'var(--income-fg)', 'var(--income)'),
 }
 // Режим суммы ДС на итоговой сверке — одна подпись для карточки пакета и блока сверки (было объявлено дважды)
 export const CLOSE_MODE = { fact: 'по факту', plan: 'под МП', manual: 'вручную' }

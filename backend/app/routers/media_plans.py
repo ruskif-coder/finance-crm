@@ -463,6 +463,7 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
     for d_id in {p.deal_id, data.deal_id} - {None}:
         if _lock_guard(db, d_id, current_user, "Привязка медиаплана"):
             _log_locked_edit(db, current_user, p.id, f"привязка к сделке {data.deal_id}")
+    old_deal = p.deal_id
     for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
         pl.deal_id = data.deal_id
     # Привязали — сделка сразу берёт шапку и суммы плана. Это главный путь для СТАРЫХ
@@ -474,6 +475,8 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
         _advance_deal_on_link(db, current_user, p)
     db.commit()
     log_action(db, current_user, "link_deal_media_plan", "media_plan", p.id, f"deal_id={data.deal_id}")
+    from app.sales import mp_follow
+    mp_follow.follow_plan_change(db, [old_deal, data.deal_id], current_user)   # и прежняя сделка, и новая (18.11.2026)
     return {"message": "Сделка привязана" if data.deal_id else "Привязка снята", "deal_id": data.deal_id}
 
 
@@ -992,6 +995,7 @@ def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
         put(df, getattr(plan, pf, None), df)
 
     bounds = _period_bounds(plan.period or "")
+    old_period = (deal.period_from, deal.period_to)
     put("period_from", plan.date_from or (bounds[0] if bounds else None), "старт РК")
     put("period_to", plan.date_to or (bounds[1] if bounds else None), "конец РК")
 
@@ -1009,7 +1013,16 @@ def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
     # тем же переносом, что шапка и суммы: до этого услуга ставилась только в момент
     # рождения сделки и потом не догоняла план. Пустое поле сделку не чистит — общее
     # правило переноса: «стёр в плане» и «убери из сделки» это разные намерения.
-    put("service_id", _service_of_plan(db, plan), "услуга")
+    svc_id = _service_of_plan(db, plan)
+    put("service_id", svc_id, "услуга")
+    # Услуга текстом (`product`) — тоже: по ней реестр показывает услугу, её цвет и метку WEB/APP, трафик — дашборд (18.11.2026:
+    # ссылка менялась, текст оставался прежним — на проде так было у 6 сделок)
+    if svc_id:
+        from app.sales.models import SalesService
+        put("product", db.get(SalesService, svc_id).name, "услуга (название)")
+    # Получатели сборки запуска — за периодом сделки (их период важнее живого в срочности трафика, 18.11.2026)
+    from app.sales import mp_follow
+    mp_follow.follow_period(db, deal.id, *old_period, deal.period_from, deal.period_to)
 
     for pf, df in _PLAN_REPS:
         if getattr(deal, df, None):
@@ -1089,6 +1102,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     # Объёмы по площадкам против плана РК — ДО правки: уменьшенный план может сделать их
     # больше плана, и тогда аккаунт с трафиком узнают об этом сразу (владелец 27.09.2026).
     from app.launch_prep import volumes
+    from app.sales import mp_follow
     vol_deal = existing.deal_id if existing is not None else data.deal_id
     vol_before = volumes.check(db, vol_deal) if vol_deal else None
 
@@ -1097,7 +1111,9 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
         if same or not _plan_is_sealed(db, existing):
             if not same:
                 _apply_fields(existing, data, db)
+                old_rows = mp_follow.snapshot_rows(db, existing.id)
                 _write_children(db, existing.id, data)
+                mp_follow.carry_fact_entries(db, existing.deal_id, old_rows, existing.id)   # факт сверки — на новые строки (18.11.2026)
                 log_action(db, current_user, "update_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version}")
             _log_change_note(db, current_user, existing, data)
@@ -1113,6 +1129,8 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             _advance_deal_on_link(db, current_user, existing)
             db.commit()
             volumes.notify_if_newly_blocked(db, vol_deal, vol_before, current_user)
+            if not same:
+                mp_follow.follow_plan_change(db, vol_deal, current_user)   # РК, лимиты DSP, черновые ДС — сразу (18.11.2026)
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
                     "unchanged": same, "verified_now": visa_now}
@@ -1137,7 +1155,9 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     db.flush()
     if not p.group_id:
         p.group_id = p.id
+    old_rows = mp_follow.snapshot_rows(db, existing.id if existing is not None else None)
     _write_children(db, p.id, data)
+    mp_follow.carry_fact_entries(db, p.deal_id, old_rows, p.id)     # факт сверки — на строки новой версии (18.11.2026)
     _enforce_cap(db, p.group_id)
     _mark_verified(p, data, current_user)
     db.flush()
@@ -1147,6 +1167,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     _advance_deal_on_link(db, current_user, p)
     db.commit()
     volumes.notify_if_newly_blocked(db, vol_deal, vol_before, current_user)
+    mp_follow.follow_plan_change(db, vol_deal, current_user)   # РК, лимиты DSP, черновые ДС — сразу (18.11.2026)
     db.refresh(p)
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
 
@@ -1195,6 +1216,8 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
     _sync_deal_from_plan(db, p, current_user)
     db.commit()
     log_action(db, current_user, "patch_media_plan", "media_plan", p.id, ", ".join(fields.keys()))
+    from app.sales import mp_follow
+    mp_follow.follow_plan_change(db, p.deal_id, current_user)   # период из реестра — и в РК (18.11.2026)
     return {"ok": True}
 
 
@@ -1455,12 +1478,15 @@ def delete_media_plan(plan_id: int, whole_group: bool = False, db: Session = Dep
     _guard_owned(db, p, current_user, "media_plans")
     if _lock_guard(db, p.deal_id, current_user, "Удаление медиаплана"):
         _log_locked_edit(db, current_user, p.id, "удаление")
+    deal_id = p.deal_id
     if whole_group:
         db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).delete()
     else:
         db.delete(p)
     db.commit()
     log_action(db, current_user, "delete_media_plan", "media_plan", plan_id, "весь МП" if whole_group else "версия")
+    from app.sales import mp_follow
+    mp_follow.follow_plan_change(db, deal_id, current_user)   # план РК — по оставшейся версии (18.11.2026)
     return {"message": "Удалено"}
 
 

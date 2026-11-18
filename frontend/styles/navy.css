@@ -137,9 +137,7 @@
 
 /* Дашборд трафика (макет design_handoff_traffic_navy): денег на экране нет, «норма» — сталь. Макет так и делает: `--income` =
    роль «ок» на всём экране и в его тёмных/светлых блоках. Общие части (ячейки темпа, плашки статусов) поэтому не дают зелёный. */
-[data-theme^="navy"] .tp-dash, [data-theme^="navy"] .tp-dash [data-tone] {
-  --income:var(--ok); --income-tint:var(--ok-tint); --income-border:var(--ok-border); --income-fg:var(--ok-fg);
-}
+/* (правило «норма — сталь» для .tp-dash сведено с «Моими сделками» в общий блок ниже — `.navy-norm`, 18.11.2026) */
 
 /* Флажки — своим видом, а не системным синим браузера (17.11.2026, галочки «скрины» в таблице площадок дашборда трафика;
    владелец: «вот такого оттенка, как плашка „запущена“, с белой пиктограммой»): заливка --ok, галочка — цветом текста на ней
@@ -180,3 +178,89 @@
    акцентом, без подчёркивания, подчёркивание при наведении. :where() — нулевой вес: любая ссылка со своим цветом (класс, style) сильнее. */
 :where([data-theme^="navy"]) a { color:var(--accent); text-decoration:none }
 :where([data-theme^="navy"]) a:hover { color:var(--accent-hover); text-decoration:underline }
+
+/* «Мои сделки» (макет design_handoff_account_navy, 18.11.2026). Экран пишет свои переменные с запасным значением — в прежних темах
+   они не заданы, и вид прежний. Тона блоков (контуры и «Сейчас» ночью светлые) ставит разметка по теме — useThemeKey.
+   `.navy-scr` — оформление экрана (фон, кнопки действий, расхлоп продолжением строки и его зоны): «Мои сделки» и реестр мастер-сделок.
+   `.navy-norm` — «всё хорошо» сталью вместо денег (дашборды трафика и «Моих сделок»); `.acc-dash` — только «Мои сделки»: оранжевый «ваш ход». */
+/* экран целиком на переливе фона — во всех темах (у «Джапанди» с зерном, как у body) */
+.navy-scr { background:var(--page-bg) fixed !important }
+[data-theme="japandi"] .navy-scr {
+  background:radial-gradient(rgba(110,90,60,.06) 1px, transparent 1.3px) 0 0 / 9px 9px,
+    radial-gradient(rgba(110,90,60,.045) 1px, transparent 1.3px) 4px 7px / 17px 17px, var(--page-bg) fixed !important }
+/* `.navy-norm` — экраны, где денег нет и «всё хорошо» — норма (сталь), а не деньги: дашборд трафика и «Моих сделок». В реестре и карточке
+   мастер-сделки деньги — деньги, класса там нет. Фиолетового в NAVY нет. */
+[data-theme^="navy"] .navy-norm, [data-theme^="navy"] .navy-norm [data-tone] {
+  --income:var(--ok); --income-tint:var(--ok-tint); --income-border:var(--ok-border); --income-fg:var(--ok-fg);
+  --warning-bg:var(--attn-tint); --traffic:var(--ok);
+  --violet:var(--accent); --violet-fg:var(--accent-fg); --violet-tint:var(--accent-tint); --violet-border:var(--accent-border);
+}
+[data-theme^="navy"] .acc-dash, [data-theme^="navy"] .acc-dash [data-tone] {
+  /* оранжевый --signal — только «ваш ход» (README §4) */
+  --acc-turn:var(--signal); --acc-turn-num:var(--signal-num); --acc-turn-bg:var(--signal-tint); --acc-turn-fg:var(--signal-text);
+  --acc-late-bg:var(--signal-tint); --acc-late-bd:var(--signal-border); --acc-late-fg:var(--signal-text); --acc-late-num:var(--signal-num);
+  --acc-no-on:var(--hot); --acc-no-fg:var(--hot-fg);
+}
+/* раскрытая строка — продолжение строки: без отступа, рамки и скругления, фон общий, черта только снизу (README §3) */
+[data-theme^="navy"] .navy-scr {
+  --acc-open-bg:var(--bg-subtle); --acc-open-r:0; --acc-exp-bg:var(--bg-subtle); --acc-exp-r:0; --acc-exp-m:0;
+  --acc-exp-bd:0 solid transparent; --acc-exp-bdt:0 solid transparent;
+}
+/* контуры ночью: выбранный почти белый, остальные стальные (README §2) */
+[data-theme="navy-dark"] .navy-scr [data-tone="light"] { --ct-on:#F7FAFC; --ct-off:#AFBECD; --ct-on-bd:#FFFFFF; --ct-off-bd:#9DAEC0 }
+/* кнопки действий (README §5): днём белые со стальной рамкой, ночью приглушённая сталь; главная кнопка «Сейчас» — «таблетка» --hot */
+[data-theme="navy"] .navy-scr, [data-theme="navy-dark"] .navy-scr [data-tone="light"] {
+  --act-bg:#FFFFFF; --act-bd:#9FB0C2; --act-fg:#2D3E50; --act-hov:#D8E1EA; --act-hov-bd:#7C8EA3 }
+[data-theme="navy-dark"] .navy-scr { --act-bg:#4A5F76; --act-bd:#6E849C; --act-fg:#F7FAFC; --act-hov:#5A7089; --act-hov-bd:#8FA3B8 }
+[data-theme^="navy"] .navy-scr [data-acc-now], [data-theme^="navy"] .navy-scr [data-acc-center], [data-theme^="navy"] .navy-scr [data-tone="dark"] {
+  --act-bg:var(--hot); --act-bd:var(--hot); --act-fg:var(--hot-fg); --act-hov:var(--hot-hover); --act-hov-bd:var(--hot-hover) }
+/* Стандарт кнопок мастер-сделки и «Моих сделок» (18.11.2026): data-act="main" — главный шаг (тёмная «таблетка» везде: строка шага в
+   карточке, центр расхлопа пакета); data-act без значения — обычное действие, мягкая кнопка зоны. */
+[data-theme^="navy"] .navy-scr [data-act="main"] {
+  --act-bg:var(--hot); --act-bd:var(--hot); --act-fg:var(--hot-fg); --act-hov:var(--hot-hover); --act-hov-bd:var(--hot-hover) }
+[data-theme^="navy"] .navy-scr [data-act] {
+  background:var(--act-bg) !important; border:1px solid var(--act-bd) !important; color:var(--act-fg) !important; box-shadow:0 1px 2px rgba(16,24,32,.06) }
+[data-theme^="navy"] .navy-scr [data-act]:hover:not(:disabled) { background:var(--act-hov) !important; border-color:var(--act-hov-bd) !important }
+/* «Документы», раскрытый пакет (обновление хендоффа 18.11): днём центр — не тёмный блок, а мягкая стальная подложка с белыми карточками
+   внутри (тёмный в документах слишком контрастен); ночью центр — светлый блок, как «Сейчас» (тон ставит PackList). */
+[data-theme="navy"] .navy-scr [data-acc-center] {
+  --bg-card:#FFFFFF; --bg-subtle:#EEF3F7; --border-card:#C3CFDB; --border-inner:#CBD6E0; --border-row:#DDE5EC;
+  background:#DFE7EE; color:var(--text-primary);
+}
+/* Плашки «Медиаплан и документы» в тёмной колонке расхлопа: на тон светлее фона колонки и с заметной рамкой (владелец 18.11.2026) */
+[data-theme^="navy"] .navy-scr [data-tone="dark"] { --acc-doc-bg:var(--bg-subtle); --acc-doc-bd:var(--border-hover) }
+
+/* Мастер-сделка (макет design_handoff_master_deal_navy, 18.11.2026). Цвета стадий — во ВСЕХ местах, где показан статус пакета (реестр,
+   «Документы», карточка): оранжевый — ход за нами, морской — ждём других, сталь — архив (README §3). */
+[data-theme^="navy"], [data-theme^="navy"] [data-tone] {
+  --mst-our-bg:var(--signal-tint); --mst-our-bd:var(--signal-border); --mst-our-fg:var(--signal-text); --mst-our-dot:var(--signal);
+  --mst-wait-bg:var(--attn-tint); --mst-wait-bd:var(--attn-border); --mst-wait-fg:var(--attn-fg); --mst-wait-dot:var(--attn);
+  --mst-done-bg:var(--ok-tint); --mst-done-bd:var(--ok-border); --mst-done-fg:var(--ok-fg); --mst-done-dot:var(--ok);
+}
+/* Карточка `.md-card`: зелёный здесь — и «подписано / завершено» по документам (исключение карточки, README §1); фиолетового нет —
+   «ждём 1С», доп. услуги, бонусы морским; мягкая подложка «Эффективности» и «Итого»; пройденные отрезки полосы стадий. */
+[data-theme^="navy"] .md-card, [data-theme^="navy"] .md-card [data-tone] {
+  --violet:var(--attn); --violet-fg:var(--attn-fg); --violet-tint:var(--attn-tint); --violet-border:var(--attn-border);
+}
+[data-theme="navy"] .md-card { --accent-soft:#B4C2D0; --stage-done:#9FB0C2; --soft-bg:#DFE7EE; --soft-bd:#C3CFDB }
+[data-theme="navy-dark"] .md-card {
+  --accent-soft:#4A5F76; --stage-done:#6E849C; --soft-bg:#465C74; --soft-bd:#6A819A;
+  /* ночью блоки внутри карточки сливались с ней — разница усилена (README §1) */
+  --bg-subtle:#3A4E64; --bg-tint:#34485E; --border-card:#4C6279; --border-inner:#44596F; --border-row:#3C5066;
+}
+[data-theme^="navy"] .md-card [data-tone="dark"] { --stage-done:#6E849C }
+[data-theme="navy-dark"] .md-card [data-tone="light"] { --stage-done:#9FB0C2 }
+/* полоса сканов на «ждём сканы» — ход за нами */
+[data-theme^="navy"] .md-card [data-scans-due] {
+  --scans-bg:var(--signal-tint); --scans-bd:var(--signal-border); --scans-fg:var(--signal-text); --scans-dot:var(--signal) }
+/* отмеченные чекбоксы раскладки и тумблер — --hot (README §4) */
+[data-theme^="navy"] .md-card input[type="checkbox"]:checked { background:var(--hot); border-color:var(--hot) }
+[data-theme^="navy"] .md-card { --navy-check-fg:var(--hot-fg); --md-on:var(--hot); --md-on-fg:var(--hot-fg) }   /* тумблер «Допы» и отметки раскладки */
+/* «Подписано / завершено» по документам — зелёный (--money) везде, где показаны документы пакета: карточка, реестр и «Документы»
+   «Моих сделок» (владелец 18.11.2026: «и там и там»). На дашборде `.navy-norm` перекрашивает --income в сталь — расхлоп пакета
+   (`.md-docs`) возвращает зелёный. */
+[data-theme^="navy"] .md-docs, [data-theme^="navy"] .md-docs [data-tone] {
+  --income:var(--money); --income-tint:var(--money-tint); --income-border:var(--money-border); --income-fg:var(--money-fg);
+}
+/* Подложка закреплённых строк экрана (панель списка дашборда трафика, 18.11.2026): фон страницы-градиент, fixed — без полосы другого тона */
+:root { --sticky-bg:var(--page-bg) }   /* во всех темах — перелив фона страницы */

@@ -271,13 +271,13 @@ export default function MpRegistry() {
       <Navbar active="" />
       {/* Строки и липкая первая колонка: фон наследует строку — обычная, под курсором и раскрытая. */}
       <style>{`
-        .mpr-row, .mpr-row .mpr-stick { background: var(--bg-card); transition: background 150ms ease }
+        .mpr-row, .mpr-row .mpr-stick { background: var(--bg-card); transition: background var(--dur-fast) ease }
         .mpr-row:hover, .mpr-row:hover .mpr-stick, .mpr-open, .mpr-open .mpr-stick { background: var(--bg-subtle) }
         .mpr-row .mpr-gen { display: none } .mpr-row:hover .mpr-gen { display: inline-flex }
         .mpr-sort:hover { color: var(--accent-fg) !important }
-        @keyframes mprOpen { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }
-        @keyframes mprPulse { 0%, 100% { opacity: .55 } 50% { opacity: 1 } }
-        @media (prefers-reduced-motion: reduce) { .mpr-row, .mpr-row * { animation-duration: 1ms !important; transition: none !important } }
+        
+        
+        
       `}</style>
       {/* Таблица занимает остаток окна и прокручивается сама — так держатся её шапка и низ со страницами (хендофф §7). */}
       <div style={{ height: 'calc(100vh - var(--navbar-h))', boxSizing: 'border-box', padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 12,
@@ -292,7 +292,7 @@ export default function MpRegistry() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 160, display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, boxSizing: 'border-box',
             border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 10px',
-            transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
+            transition: 'width var(--dur-base) var(--ease-out), border-color var(--dur-fast)' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>⌕</span>
             <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
               placeholder="поиск: название, код, контрагент…" style={{ flex: 1, minWidth: 0, width: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 12.5, color: 'inherit', fontFamily: UI }} />

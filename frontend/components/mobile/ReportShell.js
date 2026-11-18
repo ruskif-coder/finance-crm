@@ -1,6 +1,6 @@
 import { Children, Fragment, isValidElement, cloneElement } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { CARD, RISE_KEYFRAMES, rise } from './kit'
+import { CARD, rise } from './kit'
 
 // Оболочка мобильного отчёта: заголовок с правой подписью · строка фильтров ·
 // последовательность карточек. Лесенку появления раздаёт оболочка, чтобы порядок
@@ -18,7 +18,6 @@ export default function ReportShell({ title, meta, filters, children }) {
 
   return (
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI }}>
-      <style>{RISE_KEYFRAMES}</style>
 
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
         <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text-primary)' }}>{title}</span>

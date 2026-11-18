@@ -218,7 +218,7 @@ export default function AccountDashboard() {
   const who = repId === 'all' ? 'Все аккаунты' : (repId ? (reps.find(r => String(r.id) === String(repId)) || {}).name : myName)
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head><title>Дашборд · Аккаунты | SIMB-AD ERP</title></Head>
       {/* Модалка уведомлений — первым ребёнком корня, вне анимированных контейнеров:
           `transform` предка ломает `position: fixed`. */}

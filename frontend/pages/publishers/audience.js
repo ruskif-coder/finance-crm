@@ -33,7 +33,7 @@ const Seg = ({ options, value, onPick, mono }) => (
       return (
         <span key={k} onClick={() => onPick(k)} style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 12px', borderRadius: 8,
           background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-secondary)',
-          fontFamily: mono ? MONO : UI, fontSize: mono ? 11.5 : 12, fontWeight: on ? 700 : 600, cursor: 'pointer', transition: 'background-color 150ms ease', whiteSpace: 'nowrap' }}>{label}</span>
+          fontFamily: mono ? MONO : UI, fontSize: mono ? 11.5 : 12, fontWeight: on ? 700 : 600, cursor: 'pointer', transition: 'background-color var(--dur-fast) ease', whiteSpace: 'nowrap' }}>{label}</span>
       )
     })}
   </span>

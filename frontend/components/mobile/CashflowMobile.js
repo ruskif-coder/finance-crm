@@ -44,7 +44,7 @@ function CashBar({ income, expense, scale, selected, onClick }) {
   const inc = income > 0 ? Math.max(1, Math.round(income / scale * 10)) : 0
   const exp = expense > 0 ? Math.max(1, Math.round(expense / scale * 10)) : 0
   return (
-    <div onClick={onClick} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, cursor: 'pointer', background: selected ? 'var(--accent-tint)' : 'transparent', borderRadius: 4, padding: '2px 0', transition: 'background .15s' }}>
+    <div onClick={onClick} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, cursor: 'pointer', background: selected ? 'var(--accent-tint)' : 'transparent', borderRadius: 4, padding: '2px 0', transition: 'background var(--dur-fast)' }}>
       <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 1, height: 56 }}>
         {Array.from({ length: 10 }, (_, i) => <div key={i} style={{ flex: 1, borderRadius: 2, background: i < inc ? INCOME : EMPTY }} />)}
       </div>
@@ -194,7 +194,7 @@ export default function CashflowMobile({
                 <span style={{ color: 'var(--text-faint)', fontSize: 10, textAlign: 'center' }}>{open ? '▴' : '▾'}</span>
               </div>
               {open && (
-                <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0, '.24s') }}>
+                <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0) }}>
                   {Object.entries(m.by_bank || {}).map(([bank, d]) => {
                     const net = d.net ?? (d.income - d.expense)
                     return (

@@ -17,11 +17,17 @@ import { CAPS } from '@/components/master/registry/kit'
 import { detailText } from '@/lib/loadError'
 
 const HEAD = { ...CAPS, fontWeight: 700, letterSpacing: '.1em' }
+
+// Тона зон расхлопа в темах NAVY (хендофф design_handoff_account_navy, 18.11.2026) — одно правило для «Моих сделок» и реестра:
+// днём центр — мягкая стальная подложка (navy.css, [data-acc-center]), края светлые; ночью центр светлый, края тёмные.
+// Прежние темы — undefined: расхлоп в рамке, как был.
+const ZONES = { navy: { center: undefined, side: undefined }, 'navy-dark': { center: 'light', side: 'dark' } }
+export const navyZone = (theme) => ZONES[theme]
 const COL = { display: 'flex', flexDirection: 'column', minWidth: 0, padding: '14px 18px' }
 
-function Deals({ deals }) {
+function Deals({ deals, tone }) {
   return (
-    <div style={{ ...COL, gap: 6 }}>
+    <div data-tone={tone} style={{ ...COL, gap: 6, ...(tone ? { background: 'var(--bg-card)' } : {}) }}>
       <span style={HEAD}>Сделки пакета · {deals.length}</span>
       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 360, overflowY: 'auto' }}>
         {deals.map(d => (
@@ -43,9 +49,9 @@ function Deals({ deals }) {
   )
 }
 
-function Events({ code, events }) {
+function Events({ code, events, tone }) {
   return (
-    <div style={{ ...COL, gap: 6, borderLeft: '1px solid var(--border-inner)', background: 'var(--bg-tint)' }}>
+    <div data-tone={tone} style={{ ...COL, gap: 6, borderLeft: '1px solid var(--border-inner)', background: tone ? 'var(--bg-card)' : 'var(--bg-tint)' }}>
       <span style={HEAD}>Последнее</span>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {events.slice(0, 3).map((e, i) => (
@@ -59,14 +65,16 @@ function Events({ code, events }) {
         ))}
         {!events.length && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>событий нет</span>}
       </div>
-      <Link href={`/accounts/master/${code}`}
+      <Link href={`/accounts/master/${code}`} data-act=""
         style={{ marginTop: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 32, border: '1px solid var(--accent-border)', borderRadius: 9,
           background: 'var(--bg-card)', color: 'var(--accent)', fontSize: 12, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>Открыть карточку пакета →</Link>
     </div>
   )
 }
 
-export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
+/** `zone` — вид «Моих сделок» в NAVY (хендофф design_handoff_account_navy, 18.11.2026): `{ center, side }` — тона центра и боковых
+ *  колонок, расхлоп — продолжение строки без рамки. Без `zone` (реестр, прежние темы) — вид прежний. */
+export default function ExpandedRow({ code, channel, canEdit, onChanged, zone }) {
   const [m, setM] = useState(null)
   const [err, setErr] = useState('')
   const [picked, setPicked] = useState(null)
@@ -75,7 +83,8 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
     api.get(`/master-deals/${code}`, auth()).then(r => alive && setM(r.data)).catch(e => alive && setErr(detailText(e, 'Не удалось загрузить пакет')))
     return () => { alive = false }
   }, [code])
-  const wrap = (body) => <div style={{ padding: '2px 20px 14px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-row)' }}>{body}</div>
+  // `md-docs` — документы пакета: «подписано / завершено» зелёным во всех темах NAVY, и на дашборде, где «норма — сталь» (18.11.2026)
+  const wrap = (body) => <div className="md-docs" style={{ padding: zone ? 0 : '2px 20px 14px', background: 'var(--bg-subtle)', borderBottom: `1px solid ${zone ? 'var(--border-card)' : 'var(--border-row)'}` }}>{body}</div>
   if (!m) return wrap(<div style={{ padding: '12px 0', fontSize: 12.5, color: err ? 'var(--danger-fg)' : 'var(--text-faint)' }}>{err || 'Загрузка…'}</div>)
   const apply = (v) => { setM(v); onChanged() }
   const ds = m.docs?.ds || []
@@ -83,9 +92,10 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
   const total = ds.length + kits.length * 3
   const ready = ds.length + kits.filter(k => k.onec).length * 3          // ДС скачивается всегда; счёт, УПД, отчёт — после 1С
   return wrap(
-    <div data-noexp style={{ display: 'grid', gridTemplateColumns: 'minmax(480px,1fr) minmax(0,2.3fr) 270px', background: 'var(--bg-card)', border: '1px solid var(--accent-border)', borderRadius: 12, overflow: 'hidden', cursor: 'default' }}>
-      <Deals deals={m.deals} />
-      <div style={{ ...COL, gap: 8, borderLeft: '1px solid var(--border-inner)' }}>
+    <div data-noexp style={{ display: 'grid', gridTemplateColumns: 'minmax(480px,1fr) minmax(0,2.3fr) 270px', cursor: 'default', overflow: 'hidden',
+      ...(zone ? { background: 'transparent' } : { background: 'var(--bg-card)', border: '1px solid var(--accent-border)', borderRadius: 12 }) }}>
+      <Deals deals={m.deals} tone={zone?.side} />
+      <div data-tone={zone?.center} data-acc-center={zone ? '' : undefined} style={{ ...COL, gap: 8, borderLeft: '1px solid var(--border-inner)' }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={HEAD}>ДС · комплекты · документы</span>
           {!!ds.length && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{ready} из {total} готово</span>}
@@ -103,7 +113,7 @@ export default function ExpandedRow({ code, channel, canEdit, onChanged }) {
         <div style={{ maxWidth: 1120 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={canEdit} onChanged={apply} /></div>
         {!!err && <span style={{ fontSize: 12, color: 'var(--danger-fg)' }}>{err}</span>}
       </div>
-      <Events code={code} events={m.events || []} />
+      <Events code={code} events={m.events || []} tone={zone?.side} />
     </div>
   )
 }

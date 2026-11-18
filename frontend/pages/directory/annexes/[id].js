@@ -295,7 +295,7 @@ export default function AnnexAssembly() {
   const miss = d?.missing || []
 
   return (
-    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--page-bg) fixed' }}>
       <Head><title>{a?.number ? a.number + ' · приложение' : 'Приложение к договору'} | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1180, margin: '0 auto', padding: '22px 20px 60px' }}>

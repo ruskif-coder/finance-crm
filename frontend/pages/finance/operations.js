@@ -298,7 +298,7 @@ const fmtSize = (n) => !n ? '' : n < 1024 ? n + ' Б' : n < 1024 * 1024 ? Math.r
 // Хендофф «Операции · NAVY» (17.11.2026): одна «Сумма» со знаком вместо «Поступления» и «Списания»; «Контрагент» — сразу за ней
 // (единственная перестановка); левая группа до «Контрагента» включительно закреплена при прокрутке вбок (`STICKY`).
 const COLS = [
-  ['sel', '16px', ''], ['date', '74px', 'Дата', 'date'], ['status', '136px', 'Статус', 'status'], ['dz', '22px', 'ДЗ', 'dz'],
+  ['sel', '16px', ''], ['date', '74px', 'Дата', 'date'], ['status', '136px', 'Статус', 'status'], ['dz', '26px', 'ДЗ', 'dz'],
   ['amount', '118px', 'Сумма', 'amount'], ['counterparty', '260px', 'Контрагент', 'counterparty'],
   ['bank', '110px', 'Банк', 'bank'], ['period', '80px', 'Период', 'period'], ['article', '120px', 'Статья', 'article'],
   ['vat', '48px', 'НДС', 'vat_rate'], ['vat_amount', '92px', 'НДС сумма', 'vat_fact'], ['ds_num', '104px', '№ ДС', 'ds_num'], ['invoice', '96px', '№ счёта', 'invoice'],
@@ -308,6 +308,8 @@ const STICKY = ['sel', 'date', 'status', 'dz', 'amount', 'counterparty']
 const GAP = 10
 const ROW_PAD = 8
 const RIGHT = new Set(['amount', 'vat', 'vat_amount'])
+const CENTER = new Set(['dz'])     // метка ДЗ по центру: у левого края ореол точки срезался overflow ячейки (18.11.2026)
+const justify = (k) => (RIGHT.has(k) ? 'flex-end' : CENTER.has(k) ? 'center' : 'flex-start')
 // Клик по строке открывает боковую панель операции (владелец 09.11.2026); эти ячейки живут своими кликами
 const NO_PANEL = new Set(['sel', 'doc', 'actions'])
 const PAD_LEFT = { counterparty: 6, ds_num: 14 }       // колонка после прижатой вправо суммы — отступ и у шапки, и у ячейки
@@ -797,7 +799,7 @@ export default function Operations2() {
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
         <Head><title>{title}</title></Head>
         <Navbar active="operations" />
         <OperationsMobile
@@ -815,7 +817,7 @@ export default function Operations2() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    <div style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI }}>
       <Head>
         <title>{title}</title>
       </Head>
@@ -827,13 +829,13 @@ export default function Operations2() {
         submit={pwd => bulkDelete(bulkPwd.ids, pwd)}
         onClose={() => setBulkPwd(null)} onDone={() => { setBulkPwd(null); setSel({}); loadOps() }} />}
       <style>{`
-        @keyframes opRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+        
         .op-row:hover { --op-row: var(--bg-subtle) !important; }
         .op-ico { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:7px; cursor:pointer; }
         .op-ico:hover { background: var(--accent-tint); color: var(--accent) !important; }
         .op-ico-w:hover { background: var(--warning-tint); color: var(--warning-text) !important; }
         .op-ico-d:hover { background: var(--danger-tint); color: var(--danger-fg) !important; }
-        @media (prefers-reduced-motion: reduce){ [style*="animation"]{ animation:none !important } }
+        
       `}</style>
 
       <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -861,7 +863,7 @@ export default function Operations2() {
 
         {/* Форма создания */}
         {createOpen && canCreate && (
-          <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid var(--accent-border)', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
+          <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid var(--accent-border)', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'm-rise var(--dur-slow) var(--ease-out) both' }}>
             <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
             <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create"
               files={pendingAsFiles} busyFiles={filesBusy}
@@ -924,7 +926,7 @@ export default function Operations2() {
               можно в любом месте списка, и панель не уезжает вместе с ним. В потоке
               страницы она оставалась у начала таблицы, то есть за экраном. */}
           {canEdit && selIds.length > 0 && (
-              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: 'var(--shadow-float)', background: 'var(--bg-tint)', border: '1px solid var(--accent-border)', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: 'var(--shadow-float)', background: 'var(--bg-tint)', border: '1px solid var(--accent-border)', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'm-rise var(--dur-base) var(--ease-out) both' }}>
                 <div style={{ minWidth: 150, borderRight: '1px solid var(--accent-border)', paddingRight: 14 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-fg)', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>
@@ -973,7 +975,7 @@ export default function Operations2() {
               <div style={{ position: 'sticky', top: 0, zIndex: 3, display: 'grid', gridTemplateColumns: gridT, gap: GAP, alignItems: 'center', height: 38, padding: `0 ${ROW_PAD}px`, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-card)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
                 {visibleCols.map(([k, w, label, sc]) => k === 'sel'
                   ? <span key={k} style={{ ...stick(k, 'var(--bg-card)'), height: '100%', display: 'flex', alignItems: 'center' }}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
-                  : <span key={k} onClick={() => onSort(sc)} style={{ ...stick(k, 'var(--bg-card)'), height: '100%', display: 'flex', alignItems: 'center', justifyContent: RIGHT.has(k) ? 'flex-end' : 'flex-start', paddingLeft: PAD_LEFT[k], cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
+                  : <span key={k} onClick={() => onSort(sc)} style={{ ...stick(k, 'var(--bg-card)'), height: '100%', display: 'flex', alignItems: 'center', justifyContent: justify(k), paddingLeft: PAD_LEFT[k], cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
               </div>
               {/* «Нет операций по выбранным фильтрам» — утверждение о ДАННЫХ. На сбое
                   загрузки оно неверно, и подменять им причину нельзя: человек начнёт
@@ -986,12 +988,12 @@ export default function Operations2() {
                     <Fragment key={o.id}>
                       {/* фон строки — переменной --op-row: ею же красятся закреплённые ячейки (и при наведении — .op-row:hover) */}
                       <div className="op-row" onClick={e => openPanel(e, o.id)} style={{ '--op-row': panelId === o.id || sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'var(--bg-card)'), display: 'grid', gridTemplateColumns: gridT, gap: GAP, alignItems: 'center', padding: `7px ${ROW_PAD}px`, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', cursor: 'pointer', background: 'var(--op-row)' }}>
-                        {visibleCols.map(([k]) => <span key={k} data-noexp={NO_PANEL.has(k) ? '' : undefined} style={{ ...stick(k, 'var(--op-row)'), alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: RIGHT.has(k) ? 'flex-end' : 'flex-start', overflow: 'hidden', paddingLeft: PAD_LEFT[k] }}>{cell(o, k)}</span>)}
+                        {visibleCols.map(([k]) => <span key={k} data-noexp={NO_PANEL.has(k) ? '' : undefined} style={{ ...stick(k, 'var(--op-row)'), alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: justify(k), overflow: 'hidden', paddingLeft: PAD_LEFT[k] }}>{cell(o, k)}</span>)}
                       </div>
                       {/* Правка раскрывается под своей строкой — форма стоит там, где
                           пользователь только что кликнул, и список не теряет место. */}
                       {editing?.id === o.id && canEdit && (
-                        <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 14, padding: '18px 20px', margin: '2px 0 10px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                        <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: 14, padding: '18px 20px', margin: '2px 0 10px', animation: 'm-rise var(--dur-base) var(--ease-out) both' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                             <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: T.warningText, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
                             <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>

@@ -58,6 +58,14 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
             from app.ad import boost
             ended = boost.expire_due(db)
             db.commit()
+        # План РК из медиаплана — ДО долей и лимитов (владелец 18.11.2026): утренний `sync_ad_campaigns` шёл позже, и
+        # уменьшенный план доезжал до DSP только следующей ночью. Обычно план уже обновлён событием (`volumes_now.replan_now`).
+        if not dry_run and campaign_ids is None:
+            try:
+                build.sync_campaigns(db)
+            except Exception:  # noqa: BLE001 — пересчёт долей и лимитов важнее
+                db.rollback()
+                log.exception("план РК из медиапланов перед ночным пересчётом не подтянут")
         shares = build.refresh_weights(db, commit=not dry_run, campaign_ids=campaign_ids)
         if dry_run:
             db.rollback()

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { RISE_KEYFRAMES, rise } from './kit'
+import { rise } from './kit'
 
 // Общий мобильный шелл справочников (§2 хендоффа «Справочник контрагентов»):
 // тулбар с раскрывающимся поиском · строка фильтр-чипов + синяя «+» ·
@@ -25,7 +25,6 @@ export default function DirectoryMobile({
 
   return (
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, paddingBottom: 90 }}>
-      <style>{RISE_KEYFRAMES}</style>
 
       {/* тулбар */}
       {searchOpen ? (

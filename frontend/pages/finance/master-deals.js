@@ -23,7 +23,8 @@ import ActionCell from '@/components/master/registry/ActionCell'
 import Chips from '@/components/master/registry/Chips'
 import ChannelChip from '@/components/master/registry/ChannelChip'
 import CopyCode from '@/components/CopyCode'
-import ExpandedRow from '@/components/master/registry/ExpandedRow'
+import ExpandedRow, { navyZone } from '@/components/master/registry/ExpandedRow'
+import { useThemeKey } from '@/lib/theme'
 import StatusBar from '@/components/master/registry/StatusBar'
 import { CAPS, KEEP } from '@/components/master/registry/kit'
 import { detailText } from '@/lib/loadError'
@@ -34,6 +35,8 @@ import { detailText } from '@/lib/loadError'
 const COLS = '84px 76px 150px minmax(200px,1.6fr) 150px 96px minmax(140px,1.2fr) minmax(60px,0.6fr) minmax(80px,1fr) minmax(80px,1fr) 136px 52px 104px 104px 142px'
 export default function MasterDealsRegistry() {
   const router = useRouter()
+  // NAVY: оформление как у «Моих сделок» (navy.css, .navy-scr) — фон, мягкие кнопки, расхлоп пакета продолжением строки (18.11.2026)
+  const zone = navyZone(useThemeKey())
   const [mounted, setMounted] = useState(false)
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
@@ -113,7 +116,7 @@ export default function MasterDealsRegistry() {
   if (access === 'denied') return <NoAccessScreen title="Мастер-сделки: нет доступа" what="Мастер-сделки" nav={head} />
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI, color: 'var(--text-primary)' }}>
+    <div className="navy-scr" style={{ minHeight: '100vh', background: 'var(--page-bg) fixed', fontFamily: UI, color: 'var(--text-primary)' }}>
       {head}
       <div style={{ maxWidth: 2500, margin: '0 auto', padding: '22px 28px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ position: 'relative', zIndex: 20, display: 'flex', alignItems: 'center', gap: '12px 16px', flexWrap: 'wrap' }}>
@@ -176,10 +179,10 @@ export default function MasterDealsRegistry() {
                 return (
                   <Fragment key={r.code}>
                   <div onClick={toggle} style={{ display: 'grid', gridTemplateColumns: cols, gap: 14, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border-row)', minWidth: 0, cursor: 'pointer',
-                    background: moved[r.code] ? 'var(--income-tint)' : isOpen ? 'var(--bg-subtle)' : 'transparent', opacity: leaving ? 0.7 : 1, transition: 'background-color 300ms ease, opacity 300ms ease' }}>
+                    background: moved[r.code] ? 'var(--income-tint)' : isOpen ? 'var(--bg-subtle)' : 'transparent', opacity: leaving ? 0.7 : 1, transition: 'background-color var(--dur-slow) ease, opacity var(--dur-slow) ease' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span aria-hidden style={{ fontSize: 9, color: 'var(--text-faint)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 160ms ease' }}>▸</span>
-                      <Link href={`/accounts/master/${r.code}`} style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--accent)' }}>{r.code}</Link>
+                      <span aria-hidden style={{ fontSize: 9, color: 'var(--text-faint)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform var(--dur-base) ease' }}>▸</span>
+                      <Link href={`/accounts/master/${r.code}?from=registry`} style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--accent)' }}>{r.code}</Link>
                     </span>
                     <span style={{ display: 'inline-flex', minWidth: 0 }}><ChannelChip way={r.channel} /></span>
                     <span style={{ display: 'inline-flex', minWidth: 0 }}><MasterStatusPill status={r.status} label={r.status} /></span>
@@ -232,7 +235,7 @@ export default function MasterDealsRegistry() {
                       </span>
                     ))}
                   </div>
-                  {isOpen && <ExpandedRow code={r.code} channel={r.channel} canEdit={rights.edit} onChanged={load} />}
+                  {isOpen && <ExpandedRow code={r.code} channel={r.channel} canEdit={rights.edit} onChanged={load} zone={zone} />}
                   </Fragment>
                 )
               })}

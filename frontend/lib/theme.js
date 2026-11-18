@@ -3,6 +3,8 @@
 // хранится у пользователя (users.theme, PUT /api/auth/me/theme), в браузере — копия для первого кадра;
 // по умолчанию — светлая (системную настройку не подхватываем).
 // Приём тот же, что в кабинете паблишера (cabinet-frontend/pages/_app.js).
+import { useEffect, useState } from 'react'
+
 export const THEME_KEY = 'theme'
 // Пять тем хендоффа docs/темки.zip (tokens-5themes.css); образец — цвет фона темы.
 export const THEMES = [
@@ -32,6 +34,25 @@ export function applyTheme(theme) {
 
 /** Выбрать тему: сразу на странице и у пользователя на сервере (users.theme) — одна функция для меню профиля и переключателя
  *  «День / Ночь» дашборда трафика (NAVY, 17.11.2026). Не сохранилось на сервере — в этом браузере тема всё равно останется. */
+/** Текущая тема страницы (атрибут data-theme на <html>) — состоянием React, с подпиской на смену из меню профиля. Для экранов,
+ *  где тема меняет РАЗМЕТКУ, а не только цвета: «Мои сделки» в NAVY — блок «Сейчас» днём тёмный, ночью светлый (18.11.2026). */
+export function useThemeKey() {
+  const [theme, setTheme] = useState(null)
+  useEffect(() => {
+    const el = document.documentElement
+    const read = () => setTheme(el.getAttribute('data-theme') || 'light')
+    read()
+    const mo = new MutationObserver(read)
+    mo.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => mo.disconnect()
+  }, [])
+  return theme
+}
+
+/** Тон контрастного блока NAVY (главное на экране: «Сейчас», полоса стадий пакета, «Получится», нижняя строка действия):
+ *  днём тёмный, ночью светлый; в прежних темах — без тона (вид прежний). Одно правило для всех экранов (18.11.2026). */
+export const contrastTone = (theme) => (theme === 'navy' ? 'dark' : theme === 'navy-dark' ? 'light' : undefined)
+
 export function saveTheme(theme) {
   applyTheme(theme)
   import('@/lib/http').then(({ default: api, auth }) => api.put('/auth/me/theme', { theme }, auth())).catch(() => {})

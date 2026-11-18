@@ -19,7 +19,7 @@ const KEY = 'deal_sections_open'
 
 const Chevron = ({ open }) => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-    style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+    style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform var(--dur-fast)',
       flex: '0 0 auto' }}>
     <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.5"
       strokeLinecap="round" strokeLinejoin="round" />

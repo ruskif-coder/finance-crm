@@ -16,6 +16,8 @@ import DsViewer from '@/components/onecDesk/DsViewer'
 import { SendBadge, SendButton, sendFrame, sendMode } from '@/components/master/registry/SendMark'
 
 const GRID = { display: 'grid', gridTemplateColumns: '260px minmax(120px,1fr) 150px max-content', gap: 10, alignItems: 'center' }
+// Первая ячейка ДС и комплекта: название строкой, статус подписи — второй строкой под ним, одинаково у обоих (владелец 18.11.2026: «разнобой», «можно 2 строкой»)
+const TITLE_CELL = { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, minWidth: 0 }
 const ICON = { dl: 'M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14', none: 'M5 12h14', ok: 'M5 12.5l4.5 4.5L19 7.5', plus: 'M12 5v14M5 12h14',
   clock: 'M12 8v4l2.5 1.5' }
 const EDIT_STATUSES = new Set(['черновик', 'согласование'])
@@ -65,16 +67,19 @@ function KitRow({ k, i, code, onPick, setErr, canEdit, onDone, mode }) {
   const s = k.sign?.state || 'upd'
   return (
     <div style={{ ...GRID, padding: '5px 10px', borderTop: '1px solid var(--border-row)', minWidth: 0 }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
-        <span aria-hidden style={{ width: 3, height: 18, borderRadius: 2, background: mode === 'send' ? sendFrame(k.sign?.state) : signFrame(s, true), flex: '0 0 3px' }} />
-        <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-          Комплект {i}{k.upd_doc_no ? ` · УПД № ${k.upd_doc_no}` : ''}</span>
+      <span style={TITLE_CELL}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span aria-hidden style={{ width: 3, height: 18, borderRadius: 2, background: mode === 'send' ? sendFrame(k.sign?.state) : signFrame(s, true), flex: '0 0 3px' }} />
+          <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+            Комплект {i}{k.upd_doc_no ? ` · УПД № ${k.upd_doc_no}` : ''}</span>
+        </span>
         {mode ? <SendBadge sign={k.sign} mode={mode} /> : <SignBadge s={s} small />}
-        {canEdit && mode !== 'send' && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={k.sign} onDone={onDone} setErr={setErr} small />}
       </span>
       <span title={k.deals.length ? `сделки: ${k.deals.join(', ')}` : undefined}
         style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.group}</span>
       <Money net={k.net} gross={k.gross} bold={600} />
+      {/* документы и отметки — в правой ячейке; отметки подписи последними, как «Отметить отправленным» (владелец 18.11.2026) */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
       {!k.onec ? (
         <span title="Счёт, УПД и отчёт появятся после выпуска в 1С — с номерами из 1С"
           style={{ justifySelf: 'end', display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, padding: '0 9px', background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)',
@@ -95,6 +100,8 @@ function KitRow({ k, i, code, onPick, setErr, canEdit, onDone, mode }) {
           {canEdit && mode === 'send' && <SendButton code={code} target={{ upd_no: k.upd_no }} sign={k.sign} label={`комплект ${i}`} onDone={onDone} setErr={setErr} />}
         </span>
       )}
+      {canEdit && mode !== 'send' && <SignActions code={code} target={{ upd_no: k.upd_no }} sign={k.sign} onDone={onDone} setErr={setErr} small stack />}
+      </span>
     </div>
   )
 }
@@ -105,10 +112,9 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
   return (
     <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--border-card)', borderRadius: 10, overflow: 'hidden', minWidth: 0, maxWidth: 1120 }}>
       <div style={{ ...GRID, padding: '6px 10px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
+        <span style={TITLE_CELL}>
           <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>{d.number}</span>
           {d.edo_link ? <InEdo link={d.edo_link} small /> : mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}
-          {canEdit && mode !== 'send' && <SignActions code={code} target={{ annex_id: d.annex_id }} sign={d.sign} onDone={onDone} setErr={setErr} small />}
         </span>
         <span title={`Услуги в ДС: ${d.services.join(', ')}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           <span style={{ display: 'flex', alignItems: 'baseline', gap: '4px 8px', flex: '0 0 auto' }}>
@@ -124,7 +130,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
           </span>
         </span>
         <Money net={d.net} gross={d.gross} />
-        <span style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
           {edit && (
             <Link href={`/directory/annexes/${d.annex_id}`} data-noexp
               title={status === 'согласование' ? 'Редактировать ДС — согласование у юриста начнётся заново' : 'Редактировать ДС в конструкторе'}
@@ -146,6 +152,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
             {scanOpen(d) && <ScanTail scan={d.scan} what="ДС" onScan={() => downloadScan(code, d.scan, setErr)} onPick={() => onPick(`a${d.annex_id}`)} />}
           </span>}
           {canEdit && mode === 'send' && <SendButton code={code} target={{ annex_id: d.annex_id }} sign={d.sign} label={d.number} onDone={onDone} setErr={setErr} />}
+          {canEdit && mode !== 'send' && <SignActions code={code} target={{ annex_id: d.annex_id }} sign={d.sign} onDone={onDone} setErr={setErr} small stack />}
         </span>
       </div>
       {d.kits.map((k, j) => <KitRow key={k.upd_no} k={k} i={kitStart + j} code={code} onPick={onPick} setErr={setErr} canEdit={canEdit} onDone={onDone} mode={mode} />)}
