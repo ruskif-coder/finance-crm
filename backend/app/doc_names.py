@@ -12,6 +12,8 @@
 загрузки, их не трогаем (владелец 09.11.2026). Медиаплан называется своим правилом (`lib/mpDownload.js`)."""
 import os
 import re
+
+from app import ds_label
 from typing import Optional
 from urllib.parse import quote
 
@@ -23,8 +25,7 @@ _BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 MAX_PART = 60
 MAX_NAME = 110          # символов до расширения: кириллица в UTF-8 — два байта, предел ФС — 255 байт
 
-# Как на экранах (`frontend/lib/annexNumber.js`): «ДС № 68» / «ПР № 68»; полная форма остаётся в самом документе
-_SHORT = ((re.compile(r"^\s*(дополнительное|доп\.?)\s*соглашение\s*", re.I), "ДС "), (re.compile(r"^\s*приложение\s*", re.I), "ПР "))
+# «ДС № 68» / «ПР № 68» — правило `app/ds_label.py`; полная форма остаётся в самом документе
 
 
 def safe(s: Optional[str]) -> str:
@@ -45,10 +46,7 @@ def name(word_no: str, d, counterparty: Optional[str], master_code: Optional[str
 
 def short_annex(number: Optional[str], no: Optional[int] = None) -> str:
     if number:
-        for rx, word in _SHORT:
-            if rx.search(number):
-                return re.sub(r"№\s*", "№ ", word + rx.sub("", number, count=1))
-        return number
+        return ds_label.short(number)
     return f"ДС № {no}" if no else "ДС без номера"
 
 

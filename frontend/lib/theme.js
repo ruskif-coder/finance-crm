@@ -1,7 +1,7 @@
 // Тёмная тема (владелец 22.10.2026: «дай кнопку переключения, пройдусь глазами»). Тема — атрибут
 // data-theme на <html>; цвета переопределяет блок [data-theme="dark"] в styles/globals.css. Выбор
 // хранится у пользователя (users.theme, PUT /api/auth/me/theme), в браузере — копия для первого кадра;
-// по умолчанию — светлая (системную настройку не подхватываем).
+// по умолчанию — Navy день (владелец 19.11.2026; до того — светлая), системную настройку не подхватываем.
 // Приём тот же, что в кабинете паблишера (cabinet-frontend/pages/_app.js).
 import { useEffect, useState } from 'react'
 
@@ -20,10 +20,12 @@ export const THEMES = [
 // Переключатель для всех (владелец 22.10.2026: «выложи переключатель тем»); до того был только в next dev.
 // Флаг оставлен, чтобы тему можно было снова спрятать одной строкой.
 export const THEME_ON = true
+// Тема того, кто сам не выбирал (users.theme пусто) и страницы входа. Выбравший «День» явно на ней и остаётся.
+export const DEFAULT_THEME = 'navy'
 
 export function readTheme() {
   if (!THEME_ON) return 'light'
-  try { const t = localStorage.getItem(THEME_KEY); return THEMES.some(x => x.key === t) ? t : 'light' } catch { return 'light' }
+  try { const t = localStorage.getItem(THEME_KEY); return THEMES.some(x => x.key === t) ? t : DEFAULT_THEME } catch { return DEFAULT_THEME }
 }
 
 export function applyTheme(theme) {
@@ -40,7 +42,7 @@ export function useThemeKey() {
   const [theme, setTheme] = useState(null)
   useEffect(() => {
     const el = document.documentElement
-    const read = () => setTheme(el.getAttribute('data-theme') || 'light')
+    const read = () => setTheme(el.getAttribute('data-theme') || DEFAULT_THEME)
     read()
     const mo = new MutationObserver(read)
     mo.observe(el, { attributes: true, attributeFilter: ['data-theme'] })

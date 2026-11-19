@@ -10,6 +10,7 @@ import { SIGN, signAction } from '@/lib/masterSteps'
 import { MONO, UI } from '@/components/salesTableKit'
 import safeHref from '@/lib/safeHref'
 import { detailText } from '@/lib/loadError'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ICON = {
@@ -180,7 +181,7 @@ export function SignActions({ code, url, target, sign, onDone, setErr, small = f
 export function scanTargets(m) {
   const out = []
   for (const d of m.docs?.ds || []) {
-    if (d.sign?.needs_scan) out.push({ annex_id: d.annex_id, upd_no: null, label: d.number })
+    if (d.sign?.needs_scan) out.push({ annex_id: d.annex_id, upd_no: null, label: shortAnnexNumber(d.number) })
     for (const k of d.kits || []) if (k.sign?.needs_scan) out.push({ annex_id: null, upd_no: k.upd_no, label: `УПД № ${k.upd_no}` })
   }
   return out

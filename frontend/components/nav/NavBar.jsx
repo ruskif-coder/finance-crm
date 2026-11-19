@@ -227,7 +227,7 @@ export default function NavBar({ sections, active, path, isAdmin, canSettings, o
             )
           })}
           {isAdmin && (
-            <button type="button" className="nav3-btn" onClick={() => go('/exec')} title="Сводка руководителя" aria-label="Сводка руководителя" style={iconBtn}>
+            <button type="button" className="nav3-btn" onClick={() => go('/exec')} title="Деньги" aria-label="Деньги" style={iconBtn}>
               <Ico d={UI_ICON.exec} />
             </button>
           )}

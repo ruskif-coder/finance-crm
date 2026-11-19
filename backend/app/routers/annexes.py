@@ -66,6 +66,7 @@ EDIT = require_permission("annexes", "edit")
 from app.sales import annex_print as AP  # noqa: E402
 _contract, _annex, _annex_deals = AP.contract_of, AP.annex_of, AP.annex_deals
 from app import doc_names as DN  # noqa: E402
+from app import ds_label
 BASIS = "с основанием для закрывающих"
 _assert_no_open_legal, assert_printable, _doc = AP.assert_no_open_legal, AP.assert_printable, AP.printable_doc
 
@@ -771,7 +772,7 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
     wb = Workbook()
     ws = wb.active
     ws.title = "Приложения"
-    head = ["Юрлицо", "ИНН", "Договор", "Дата договора", "Приложение", "Дата",
+    head = ["Юрлицо", "ИНН", "Договор", "Дата договора", "№ ДС / ПР", "Дата",
             "Период с", "Период по", "Сумма с НДС", "Мастер-сделка", "Сделки", "Статус"]
     ws.append(head)
     fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -786,7 +787,7 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
         ws.append([
             a["counterparty_name"], a["counterparty_inn"],
             a["contract_number"], a["contract_date"],
-            a["number"] or "черновик", a["date"],
+            ds_label.short(a["number"]) or "черновик", a["date"],   # в выгрузке — коротко, как в системе
             a["period_from"], a["period_to"], a["total_amount"],
             a.get("master_code") or "",
             ", ".join(d["code"] or str(d["id"]) for d in a["deals"]),

@@ -321,7 +321,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
         "permissions": get_permissions_for_user(db, user),
         "name": user.name,
         "consent_required": user.consent_accepted_at is None,
-        "theme": user.theme or "light",
+        "theme": user.theme or "navy",
     }
 
 @router.get("/me")
@@ -337,7 +337,7 @@ def get_me(current_user: User = Depends(get_current_user_any), db: Session = Dep
         "is_admin": current_user.role.key == "admin",
         "permissions": get_permissions_for_user(db, current_user),
         "consent_required": current_user.consent_accepted_at is None,
-        "theme": current_user.theme or "light",
+        "theme": current_user.theme or "navy",
     }
 
 

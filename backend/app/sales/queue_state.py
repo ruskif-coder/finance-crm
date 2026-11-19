@@ -35,6 +35,7 @@ from app.sales import account_turn
 from app.sales.stage_checks import BATCH_MEMO, REGISTRY, Ctx, OK, NOT_YET
 from app.sales.stage_slots import TAIL_SLOTS, slot_of
 from app.sales.urgency import Verdict, DealFacts
+from app import ds_label
 
 # Проверки, которые очередь считает сама. Для каждой `load` подкладывает окружение,
 # и тест держит равенство с поштучным расчётом карточки по всем ним.
@@ -552,7 +553,7 @@ def load(db, deals, today: date) -> Batch:
             .filter(SalesDealAnnexAllocation.deal_id.in_(ids))
             .order_by(SalesDealAnnexAllocation.id).all()):
         annex_n[did] = annex_n.get(did, 0) + 1
-        label = (number or "").replace("Приложение", "").strip() or (f"№ {no}" if no else "")
+        label = ds_label.short(number) or (f"№ {no}" if no else "")   # правило системы: «ДС № 12» / «ПР № 3»
         prev = annex.get(did, ("", 0.0))
         annex[did] = (label or prev[0], prev[1] + (amount or 0))
 

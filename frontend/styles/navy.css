@@ -122,9 +122,13 @@
 [data-theme="navy-dark"] input, [data-theme="navy-dark"] select, [data-theme="navy-dark"] textarea { background:var(--bg-subtle); color:var(--text-primary) }
 
 /* Маячок у плашки «данные устарели» (дашборд трафика, 17.11.2026); без анимации при «уменьшить движение» */
-@keyframes tp-beacon { 0%, 100% { box-shadow:0 0 0 0 var(--signal-border) } 50% { box-shadow:0 0 0 4px transparent } }
-.tp-beacon { animation:tp-beacon 1.6s ease-in-out infinite }
-@media (prefers-reduced-motion: reduce) { .tp-beacon { animation:none } [data-theme^="navy"], [data-theme^="navy"] body { transition:none } }
+/* Пульс — кольцом-псевдоэлементом через transform/opacity (считает видеокарта). Было box-shadow: перерисовка каждый кадр,
+   в закреплённой панели дашборда трафика прокрутка падала до ~45 кадров/с (замер 18.11.2026, процессор ×4 медленнее). */
+@keyframes tp-beacon { 0%, 100% { transform:scale(1); opacity:.9 } 50% { transform:scale(2.15); opacity:0 } }
+.tp-beacon { position:relative }
+.tp-beacon::after { content:''; position:absolute; inset:0; border-radius:inherit; background:var(--signal-border);
+  will-change:transform, opacity; animation:tp-beacon 1.6s ease-in-out infinite }
+@media (prefers-reduced-motion: reduce) { .tp-beacon::after { animation:none; opacity:0 } [data-theme^="navy"], [data-theme^="navy"] body { transition:none } }
 [data-theme^="navy"] .tp-widgets-sum { border-radius:999px }   /* свёрнутые виджеты дашборда трафика — тёмная «пилюля» (17.11.2026) */
 
 /* Текст на заливке акцентом — контрастный к акценту в каждой зоне (17.11.2026: в «Navy ночь» акцент светлый, и белый текст

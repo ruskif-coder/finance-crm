@@ -9,7 +9,7 @@ from app.routers.auth import get_current_user
 from app.permissions import get_permissions_for_user, require_permission, require_any_permission
 from app import legal_form as LF
 from app.audit import log_action
-from app.receivables import DEFAULT_TERM_DAYS
+from app.receivables import DEFAULT_TERM_DAYS, avg_pay_days_db
 from app.signers import service as SG
 from pydantic import BaseModel
 from typing import Optional, List
@@ -373,6 +373,9 @@ def get_counterparties_registry(
         if best is None or cnt > best[1]:
             top_article[cid] = (article_name, cnt)
 
+    # Среднее время оплаты — от 1-го числа следующего периода до факта (владелец 18.11.2026), считается при каждом запросе.
+    pay_days = avg_pay_days_db(db)
+
     def classify(total_income, total_expense):
         has_income = (total_income or 0) > 0
         has_expense = (total_expense or 0) > 0
@@ -394,6 +397,8 @@ def get_counterparties_registry(
                 "term_days": r.term_days,
                 "term_days_effective": r.term_days if r.term_days is not None else DEFAULT_TERM_DAYS,
                 "term_days_is_default": r.term_days is None,
+                "avg_pay_days": pay_days.get(r.id, (None, 0))[0],
+                "avg_pay_n": pay_days.get(r.id, (None, 0))[1],
                 "sk_mode": r.sk_mode, "sk_percent": r.sk_percent,
                 "status": r.status,
                 "relation": classify(r.total_income_all, r.total_expense_all),

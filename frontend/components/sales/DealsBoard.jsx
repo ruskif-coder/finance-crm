@@ -88,7 +88,7 @@ function toCard(d) {
   const DOC_BG = [T.income, T.warning, T.inner]      // 0 готово · 1 в работе · 2 нет
   const docs = [
     { kind: 'brief', title: 'Бриф' }, { kind: 'mp', title: 'Медиаплан' },
-    { kind: 'ds', title: 'Доп. соглашение' }, { kind: 'creatives', title: 'Креативы' },
+    { kind: 'ds', title: 'ДС' }, { kind: 'creatives', title: 'Креативы' },
   ].map(x => ({ ...x, state: docState(d, x.kind) }))
   return {
     raw: d,

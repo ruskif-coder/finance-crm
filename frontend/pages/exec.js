@@ -1,264 +1,116 @@
 /**
- * Дашборд руководителя.
+ * «Деньги» — стартовый экран собственника. Заменил «Сводку руководителя» (владелец 18.11.2026: «замени этим экран»);
+ * хендофф docs/design_handoff_money_navy.zip, процессы учёта под него — docs/Деньги - процессы и учёт.md.
  *
- * Отвечает на четыре вопроса, а не показывает всё: зарабатываем ли, где деньги
- * остановились, продано ли на будущее, что горит. Спека — `docs/SPEC_дашборд_руководителя.md`.
+ * Адрес /exec и пиктограмма в верхней панели прежние: экран сквозной, в карте навигации его нет намеренно (гейт check-nav
+ * знает это исключение). Доступ — только админ, как у прежней сводки.
  *
- * Экран для одного человека. Поэтому нет разрезов по ответственным, нет области видимости
- * и НЕТ мобильной версии — осознанное решение владельца, а не долг.
- *
- * В карте навигации его нет намеренно: он сквозной, не принадлежит ни одному контуру, и
- * попадают на него пиктограммой в верхней панели — как на «Операции» рубль, а на настройки
- * шестерёнку. Гейт `check-nav` знает об этом исключении.
- *
- * ГЛАВНОЕ ПРАВИЛО ЭКРАНА: пустое не выдавать за ноль. Месяц закрывается с задержкой, и
- * «выручка 0» за незакрытый месяц — не «не заработали», а «ещё не провели». Сервер отдаёт
- * `has_revenue` и последний закрытый месяц, экран это проговаривает словами.
+ * Что живое, что демо (аудит учёта 18.11.2026): счета, календарь, «можно тратить», «решить сегодня», «что если», «нам должны»,
+ * качество данных, накопительный остаток и детализация — из учёта. «Деньги в обороте» и «Заёмные» — демо с пометкой;
+ * «План / факт» и «Горизонт денег» — заготовки, как в макете. Пометки снимаются вместе с появлением данных.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '@/components/Navbar'
 import api, { auth } from '@/lib/api'
-import { card, CAP, MONO, UI, btnSm, th, td } from '@/components/salesTableKit'
-import { grp, mln, pctDot } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { UI, fs, tys } from '@/components/money/kit'
+import { MONTHS_NOM, buildDays, parseDate, receivables, scenarios } from '@/components/money/model'
+import Header from '@/components/money/Header'
+import Hero from '@/components/money/Hero'
+import Todo, { todoItems } from '@/components/money/Todo'
+import Accounts from '@/components/money/Accounts'
+import Calendar, { WhatIfBar } from '@/components/money/Calendar'
+import { Turnover, Loans, PlanFactStub, HorizonStub } from '@/components/money/DemoBlocks'
+import { Receivables, Quality } from '@/components/money/Receivables'
+import Cumulative from '@/components/money/Cumulative'
+import MonthTable from '@/components/money/MonthTable'
 
-const BOX = { ...card, padding: '18px 20px' }
-const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
-const moLabel = (s) => (s ? `${MONTHS[+s.slice(5, 7) - 1]} ${s.slice(2, 4)}` : '—')
+const THR_KEY = 'money_threshold'
+const THR_DEFAULT = 500000
 
-/** Крупное число блока маржи. Прочерк, если периода ещё нет в учёте. */
-function Big({ label, value, unit = 'млн', tone, has = true }) {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={CAP}>{label}</div>
-      <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, lineHeight: 1.1,
-                    fontVariantNumeric: 'tabular-nums', color: tone || 'var(--text-primary)' }}>
-        {has && value != null ? value : '—'}
-        {has && value != null && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-faint)' }}> {unit}</span>}
-      </div>
-    </div>
-  )
+function useThreshold() {
+  const [thr, setThrState] = useState(THR_DEFAULT)
+  useEffect(() => { try { const v = Number(localStorage.getItem(THR_KEY)); if (v > 0) setThrState(v) } catch { /* приватное окно */ } }, [])
+  const setThr = (v) => { setThrState(v); try { localStorage.setItem(THR_KEY, String(v)) } catch { /* приватное окно */ } }
+  return [thr, setThr]
 }
 
-/** Полоса месяца в блоке загрузки: продано сейчас против сопоставимой точки прошлого года. */
-function BookingBar({ row, max }) {
-  const w = (v) => (max > 0 ? Math.max(2, Math.round((v / max) * 100)) : 0)
-  const behind = row.prev_same_date > 0 && row.amount < row.prev_same_date
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '58px 1fr 92px', gap: 10, alignItems: 'center' }}>
-      <div style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)' }}>{moLabel(row.month)}</div>
-      <div style={{ display: 'grid', gap: 3 }}>
-        <div style={{ height: 12, borderRadius: 4, width: `${w(row.amount)}%`,
-                      background: behind ? 'var(--warning)' : 'var(--accent)', minWidth: 2 }} />
-        <div style={{ height: 5, borderRadius: 3, width: `${w(row.prev_same_date)}%`,
-                      background: 'var(--border-card)', minWidth: 2 }}
-             title={`На эту же дату год назад: ${grp(row.prev_same_date)} ₽`} />
-      </div>
-      <div style={{ fontFamily: MONO, fontSize: 12.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                    color: behind ? 'var(--warning-text)' : 'var(--text-primary)' }}>
-        {mln(row.amount, 1)}
-      </div>
-    </div>
-  )
+/** Самый тяжёлый должник с просрочкой: больше всех дней, при равенстве — больше сумма. */
+function worstOverdue(inv) {
+  const by = {}
+  inv.filter(x => x.d < 0).forEach(x => {
+    const k = x.cp_id ?? x.who
+    const c = by[k] || (by[k] = { who: x.who, amount: 0, days: 0, n: 0 })
+    c.amount += x.amount; c.days = Math.max(c.days, -x.d); c.n += 1
+  })
+  return Object.values(by).sort((a, b) => b.days - a.days || b.amount - a.amount)[0] || null
 }
 
-export default function ExecDashboard() {
-  const [scale, setScale] = useState('month')
-  const [anchor, setAnchor] = useState(null)      // null = сервер сам возьмёт последний закрытый
-  const [d, setD] = useState(null)
+export default function MoneyScreen() {
+  const [data, setData] = useState(null)
   const [err, setErr] = useState('')
+  const [mode, setMode] = useState('contract')
+  const [scen, setScen] = useState({})
+  const [day, setDay] = useState(0)
+  const [dz, setDz] = useState('')
+  const [thr, setThr] = useThreshold()
 
   const load = useCallback(async () => {
     setErr('')
-    try {
-      const q = new URLSearchParams({ scale, ...(anchor ? { anchor } : {}) })
-      const { data } = await api.get(`/exec/overview?${q}`, auth())
-      setD(data)
-      if (!anchor) setAnchor(data.period.anchor)
-    } catch (e) {
-      setErr(e?.response?.status === 403
-        ? 'Экран доступен только администратору.'
-        : 'Не удалось загрузить сводку. Обновите страницу.')
+    try { setData((await api.get('/money/overview', auth())).data) } catch (e) {
+      setErr(e?.response?.status === 403 ? 'Экран доступен только администратору.' : 'Не удалось загрузить данные. Обновите страницу.')
     }
-  }, [scale, anchor])
-
+  }, [])
   useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
 
-  const step = (dir) => {
-    if (!anchor) return
-    const back = scale === 'quarter' ? 3 : 1
-    let y = +anchor.slice(0, 4), m = +anchor.slice(5, 7) + dir * back
-    while (m <= 0) { m += 12; y -= 1 }
-    while (m > 12) { m -= 12; y += 1 }
-    setAnchor(`${y}-${String(m).padStart(2, '0')}`)
-  }
+  const real = mode === 'real'
+  const calc = useMemo(() => {
+    if (!data) return null
+    const R = buildDays(data, { real, scen })
+    const R0 = buildDays(data, { real })
+    const inv = receivables(data)
+    const upto = R0.days.slice(0, R0.mi + 1).flatMap(x => x.ops).filter(o => o.v < 0 && o.flag !== 'late' && o.flag !== 'today' && !/налог/i.test(o.cat || ''))   // налог не переносят; флага «обязательный» у статьи пока нет
+    const move = upto.sort((a, b) => a.v - b.v)[0] || null
+    return { R, R0, inv, move, overdue: worstOverdue(inv), sc: scenarios(data) }
+  }, [data, real, scen])
 
-  const m = d?.margin
-  const bookMax = Math.max(1, ...(d?.booking?.months || []).flatMap(r => [r.amount, r.prev_same_date]))
+  const scenOn = !!(scen.moveOut || scen.payIn)
+  const scenText = calc && [scen.moveOut && calc.move ? `${calc.move.who} ${tys(calc.move.amount)} → после горизонта` : '',
+    scen.payIn ? `${scen.payIn.who} гасит просрочку ${tys(scen.payIn.amount)}` : ''].filter(Boolean).join(' · ')
+  const today = data && parseDate(data.today)
 
   return (
     <>
-      <Head><title>Сводка руководителя | SIMB-AD ERP</title></Head>
+      <Head><title>Деньги | SIMB-AD ERP</title></Head>
       <Navbar />
-      <div style={{ maxWidth: 1240, margin: '0 auto', padding: '22px 24px 60px', fontFamily: UI }}>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Сводка</h1>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button style={btnSm(scale === 'month')} onClick={() => setScale('month')}>Месяц</button>
-            <button style={btnSm(scale === 'quarter')} onClick={() => setScale('quarter')}>Квартал</button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-            <button style={btnSm(false)} onClick={() => step(-1)}>←</button>
-            <span style={{ fontFamily: MONO, fontSize: 13, minWidth: 130, textAlign: 'center' }}>
-              {d?.period?.label || '…'}
-            </span>
-            <button style={btnSm(false)} onClick={() => step(1)}>→</button>
-          </div>
+      <div className="navy-scr" style={{ minHeight: '100vh', fontFamily: UI, color: 'var(--text-primary)' }}>
+        <div style={{ maxWidth: 1880, margin: '0 auto', boxSizing: 'border-box', padding: '22px 26px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {!!err && <div style={{ padding: '14px 18px', borderRadius: 14, background: 'var(--bad-tint)', border: '1px solid var(--bad-border)', color: 'var(--bad-fg)' }}>{err}</div>}
+          {data && calc && <>
+            <Header today={data.today} thr={thr} setThr={setThr} mode={mode} setMode={setMode} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.78fr)', gap: 16 }}>
+              <Hero R={calc.R} data={data} real={real} thr={thr} />
+              <Todo items={todoItems({ R0: calc.R0, thr, data, overdue: calc.overdue, move: calc.move, scen, setScen, pickDay: setDay, pickBucket: setDz })} />
+              <Accounts data={data} />
+            </div>
+            {scenOn && <WhatIfBar text={scenText} from={fs(calc.R0.minB)} to={{ s: fs(calc.R.minB), v: calc.R.minB }} thr={thr} onReset={() => setScen({})} />}
+            <Calendar R={calc.R} real={real} thr={thr} day={day} setDay={setDay} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.55fr) minmax(0,1fr)', gap: 16, alignItems: 'stretch' }}>
+              <Turnover />
+              <Loans />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.95fr)', gap: 16, alignItems: 'stretch' }}>
+              <Receivables inv={calc.inv} dz={dz} setDz={setDz} />
+              <PlanFactStub monthName={MONTHS_NOM[today.getMonth()]} />
+              <HorizonStub />
+              <Quality rows={data.quality} />
+            </div>
+            <Cumulative data={data} sc={calc.sc} thr={thr} mode={mode} />
+            <MonthTable months={data.months} />
+          </>}
         </div>
-
-        {!!err && (
-          <div style={{ ...BOX, borderColor: 'var(--danger-border)', color: 'var(--danger)', marginBottom: 14 }}>{err}</div>
-        )}
-
-        {d && (
-          <div style={{ display: 'grid', gap: 14 }}>
-
-            {/* ── Маржа ─────────────────────────────────────────────────────── */}
-            <div style={BOX}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 18 }}>
-                <Big label="Выручка" value={mln(m.revenue, 1)} has={m.has_revenue} />
-                <Big label="Себестоимость" value={mln(m.cogs, 1)} has={m.has_data} />
-                <Big label="Валовая прибыль" value={mln(m.gross, 1)} has={m.has_revenue}
-                     tone={m.gross >= 0 ? 'var(--income)' : 'var(--danger)'} />
-                <Big label="Маржинальность" value={pctDot(m.gross_pct)} unit="" has={m.has_revenue} />
-                <Big label="EBITDA" value={mln(m.ebitda, 1)} has={m.has_revenue}
-                     tone={m.ebitda >= 0 ? 'var(--income)' : 'var(--danger)'} />
-              </div>
-
-              {/* Незакрытый период называется своим именем, а не рисуется нулём. */}
-              {!m.has_revenue && (
-                <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 10,
-                              background: 'var(--warning-tint)', color: 'var(--warning-text)', fontSize: 12.5 }}>
-                  Выручка за этот период ещё не проведена — период не закрыт.
-                  Последний закрытый месяц: <b>{moLabel(d.last_revenue_month)}</b>.
-                </div>
-              )}
-
-              <div style={{ marginTop: 16, borderTop: '1px solid var(--border-row)', paddingTop: 14 }}>
-                <div style={CAP}>Валовая прибыль по месяцам</div>
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, height: 60 }}>
-                  {d.margin_series.map(s => {
-                    const top = Math.max(1, ...d.margin_series.map(x => Math.abs(x.gross)))
-                    const h = Math.round((Math.abs(s.gross) / top) * 52)
-                    return (
-                      <div key={s.month} title={`${moLabel(s.month)}: ${grp(s.gross)} ₽`}
-                           style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                        <div style={{ height: s.has_revenue ? Math.max(2, h) : 2, borderRadius: 3,
-                                      background: !s.has_revenue ? 'var(--border-card)'
-                                        : s.gross >= 0 ? 'var(--accent)' : 'var(--danger)' }} />
-                      </div>
-                    )
-                  })}
-                </div>
-                <div style={{ display: 'flex', gap: 5, marginTop: 5 }}>
-                  {d.margin_series.map(s => (
-                    <div key={s.month} style={{ flex: 1, textAlign: 'center', fontFamily: MONO,
-                                                fontSize: 9, color: 'var(--text-faint)' }}>
-                      {MONTHS[+s.month.slice(5, 7) - 1]}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Граница блока названа прямо: иначе читатель решит, что разрез просто не вывели. */}
-              <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                В разрезе клиента маржа не считается: доход приходит от рекламодателя, расход
-                уходит площадке, и связать их можно только через приложение к договору.
-                Появится, когда заработает мост сделка → деньги.
-              </div>
-            </div>
-
-            {/* ── Что горит ─────────────────────────────────────────────────── */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14 }}>
-              {d.alerts.map(a => (
-                <a key={a.key} href={a.href} style={{ ...BOX, textDecoration: 'none', display: 'block' }}>
-                  <div style={CAP}>{a.label}</div>
-                  <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                                color: a.value ? 'var(--danger)' : 'var(--text-faint)' }}>
-                    {a.unit === 'money' ? mln(a.value, 1) : grp(a.value)}
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-faint)' }}>
-                      {a.unit === 'money' ? ' млн' : ''}
-                    </span>
-                  </div>
-                  {!!a.hint && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>{a.hint}</div>}
-                </a>
-              ))}
-            </div>
-
-            {/* ── Загрузка месяцев ──────────────────────────────────────────── */}
-            <div style={BOX}>
-              <div style={CAP}>Продано по месяцам флайта</div>
-              <div style={{ display: 'grid', gap: 9 }}>
-                {d.booking.months.map(r => <BookingBar key={r.month} row={r} max={bookMax} />)}
-              </div>
-              <div style={{ display: 'flex', gap: 14, marginTop: 12, fontSize: 11, color: 'var(--text-faint)' }}>
-                <span>▬ продано сейчас</span><span>▁ на ту же дату год назад</span>
-              </div>
-              {/* Оговорка стоит У ГРАФИКА, а не в примечании внизу: без неё блок опасен. */}
-              {d.booking.prev_year_gap.deals > 0 && (
-                <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                  Сравнение читать по направлению, <b>не в разах</b>: период флайта завели в
-                  октябре 2025, и у {d.booking.prev_year_gap.deals} сделок прошлого года
-                  (на {mln(d.booking.prev_year_gap.amount, 0)} млн) его нет вовсе — база
-                  сравнения неполная.
-                </div>
-              )}
-            </div>
-
-            {/* ── Воронка ───────────────────────────────────────────────────── */}
-            <div style={BOX}>
-              <div style={CAP}>Где стоят сделки</div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr>
-                  <th style={th}>Фаза</th>
-                  <th style={th}>Стадия</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Сумма</th>
-                </tr></thead>
-                <tbody>
-                  {d.funnel.map((r, i) => {
-                    const first = i === 0 || d.funnel[i - 1].phase !== r.phase
-                    return (
-                      <tr key={r.stage}>
-                        <td style={{ ...td, fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>
-                          {first ? r.phase : ''}
-                        </td>
-                        <td style={{ ...td, color: r.deals ? 'var(--text-primary)' : 'var(--text-faint)' }}>
-                          {r.stage}
-                          {r.lost && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}> · потеря</span>}
-                        </td>
-                        <td style={{ ...td, textAlign: 'right', fontFamily: MONO,
-                                     fontVariantNumeric: 'tabular-nums',
-                                     color: r.deals ? 'var(--text-primary)' : 'var(--text-faint)' }}>
-                          {r.deals || '—'}
-                        </td>
-                        <td style={{ ...td, textAlign: 'right', fontFamily: MONO,
-                                     fontVariantNumeric: 'tabular-nums',
-                                     color: r.amount ? 'var(--text-primary)' : 'var(--text-faint)' }}>
-                          {r.amount ? mln(r.amount, 1) + ' млн' : '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-          </div>
-        )}
       </div>
     </>
   )

@@ -30,7 +30,7 @@ import { Segmented } from '@/components/salesTableKit'
 
 // Вид документа по договору (владелец 31.10.2026): «при пересохранении — выбор ДС/Приложение, если ещё не выбрано».
 // Подписи — как на наших экранах; в самом документе слово печатается полностью.
-const WORDS = [{ value: 'приложение', label: 'Приложение' }, { value: 'дс', label: 'ДС' }]
+const WORDS = [{ value: 'приложение', label: 'ПР' }, { value: 'дс', label: 'ДС' }]
 
 export default function BaseTemplateModal({ open, onClose, contract }) {
   const [step, setStep] = useState('pick')

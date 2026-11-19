@@ -257,6 +257,17 @@ def desk_invoice_xml(kit_id: int, db: Session = Depends(get_db), user: User = De
         raise HTTPException(e.status, e.message)
 
 
+@router.get("/kit/{kit_id}/invoice-doc")
+def desk_invoice_doc(kit_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Счёт для просмотра на экране — данные счёта из XML УПД 1С (та же сборка, что XML для Диадока)."""
+    from app.onec_desk import invoice_xml as IX
+    m, k = _kit(db, kit_id)
+    try:
+        return IX.view_of_kit(db, m, k)
+    except IX.InvoiceXmlError as e:
+        raise HTTPException(e.status, e.message)
+
+
 @router.get("/kit/{kit_id}/ds-doc")
 def desk_ds_doc(kit_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """ДС для просмотра на экране (владелец 05.11.2026: «посмотреть — модалкой»): те же данные, что сайдкар печатает в PDF,

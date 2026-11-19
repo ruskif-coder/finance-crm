@@ -13,6 +13,7 @@
  */
 import { downloadBlob } from '@/lib/dealDocs'
 import { dm, grp, rub2 } from '@/lib/salesFormat'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const ACT = {
   display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 7px', border: '1px solid var(--border-card)',
@@ -28,7 +29,7 @@ const shareText = (share, total, others) => {
 }
 
 // «Дополнительное соглашение № 96-01» → «ДС № 96-01»: слово документа длинное, в узкой колонке оно съедало номер.
-const dsTitle = (a) => (a.is_draft ? 'ДС · черновик' : `ДС № ${(a.number || '').split('№').pop().trim() || a.no}`)
+const dsTitle = (a) => (a.is_draft ? 'ДС · черновик' : shortAnnexNumber(a.number) || `ДС № ${a.no}`)
 
 function dsRows(docs, line) {
   return docs.ds.map(a => line({
@@ -70,7 +71,7 @@ function kitRows(docs, line) {
 
 /** Строки документов закрытия. `onCreate` — «Создать» ДС на старте, пока у сделки нет ни ДС, ни пакета. */
 export default function MasterDocs({ docs, line, onCreate, creating }) {
-  if (!docs) return line({ key: 'ds-loading', ok: false, title: 'Доп. соглашение', meta: 'загрузка…' })
+  if (!docs) return line({ key: 'ds-loading', ok: false, title: 'ДС', meta: 'загрузка…' })
   const out = []
   if (docs.master) {
     out.push(line({
@@ -81,7 +82,7 @@ export default function MasterDocs({ docs, line, onCreate, creating }) {
   if (docs.ds.length) out.push(...dsRows(docs, line))
   else {
     out.push(line({
-      key: 'ds-none', ok: false, title: 'Доп. соглашение',
+      key: 'ds-none', ok: false, title: 'ДС',
       meta: docs.master ? 'ещё не создано в мастер-сделке' : 'не создано',
       right: onCreate && !docs.master ? <span onClick={onCreate} style={ACT}>{creating ? 'Создаю…' : 'Создать'}</span> : null,
     }))

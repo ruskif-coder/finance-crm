@@ -63,3 +63,13 @@ def test_column_has_check_constraint():
     finally:
         db.close()
     assert got == 1
+
+
+def test_unset_theme_defaults_to_navy_day(me):
+    """Владелец 19.11.2026: «включи нави день как стиль по умолчанию». Не выбравший тему получает Navy день;
+    выбравший «День» (light) явно — остаётся на нём (проверено параметром light выше)."""
+    db = SessionLocal()
+    db.execute(text("UPDATE users SET theme = NULL WHERE id = :i"), {"i": me})
+    db.commit()
+    db.close()
+    assert TestClient(app).get("/api/auth/me").json()["theme"] == "navy"

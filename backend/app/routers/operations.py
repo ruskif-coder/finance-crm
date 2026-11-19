@@ -8,6 +8,7 @@ from app.xlsx_safe import xlsx_safe
 from app.banks import BANKS
 from app.models import OPERATION_STATUSES, Operation, Article, Counterparty, User
 from app import own_company
+from app import ds_label
 from app.audit import log_action
 from app.permissions import require_permission
 from app.receivables import (_due_date, _aging_bucket, _term_days_for_counterparty,
@@ -1264,7 +1265,7 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
             'article': str(row['article']) if pd.notna(row.get('article')) else None,
             'counterparty': str(row['counterparty']) if pd.notna(row.get('counterparty')) else None,
             'inn': _clean_inn(row.get('inn')),
-            'ds_num': str(row['ds_num']) if pd.notna(row.get('ds_num')) else None,
+            'ds_num': ds_label.short(str(row['ds_num'])) if pd.notna(row.get('ds_num')) else None,   # до сверки с базой: там уже «ДС № 12»
             'invoice': str(row['invoice']) if pd.notna(row.get('invoice')) else None,
             'invoice_date': _cell_date(row_no, row.get('invoice_date')),
             'description': str(row['description']) if pd.notna(row.get('description')) else None,

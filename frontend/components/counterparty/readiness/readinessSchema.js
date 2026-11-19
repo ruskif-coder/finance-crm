@@ -126,7 +126,7 @@ export const SCH = {
       { k: 'prolongation', l: 'пролонгация', opts: PROLONGATION_OPTIONS, from: 'юрист', need: 'none' },
       { k: 'channel', l: 'канал выдачи', opts: ISSUE_CHANNELS, from: 'клиент' },
       { k: 'edo_status', l: 'статус ЭДО · подписан', sys: '—', roWhy: 'приходит из ЭДО' },
-      { k: 'annex_word', l: 'ДС или Приложение', opts: ['ДС', 'Приложение'], from: 'юрист' },
+      { k: 'annex_word', l: 'ДС или ПР', opts: ['ДС', 'Приложение'], from: 'юрист' },
       { k: 'annex_start_no', l: 'с какого № ДС', mono: true, sys: '—', roWhy: 'меняется в карточке договора (нумерация ДС)', from: 'юрист' },
       { k: 'note', l: 'примечание', span: true, from: 'аккаунт', need: 'none', emptyTone: 'none', emptyText: '—' },
     ]],

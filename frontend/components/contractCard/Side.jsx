@@ -12,7 +12,7 @@ import { cap, h2, count, note, btnPrimary, Pill, Notice, money, plural, link, pa
 // Тумблер «как называется ДС» (владелец 31.10.2026). Подписи — как у нас на экранах («ДС»);
 // в самом документе слово печатается полностью — «Доп. соглашение» (`annex_tpl/doc_kind.py`).
 // Пусто в базе = «приложение»: так договоры печатаются по умолчанию.
-const WORDS = [{ value: 'приложение', label: 'Приложение' }, { value: 'дс', label: 'ДС' }]
+const WORDS = [{ value: 'приложение', label: 'ПР' }, { value: 'дс', label: 'ДС' }]
 
 const PEN = 'M4 20h4l10-10-4-4L4 16v4z'
 const COPY = 'M9 9h11v11H9zM5 15V4h11'

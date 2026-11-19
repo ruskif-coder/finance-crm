@@ -10,7 +10,7 @@ from datetime import date
 from typing import Optional, List
 from app import timez
 from app.periods import quarter_parts
-from app.receivables import _period_bounds, GRACE_DAYS, DEFAULT_TERM_DAYS, _term_days_for_counterparty, _due_date, _aging_bucket  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
+from app.receivables import _period_bounds, GRACE_DAYS, DEFAULT_TERM_DAYS, _term_days_for_counterparty, _due_date, _aging_bucket, avg_pay_days_db, next_period_start, docs_of_operations, managers_of_counterparties  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
 router = APIRouter()
 
@@ -864,6 +864,8 @@ def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by:
 
     counterparty_cache = {c.id: c for c in db.query(Counterparty).all()}
     article_cache = {a.id: a.name for a in db.query(Article).all()}
+    # «Текущий расчётный день» и «обычно платят» (владелец 18.11.2026): от 1-го числа следующего периода — сегодня и в среднем.
+    usual = avg_pay_days_db(db)
     # Договоры контрагентов — одним запросом, а не на строку.
     contracts_of = {}
     if group_by == 'counterparty':
@@ -931,6 +933,8 @@ def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by:
             'invoice_date': op.invoice_date,
             'due_date': due_date,
             'aging_bucket': bucket,
+            'calc_day': (today - nps).days if (nps := next_period_start(op.period)) else None,
+            'usual_days': usual.get(op.counterparty_id, (None, 0))[0],
         }
         if group_by == 'counterparty':
             op_detail['article'] = article_cache.get(op.article_id, '—')
@@ -943,6 +947,23 @@ def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by:
     rows = list(by_group.values())
     for r in rows:
         r['operations'].sort(key=lambda o: (o['date'] or date_cls.min, o['id']))
+    # Документы наших операций — «глаз» у счёта и у ДС/ПР (владелец 18.11.2026); ручные операции документов не имеют.
+    docs = docs_of_operations(db, [o['id'] for r in rows for o in r['operations']])
+    for r in rows:
+        for o in r['operations']:
+            o['docs'] = docs.get(o['id'])
+    # Сальдо взаимных обязательств (владелец 18.11.2026): нам должны (план поступлений) − мы должны (план оплат) по контрагенту.
+    if group_by == 'counterparty':
+        other = 'ПЛАН ОПЛАТ' if status == 'ПЛАН ПОСТУПЛЕНИЙ' else 'ПЛАН ПОСТУПЛЕНИЙ'
+        other_field = 'expense' if amount_field == 'income' else 'income'
+        mutual = dict(db.query(Operation.counterparty_id, func.coalesce(func.sum(getattr(Operation, other_field)), 0))
+                      .filter(Operation.status == other, Operation.counterparty_id.in_([r['counterparty_id'] for r in rows]))
+                      .group_by(Operation.counterparty_id).all())
+        managers = managers_of_counterparties(db, [r['counterparty_id'] for r in rows])
+        for r in rows:
+            r['manager'] = managers.get(r['counterparty_id'])
+            r['mutual'] = float(mutual.get(r['counterparty_id'], 0) or 0)
+            r['balance'] = (r['amount'] - r['mutual']) if amount_field == 'income' else (r['mutual'] - r['amount'])
     rows.sort(key=lambda r: r['amount'], reverse=True)
 
     total_amount = sum(r['amount'] for r in rows)

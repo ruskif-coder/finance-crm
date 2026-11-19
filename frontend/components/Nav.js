@@ -16,7 +16,7 @@ import { TONE, toneOf, toneWeight } from '@/lib/tone'
 import { allowedSections, allowedItems, findByPath, firstAllowedHref, resolveLegacy } from '@/lib/nav'
 import BugReport from './BugReport'
 import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
-import { applyTheme, readTheme, saveTheme, THEME_ON, THEMES } from '@/lib/theme'
+import { applyTheme, DEFAULT_THEME, readTheme, saveTheme, THEME_ON, THEMES } from '@/lib/theme'
 import NavBar from './nav/NavBar'
 import { sumBadge } from '@/lib/navModel.mjs'
 
@@ -451,7 +451,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
   }, [])
   // Тема — настройка браузера, а не сессии: «Выйти» её не сбрасывает.
   const logout = () => { const t = readTheme(); localStorage.clear(); applyTheme(t); onGoto?.('/login') }
-  const [theme, setTheme] = useState('light')
+  const [theme, setTheme] = useState(DEFAULT_THEME)
   useEffect(() => { setTheme(readTheme()) }, [])
   // Тема — у пользователя (users.theme): ходит за ним на любое устройство. Браузер держит копию для первого кадра.
   const pickTheme = (t) => {

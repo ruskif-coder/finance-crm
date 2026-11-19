@@ -53,7 +53,7 @@ class User(Base):
     # Профиль уведомлений (app/notify). NULL = профиль по умолчанию (is_default).
     # Сознательно отдельно от роли: роль = «что можно видеть», профиль = «что касается».
     notification_profile_id = Column(Integer, ForeignKey("notification_profiles.id"), nullable=True)
-    # Тема интерфейса: light / dark / graphite / pink / japandi, пусто — светлая (миграции 2026-10-22_user_theme*.sql).
+    # Тема интерфейса: light / dark / graphite / pink / japandi, пусто — Navy день (с 19.11.2026; миграции 2026-10-22_user_theme*.sql).
     theme = Column(String(12), nullable=True)
     role = relationship("Role")
 
@@ -292,6 +292,13 @@ class Operation(Base):
         правка, массовая правка и импорт (решение владельца 07.10.2026, см. `app/periods.py`)."""
         from app.periods import normalize_period
         return normalize_period(value)
+
+    @validates("ds_num")
+    def _store_ds_num_short(self, key, value):
+        """Номер ДС / приложения — коротко, «ДС № 12» / «ПР № 64», в любом входящем написании (правило владельца 18.11.2026,
+        `app/ds_label.py`). Здесь, а не в ручках: номер пишут форма, массовая правка, импорт и мост мастер-сделки."""
+        from app.ds_label import short
+        return short(value)
 
 
 class CreditLine(Base):

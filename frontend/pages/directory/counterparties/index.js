@@ -31,14 +31,14 @@ const relMeta = (r) => REL_META[r] || { label: 'не заполнен', bg: 'var
 // сетка таблицы (одна для шапки и строк)
 const COLS = [
   ['sel', '26px', ''], ['id', '52px', 'ID', 'id'], ['name', 'minmax(230px,1.5fr)', 'Название', 'name'],
-  ['inn', '110px', 'ИНН', 'inn'], ['contracts', '62px', 'Дог.'], ['term', '46px', 'Отс.', 'term_days'], ['sk', '96px', 'СК', 'sk_mode'],
+  ['inn', '110px', 'ИНН', 'inn'], ['contracts', '62px', 'Дог.'], ['term', '46px', 'Отс.', 'term_days'], ['paytime', '58px', 'Опл.', 'avg_pay_days'], ['sk', '96px', 'СК', 'sk_mode'],
   ['relation', '112px', 'Статус', 'relation'], ['group', '132px', 'Группа', 'group'], ['vid', '40px', 'Вид'],
   ['op', '52px', 'Опе.', 'op_count'], ['receivable', '104px', 'Дебиторка', 'receivable'],
   ['payable', '104px', 'Кредиторка', 'payable'], ['income', '112px', 'Поступления', 'income_paid'],
   ['expense', '104px', 'Выплаты', 'expense_paid'], ['diff', '112px', 'Разница', 'diff'],
   ['date', '88px', 'Дата', 'last_op_date'], ['actions', '40px', ''],
 ]
-const RIGHT = new Set(['term', 'op', 'receivable', 'payable', 'income', 'expense', 'diff'])
+const RIGHT = new Set(['term', 'paytime', 'op', 'receivable', 'payable', 'income', 'expense', 'diff'])
 
 export default function Counterparties() {
   const router = useRouter()
@@ -167,8 +167,8 @@ export default function Counterparties() {
   const resetFilters = () => { setSearch(''); setStatusFilter(''); setRelFilter(''); setSortCol('name'); setSortDir('asc') }
 
   const exportCsv = () => {
-    const head = ['ID', 'Название', 'ИНН', 'Договоров', 'Отсрочка', 'СК', 'СК %', 'Тип', 'Группа', 'Вид', 'Операций', 'Дебиторка', 'Кредиторка', 'Поступления', 'Выплаты', 'Разница', 'Дата']
-    const rows = filtered.map(c => [c.id, c.name, c.inn || '', c.contracts_count || 0, c.term_days_effective, c.sk_mode || '', c.sk_percent ?? '', relMeta(c.relation).label, c.group || '', c.status, c.op_count, c.receivable, c.payable, c.income_paid, c.expense_paid, c.diff, fmtDate(c.last_op_date)])
+    const head = ['ID', 'Название', 'ИНН', 'Договоров', 'Отсрочка', 'Ср. оплата, дн', 'СК', 'СК %', 'Тип', 'Группа', 'Вид', 'Операций', 'Дебиторка', 'Кредиторка', 'Поступления', 'Выплаты', 'Разница', 'Дата']
+    const rows = filtered.map(c => [c.id, c.name, c.inn || '', c.contracts_count || 0, c.term_days_effective, c.avg_pay_days ?? '', c.sk_mode || '', c.sk_percent ?? '', relMeta(c.relation).label, c.group || '', c.status, c.op_count, c.receivable, c.payable, c.income_paid, c.expense_paid, c.diff, fmtDate(c.last_op_date)])
     // Формулы в ячейках — текстом (lib/csv): название вида «=HYPERLINK(…)» сработало бы в Excel.
     const csv = [head, ...rows].map(r => r.map(csvCell).join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
@@ -301,6 +301,10 @@ export default function Counterparties() {
                       <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{isEdit ? <input value={editDraft.inn} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))} style={{ width: 96, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 8px', fontSize: 12, fontFamily: MONO }} /> : (c.inn || <span style={{ color: 'var(--text-faint)' }}>—</span>)}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.contracts_count ? 'var(--text-primary)' : 'var(--text-faint)', textAlign: 'center' }}>{c.contracts_count || 0}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.term_days_is_default ? 'var(--text-faint)' : 'var(--text-primary)', textAlign: 'right', padding: '0 8px' }}>{isEdit ? <input value={editDraft.term_days} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, term_days: e.target.value.replace(/\D/g, '') }))} placeholder={String(DEFAULT_TERM_DAYS)} style={{ width: 42, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 6px', fontSize: 12, fontFamily: MONO, textAlign: 'right' }} /> : c.term_days_effective}</div>
+                      {/* Среднее время оплаты: от 1-го числа следующего периода до факта, по всем оплатам (владелец 18.11.2026). */}
+                      <div title={c.avg_pay_n ? `В среднем ${c.avg_pay_days} дн от 1-го числа следующего периода до оплаты · по ${c.avg_pay_n} оплатам` : 'Оплат с периодом пока нет'}
+                        style={{ fontFamily: MONO, fontSize: 12, textAlign: 'right', padding: '0 8px', color: c.avg_pay_days == null ? 'var(--text-faint)' : c.avg_pay_days > c.term_days_effective ? 'var(--danger)' : 'var(--text-primary)' }}>
+                        {c.avg_pay_days == null ? '—' : c.avg_pay_days}</div>
                       {/* СК: способ и базовый % (14.10.2026); правится в карточке → «Условия по умолчанию». */}
                       <div title={c.sk_mode ? `СК: ${c.sk_mode}` : 'СК не задан'} style={{ fontFamily: MONO, fontSize: 11, color: c.sk_mode ? 'var(--text-primary)' : 'var(--text-faint)', padding: '0 8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {c.sk_mode ? `${c.sk_mode === 'постоплата' ? 'пост' : 'в счёт'}${c.sk_percent != null ? ` · ${c.sk_percent}%` : ''}` : '—'}

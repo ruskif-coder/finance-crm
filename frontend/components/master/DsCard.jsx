@@ -13,6 +13,7 @@ import { Dot, groupLabel, lineBtn } from '@/components/master/kit'
 import { DocButton, InEdo, KitDocs, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
 import { BasisRow } from '@/components/master/UpdBasis'
 import { SVC_DOT } from '@/lib/masterStatus'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const GRID = 'minmax(220px,2.4fr) 80px 120px 90px 100px 110px 100px 110px'
 const KIND = { main: ['основные услуги', 'var(--accent-tint)', 'var(--accent-fg)'], addons: ['доп. услуги', 'var(--violet-tint)', 'var(--violet-fg)'],
@@ -86,7 +87,7 @@ export default function DsCard({ ds, vat, locked, moved, separate, flash, onMove
       padding: '16px 20px 18px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
       outline: flash ? '2px solid var(--accent)' : 'none', transition: 'outline var(--dur-base), border-color var(--dur-slow) ease' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{doc?.number || `ДС № ${ds.no}`}</span>
+        <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{shortAnnexNumber(doc?.number) || `ДС № ${ds.no}`}</span>
         {!!doc && !doc.edo_link && <SignBadge s={sign || 'none'} />}      {/* «уже в ЭДО» — свой статус ниже */}
         <span style={{ display: 'inline-flex', alignItems: 'center', background: bg, color: fg, borderRadius: 7, padding: '3px 9px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'center' }}>{label}</span>
         {!!doc?.services?.length && (

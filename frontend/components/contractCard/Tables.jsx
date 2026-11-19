@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { grpDec, fmtDateFull } from '@/lib/salesFormat'
 import DataTable from '@/components/contractCard/DataTable'
 import { Pill, money, link } from '@/components/contractCard/ui'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const period = (a, b) => (a || b ? `${fmtDateFull(a)} — ${fmtDateFull(b)}` : '—')
 const STATE = { 'черновик': 'muted', 'у юриста': 'warning', 'подтверждён': 'income' }
@@ -22,7 +23,7 @@ export function Annexes({ data }) {
     <DataTable id="annexes" title="ДС" hint={hint} rows={rows} filters={filters} sum={a => a.total_amount}
                search={a => [a.number, ...(a.deals || []).map(d => d.code)].join(' ')} empty="Приложений по договору нет."
                cols={[
-                 { t: 'ДС', w: '130px', bold: true, cell: a => <Link href={`/directory/annexes/${a.id}`} style={link}>{a.number || `черновик #${a.id}`}</Link> },
+                 { t: 'ДС', w: '130px', bold: true, cell: a => <Link href={`/directory/annexes/${a.id}`} style={link}>{shortAnnexNumber(a.number) || `черновик #${a.id}`}</Link> },
                  { t: 'статус', w: '120px', cell: a => <Pill tone={STATE[a.state]}>{a.state}</Pill> },
                  { t: 'дата', w: '90px', mono: true, cell: a => fmtDateFull(a.date) },
                  { t: 'период', w: '210px', mono: true, cell: a => period(a.period_from, a.period_to) },

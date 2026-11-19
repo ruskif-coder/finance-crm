@@ -8,6 +8,7 @@ import api, { auth } from '@/lib/http'
 import { MONO, th, td } from '@/components/salesTableKit'
 import { grpDec, fmtDateFull } from '@/lib/salesFormat'
 import { detailText } from '@/lib/loadError'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 export default function ContractAnnexList({ contractId }) {
   const [rows, setRows] = useState(null)
@@ -35,7 +36,7 @@ export default function ContractAnnexList({ contractId }) {
             <tbody>
               {rows.map(a => (
                 <tr key={a.id} onClick={() => window.open(`/directory/annexes/${a.id}`, '_blank', 'noopener')} style={{ cursor: 'pointer' }}>
-                  <td style={{ ...td, fontWeight: 700 }}>{a.number}</td>
+                  <td style={{ ...td, fontWeight: 700 }} title={a.number}>{shortAnnexNumber(a.number)}</td>
                   <td style={{ ...td, fontFamily: MONO }}>{fmtDateFull(a.date)}</td>
                   <td style={{ ...td, fontFamily: MONO }}>{fmtDateFull(a.period_from)} — {fmtDateFull(a.period_to)}</td>
                   <td style={{ ...td, fontFamily: MONO, textAlign: 'right' }}>{a.total_amount == null ? '—' : grpDec(a.total_amount, 2)}</td>

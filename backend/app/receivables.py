@@ -65,3 +65,74 @@ def _aging_bucket(due_date, today):
     if diff <= GRACE_DAYS:
         return 'current'
     return 'overdue'
+
+
+def avg_pay_days(rows):
+    """Среднее время оплаты по контрагенту (владелец 18.11.2026): от 1-го числа месяца после периода операции до даты
+    фактической оплаты, простое среднее по всем оплаченным операциям. Считается на лету — новая оплата меняет число сразу.
+
+    rows — [(counterparty_id, period, paid_date)]. Оплата раньше начала следующего периода (предоплата) даёт минус —
+    так и остаётся: это правда о контрагенте, а не ошибка. Строки без периода или даты пропускаются.
+    Возвращает {counterparty_id: (среднее в днях, округлённое; число оплат)}.
+    """
+    from datetime import timedelta
+    acc = {}
+    for cp_id, period, paid in rows:
+        if cp_id is None or paid is None:
+            continue
+        _, end = _period_bounds(period)
+        if not end:
+            continue
+        s = acc.setdefault(cp_id, [0, 0])
+        s[0] += (paid - (end + timedelta(days=1))).days
+        s[1] += 1
+    return {cp: (round(t / n), n) for cp, (t, n) in acc.items()}
+
+
+def next_period_start(period):
+    """1-е число месяца после периода (для квартала — после квартала): точка отсчёта «расчётного дня» и времени оплаты."""
+    from datetime import timedelta
+    _, end = _period_bounds(period)
+    return end + timedelta(days=1) if end else None
+
+
+def avg_pay_days_db(db):
+    """avg_pay_days по всем оплаченным операциям базы — одна точка для реестра контрагентов, дебиторки и экрана «Деньги»."""
+    from app.models import Operation
+    rows = db.query(Operation.counterparty_id, Operation.period, Operation.date).filter(
+        Operation.status == 'ОПЛАЧЕНО', Operation.counterparty_id.isnot(None), Operation.date.isnot(None)).all()
+    return avg_pay_days(rows)
+
+
+def docs_of_operations(db, op_ids):
+    """Документы наших операций для дебиторки (владелец 18.11.2026: «глаз» у счёта и у ДС/ПР): операция, рождённая мостом
+    мастер-сделки, знает свой комплект УПД → ДС и PDF счёта 1С. {op_id: {kit_id, inv_pdf_id, annex_id, annex_external}}.
+    Ручные операции (номер ДС текстом) документов в системе не имеют — их в ответе нет."""
+    from sqlalchemy import text
+    if not op_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT o.id AS op_id, k.id AS kit_id, k.annex_id, a.origin,
+               (SELECT f.id FROM master_deal_files f WHERE f.master_deal_id = k.master_deal_id AND f.upd_no = k.upd_no
+                  AND f.kind = 'счёт 1С' ORDER BY f.id DESC LIMIT 1) AS inv_pdf_id
+          FROM operations o JOIN master_deal_upds k ON k.id = o.master_deal_upd_id
+          LEFT JOIN sales_annexes a ON a.id = k.annex_id
+         WHERE o.id = ANY(:ids)"""), {"ids": list(op_ids)}).mappings().all()
+    from app.sales.annex_external import ORIGIN
+    return {r["op_id"]: {"kit_id": r["kit_id"], "inv_pdf_id": r["inv_pdf_id"], "annex_id": r["annex_id"],
+                         "annex_external": r["origin"] == ORIGIN} for r in rows}
+
+
+def managers_of_counterparties(db, cp_ids):
+    """Ответственный по контрагенту для дебиторки (хендофф 19.11.2026: «ответственный под названием»). Своего поля у контрагента
+    нет — берём аккаунта последней сделки, где контрагент платит (плательщик сделки, иначе её контрагент). {cp_id: имя}."""
+    from sqlalchemy import text
+    if not cp_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT DISTINCT ON (coalesce(d.payer_counterparty_id, d.counterparty_id))
+               coalesce(d.payer_counterparty_id, d.counterparty_id) AS cp, r.name
+          FROM sales_deals d JOIN sales_reps r ON r.id = d.account_manager_id
+         WHERE coalesce(d.payer_counterparty_id, d.counterparty_id) = ANY(:ids)
+         ORDER BY coalesce(d.payer_counterparty_id, d.counterparty_id), d.id DESC"""), {"ids": list(cp_ids)}).fetchall()
+    return {r.cp: r.name for r in rows}

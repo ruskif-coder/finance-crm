@@ -14,6 +14,7 @@ import { can, getPermissions } from '@/lib/auth'
 import { InEdo, SignActions, SignBadge, downloadScan, scanOpen, signFrame } from '@/components/master/docParts'
 import DsViewer from '@/components/onecDesk/DsViewer'
 import { SendBadge, SendButton, sendFrame, sendMode } from '@/components/master/registry/SendMark'
+import { shortAnnexNumber } from '@/lib/annexNumber'
 
 const GRID = { display: 'grid', gridTemplateColumns: '260px minmax(120px,1fr) 150px max-content', gap: 10, alignItems: 'center' }
 // Первая ячейка ДС и комплекта: название строкой, статус подписи — второй строкой под ним, одинаково у обоих (владелец 18.11.2026: «разнобой», «можно 2 строкой»)
@@ -113,7 +114,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
     <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--border-card)', borderRadius: 10, overflow: 'hidden', minWidth: 0, maxWidth: 1120 }}>
       <div style={{ ...GRID, padding: '6px 10px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
         <span style={TITLE_CELL}>
-          <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>{d.number}</span>
+          <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }} title={d.number}>{shortAnnexNumber(d.number)}</span>
           {d.edo_link ? <InEdo link={d.edo_link} small /> : mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}
         </span>
         <span title={`Услуги в ДС: ${d.services.join(', ')}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
@@ -151,7 +152,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
               <Svg d={ICON.dl} />ДС pdf</span>
             {scanOpen(d) && <ScanTail scan={d.scan} what="ДС" onScan={() => downloadScan(code, d.scan, setErr)} onPick={() => onPick(`a${d.annex_id}`)} />}
           </span>}
-          {canEdit && mode === 'send' && <SendButton code={code} target={{ annex_id: d.annex_id }} sign={d.sign} label={d.number} onDone={onDone} setErr={setErr} />}
+          {canEdit && mode === 'send' && <SendButton code={code} target={{ annex_id: d.annex_id }} sign={d.sign} label={shortAnnexNumber(d.number)} onDone={onDone} setErr={setErr} />}
           {canEdit && mode !== 'send' && <SignActions code={code} target={{ annex_id: d.annex_id }} sign={d.sign} onDone={onDone} setErr={setErr} small stack />}
         </span>
       </div>
@@ -174,7 +175,7 @@ export default function PackDocs({ m, canEdit, onPick, setErr, onDone }) {
         start += d.kits.length
         return <Pack key={d.annex_id} d={d} kitStart={s} status={m.status} canEdit={canEdit} code={m.code} onPick={onPick} setErr={setErr} onDone={onDone} mode={mode} onView={mayView ? setView : null} />
       })}
-      {view && <DsViewer annexId={view.annex_id} title={view.number} onClose={() => setView(null)} onError={setErr} />}
+      {view && <DsViewer annexId={view.annex_id} title={shortAnnexNumber(view.number)} onClose={() => setView(null)} onError={setErr} />}
     </div>
   )
 }

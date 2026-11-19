@@ -23,7 +23,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          traffic_dashboard, annexes, directory_add,
-                         exec_dashboard, system_status, mail_admin, search, creative_check, premod,
+                         exec_dashboard, money as money_router, system_status, mail_admin, search, creative_check, premod,
                          nav_prefs as nav_prefs_router)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
@@ -622,6 +622,7 @@ app.include_router(directory_add.router, prefix="/api/directory-add", tags=["dir
 # Дашборд руководителя. Закрыт require_admin, а не правом: экран сквозной и для одного
 # человека, а секция в конструкторе ролей могла бы быть выдана по неосторожности.
 app.include_router(exec_dashboard.router, prefix="/api/exec", tags=["exec_dashboard"])
+app.include_router(money_router.router, prefix="/api/money", tags=["money"])
 # Глобальный поиск в шапке: своего права нет, каждая группа закрыта правом своего типа.
 app.include_router(search.router, prefix="/api/search", tags=["search"])
 # Состояние системы. Тоже require_admin: показывает инфраструктуру, а не бизнес-данные.

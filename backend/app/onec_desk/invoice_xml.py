@@ -245,9 +245,9 @@ def response(name: str, data: bytes):
                              headers={"Content-Disposition": f"attachment; filename=\"{quote(name)}\"; filename*=UTF-8''{quote(name)}"})
 
 
-def for_kit(db, m, k, now: Optional[datetime] = None) -> tuple:
-    """XML счёта комплекта — из XML УПД 1С (`from_upd`), номер и дата — счёта 1С. Сумма строк УПД должна совпасть с суммой
-    счёта 1С — иначе отказ: в Диадок не должен уйти счёт с другой суммой. Коды участников ЭДО — из наших карточек (их в УПД нет)."""
+def invoice_of_kit(db, m, k) -> dict:
+    """Счёт комплекта как данные — из XML УПД 1С (`from_upd`), номер и дата — счёта 1С, коды ЭДО и недостающий корр. счёт —
+    из наших карточек. Одна сборка на XML для Диадока (`for_kit`) и на просмотр счёта на экране (`view_of_kit`)."""
     from app.onec_desk import queue as Q
     from app.onec_desk import xmlparse as XP
     raw = _upd_raw(db, m, k)
@@ -257,12 +257,6 @@ def for_kit(db, m, k, now: Optional[datetime] = None) -> tuple:
     row = seller.get("row")
     signer = {"position": (row.signer_position if row else "") or "", "fio": (row.director_name if row else "") or ""}
     inv = from_upd(upd, k.onec_invoice_no, k.onec_invoice_date, signer)
-    if not inv["number"] or not inv["date"]:
-        raise InvoiceXmlError(409, "Нет номера или даты счёта из 1С — XML счёта собирается после того, как бухгалтер внесла счёт")
-    gross = round(sum(float(x["gross"]) for x in inv["lines"]), 2)
-    if k.onec_gross is not None and abs(gross - float(k.onec_gross)) > 0.01:
-        raise InvoiceXmlError(409, f"Сумма строк УПД 1С {gross:.2f} не совпадает с суммой счёта 1С {float(k.onec_gross):.2f} — "
-                                   "XML не собираем, чтобы в Диадок не ушёл счёт с другой суммой")
     inv["seller"]["edo_id"], inv["buyer"]["edo_id"] = seller.get("edo_id"), buyer.get("edo_id")
     bank = inv["seller"].get("bank") or {}
     if not bank.get("corr"):
@@ -274,10 +268,39 @@ def for_kit(db, m, k, now: Optional[datetime] = None) -> tuple:
             row_b = seller["first_bank"]
         if row_b is not None:
             inv["seller"]["bank"] = {"account": row_b.rs, "bik": row_b.bik, "corr": row_b.ks, "name": row_b.bank_name}
+    return inv
+
+
+def _gross_mismatch(inv: dict, k) -> Optional[str]:
+    gross = round(sum(float(x["gross"]) for x in inv["lines"]), 2)
+    if k.onec_gross is not None and abs(gross - float(k.onec_gross)) > 0.01:
+        return f"Сумма строк УПД 1С {gross:.2f} не совпадает с суммой счёта 1С {float(k.onec_gross):.2f}"
+    return None
+
+
+def for_kit(db, m, k, now: Optional[datetime] = None) -> tuple:
+    """XML счёта комплекта. Сумма строк УПД должна совпасть с суммой счёта 1С — иначе отказ: в Диадок не должен уйти счёт
+    с другой суммой. Коды участников ЭДО — из наших карточек (их в УПД нет)."""
+    inv = invoice_of_kit(db, m, k)
+    if not inv["number"] or not inv["date"]:
+        raise InvoiceXmlError(409, "Нет номера или даты счёта из 1С — XML счёта собирается после того, как бухгалтер внесла счёт")
+    bad = _gross_mismatch(inv, k)
+    if bad:
+        raise InvoiceXmlError(409, bad + " — XML не собираем, чтобы в Диадок не ушёл счёт с другой суммой")
     try:
         return build(inv, now)
     except (ValueError, KeyError, TypeError) as e:     # кривая дата или сумма в данных — отказ, а не падение архива (ревью)
         raise InvoiceXmlError(409, f"Данные счёта не собрались в XML: {e}") from None
+
+
+def view_of_kit(db, m, k) -> dict:
+    """Счёт для просмотра на экране (владелец 18.11.2026: «счёт в просмотрщике, а там кнопка скачать»): те же данные, что идут
+    в XML; расхождение суммы с 1С не прячет счёт, а показывается предупреждением."""
+    inv = invoice_of_kit(db, m, k)
+    lines = inv["lines"]
+    return {**inv, "date": _d(inv["date"]) if inv.get("date") else None, "warning": _gross_mismatch(inv, k),
+            "total": {"net": round(sum(float(x["net"]) for x in lines), 2), "vat": round(sum(float(x["vat"]) for x in lines), 2),
+                      "gross": round(sum(float(x["gross"]) for x in lines), 2)}}
 
 
 def from_upd(upd: Optional[dict], number, date, signer: dict) -> dict:

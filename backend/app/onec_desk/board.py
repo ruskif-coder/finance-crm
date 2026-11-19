@@ -15,9 +15,9 @@ from app.onec_desk import files as OF
 from app.onec_desk import rules as R
 from app.master_deal.status import ARCHIVE
 from app.onec_desk.service import DONE, OPEN, RETURNED
+from app import ds_label
 
 DONE_LIMIT = 300
-ANNEX_SHORT = (("Дополнительное соглашение", "ДС"), ("Приложение", "Прил."))
 
 
 def _iso(v) -> Optional[str]:
@@ -35,10 +35,8 @@ def _ru(d) -> str:
 
 def _annex(number: Optional[str], a) -> dict:
     title = number or "ДС"
-    short = title
-    for long_, s in ANNEX_SHORT:
-        short = short.replace(long_, s)
-    kind = "ДС" if title.startswith("Доп") or title.startswith("ДС") else "Прил"
+    short = ds_label.short(title)          # «ДС № 12» / «ПР № 3» — правило системы (app/ds_label.py), полностью — в документе
+    kind = "ПР" if short.startswith("ПР") else "ДС"
     return {"id": a.id if a is not None else None, "kind": kind, "no": a.no if a is not None else None,
             "date": _iso(a.date) if a is not None and a.date else None, "title": title, "short": short,
             "external": bool(a is not None and a.origin == "загружен")}

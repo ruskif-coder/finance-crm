@@ -533,7 +533,7 @@ def test_export_head_matches_the_screen_columns(env):
         return b"".join([c async for c in r.body_iterator])
     ws = load_workbook(BytesIO(asyncio.run(grab()))).active
     head = [c.value for c in ws[1]]
-    assert head[:5] == ["Юрлицо", "ИНН", "Договор", "Дата договора", "Приложение"]
+    assert head[:5] == ["Юрлицо", "ИНН", "Договор", "Дата договора", "№ ДС / ПР"]   # правило «ДС / ПР» в системе, 18.11.2026
     assert "Сделки" in head and "Статус" in head
 
 
