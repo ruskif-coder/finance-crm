@@ -32,6 +32,7 @@ from app.audit import log_action
 from app.database import get_db
 from app.models import User
 from app.permissions import require_permission
+from app.weborama.client import insertion_fields
 from app.weborama import enums, matching, naming, tags
 from app.weborama.client import (ENV_EMAIL, ENV_PASSWORD, ENV_URL, WcmAuthError,
                                  WcmClient, WcmError)
@@ -336,11 +337,9 @@ def create_insertion(payload: InsertionIn, db: Session = Depends(get_db),
         naming.row_name(payload.channel, payload.campaign_label, payload.domain))
     c = _client(payload.account_id)
     raw = _post(c, "/advertiser/insertions/placements/json",
-               data={"campaign_id": payload.campaign_id,
-                     "ad_network_id": payload.ad_network_id,
-                     "ad_space_id": payload.ad_space_id,
-                     "label": label,
-                     "delivery_format_id": int(payload.delivery_format_id)})
+               data={**insertion_fields(payload.campaign_id, payload.ad_network_id, payload.ad_space_id,
+                                        payload.delivery_format_id),
+                     "label": label})
     wid = _run(c._created, raw, "вставку")
     _journal("7 · вставка", user, payload.dict(), raw)
     log_action(db, user, "weborama_insertion", "weborama", None, f"{label} → {wid}")

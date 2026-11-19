@@ -291,6 +291,10 @@ def run(dry_run: bool = False) -> dict:
                 except Exception:  # noqa: BLE001 — сообщение не должно ронять прогон
                     db.rollback()
                     log.exception("автовыпуск ЕРИД: «восстановился» не отправлено")
+            # ЕРИД обычно приходит последним: площадка стала готова — пиксель и DSP сразу, не ждя крона (19.11.2026).
+            # Выключено в настройках трафика — проход вернёт «выключено» и ничего не тронет.
+            from app.ad import auto_external
+            out["auto_external"] = auto_external.run_quietly(db)
         return out
     finally:
         db.close()

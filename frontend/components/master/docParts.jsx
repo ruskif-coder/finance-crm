@@ -43,6 +43,9 @@ export function KitDocs({ kit, upd_no, paper, code, onPick, setErr, canEdit, onD
       <DocButton label="Отчёт" off wide />
       {kit?.desk?.state === 'возвращён' && <DeskReturned kit={kit} upd_no={upd_no} code={code} canEdit={canEdit} onDone={onDone} setErr={setErr} />}
       {!!kit?.desk?.question && <DeskQuestion kit={kit} upd_no={upd_no} code={code} canEdit={canEdit} onDone={onDone} setErr={setErr} />}
+      {!!kit?.desk?.redo && (   /* внесённое вернули на переделку и ещё не внесли заново (19.11.2026) */
+        <span style={{ maxWidth: 220, padding: '6px 8px', borderRadius: 7, background: 'var(--attn-tint, var(--warning-tint))', fontSize: 11, fontWeight: 700, color: 'var(--attn-fg, var(--warning-fg))' }}>
+          Вернули на переделку: {kit.desk.redo}</span>)}
     </span>
   )
 }

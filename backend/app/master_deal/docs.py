@@ -47,15 +47,18 @@ def _onec_files(db: Session, m) -> dict:
 
 def _desk(db: Session, upd_no: int, state, u) -> dict:
     """Где комплект у бухгалтерии: состояние; если вернули — что не так; если бухгалтер спросила и аккаунт ещё не ответил —
-    её вопрос (ответ — из карточки, `onec-reply`)."""
+    её вопрос (ответ — из карточки, `onec-reply`); если внесённое вернули на переделку и заново ещё не внесли — причина."""
     if u is None:
-        return {"state": state, "returned": None, "question": None}
-    rows = db.execute(text("""SELECT kind, text FROM onec_desk_events WHERE upd_id = :k AND kind IN ('возврат', 'комментарий', 'ответ')
+        return {"state": state, "returned": None, "question": None, "redo": None}
+    rows = db.execute(text("""SELECT kind, text FROM onec_desk_events WHERE upd_id = :k
+                                  AND kind IN ('возврат', 'комментарий', 'ответ', 'внесено', 'переделка')
                                ORDER BY id"""), {"k": u.id}).all()
+    turn = next((r for r in reversed(rows) if r.kind in ("внесено", "переделка")), None)
+    redo = turn.text if turn is not None and turn.kind == "переделка" and state != "внесён" else None
     returned = next((r.text for r in reversed(rows) if r.kind == "возврат"), None) if state == "возвращён" else None
     last = next((r for r in reversed(rows) if r.kind in ("комментарий", "ответ")), None)
     question = last.text if last is not None and last.kind == "комментарий" and state != "внесён" else None
-    return {"state": state, "returned": returned, "question": question}
+    return {"state": state, "returned": returned, "question": question, "redo": redo}
 
 
 def doc_url(a, has_file: bool = False) -> Optional[str]:

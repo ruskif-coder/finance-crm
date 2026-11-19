@@ -162,3 +162,21 @@ def test_revert_retires_old_scans(pack):
     RV.revert(db, m, ST.WAIT_1C, user, "переделка")
     row = db.execute(text("SELECT kind, upd_no FROM master_deal_files WHERE master_deal_id = :m AND filename = 'старый.pdf'"), {"m": m.id}).one()
     assert tuple(row) == ("скан до возврата", None)
+
+
+def test_redo_kit_lands_in_kit_feed_for_accountant_and_pack_card(pack):
+    """19.11.2026: «Вернуть на переделку» было только в журнале действий — в ленте заявки у бухгалтера и в блоке документов
+    карточки пакета не видно, кто, когда и почему вернул. Поломка: событие не пишется в onec_desk_events или его не показывают."""
+    db, m, user = pack
+    from app.master_deal import docs as MDOC
+    from app.master_deal.models import MasterDealUpd
+    from app.onec_desk import board as B
+    k = db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).order_by(MasterDealUpd.upd_no).first()
+    RV.redo_kit(db, m, k, user, "в счёте не тот КПП")
+    db.flush()
+    rows = db.execute(text("SELECT kind, text, by_user FROM onec_desk_events WHERE upd_id = :k ORDER BY id DESC LIMIT 1"), {"k": k.id}).one()
+    assert tuple(rows) == ("переделка", "в счёте не тот КПП", user.id)
+    evs = B._events(db, [k.id])[k.id]
+    feed = B._thread(evs, None)
+    assert feed[0]["text"] == "Вернули на переделку: в счёте не тот КПП" and feed[0]["tone"] == "warn"
+    assert MDOC._desk(db, k.upd_no, None, k)["redo"] == "в счёте не тот КПП"

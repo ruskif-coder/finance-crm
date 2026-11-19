@@ -698,3 +698,37 @@ def test_dsp_hashes_are_not_duplicated_into_the_weborama_contour():
     for m in (WeboramaRef, WeboramaSubmission):
         names = {c.name for c in m.__table__.columns}
         assert not [n for n in names if "xxhash" in n or n.startswith("ms_")]
+
+
+# ── вставка: верификация и размер пикселя (инструкция Weborama 19.11.2026) ─────────────────
+#
+# Поломка: вставка заводится без `verification_enabled` (верификация не включена — платим за измерение, которого нет) или
+# без `placement_list` (размер пикселя 1x1 не задан — их требование, в первом описании API его не было).
+
+def test_insertion_fields_carry_verification_and_pixel_size():
+    from app.weborama.client import insertion_fields
+    f = insertion_fields(campaign_id=17, ad_network_id=112, ad_space_id=1086, delivery_format_id=3)
+    assert f["verification_enabled"] == "YES"
+    assert f["placement_list"] == '[["1x1"]]'          # одинарные кавычки Weborama отвергла 500 (19.11.2026)
+    assert (f["campaign_id"], f["ad_network_id"], f["ad_space_id"], f["delivery_format_id"]) == (17, 112, 1086, 3)
+    assert insertion_fields(1, 2, 3, 3, verification=False)["verification_enabled"] == "NO"
+
+
+def test_create_insertion_sends_verification_and_pixel_size():
+    seen = []
+    c = WcmClient("1", email="a@b.c", password="x",
+                  transport=_transport(seen, {"jwt_token": {"token": "J"}, "insertions": {"id": 9}}))
+    c.create_insertion(campaign_id=17, ad_network_id=112, ad_space_id=1086, label="L")
+    body = seen[-1][3]
+    assert body["verification_enabled"] == "YES" and body["placement_list"] == '[["1x1"]]'
+
+
+def test_provision_builds_insertion_through_the_one_function():
+    """Провижнинг собирает поля вставки той же функцией, что демо-метод: свой словарь рядом — и новое поле Weborama
+    доедет только в одно из двух мест (так и было до 19.11.2026)."""
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1].joinpath("app", "weborama", "provision.py").read_text(encoding="utf-8")
+    assert "insertion_fields(" in src
+    assert '"delivery_format_id": enums.' not in src
+    demo = Path(__file__).resolve().parents[1].joinpath("app", "routers", "weborama_demo.py").read_text(encoding="utf-8")
+    assert "insertion_fields(" in demo and '"delivery_format_id": int(' not in demo

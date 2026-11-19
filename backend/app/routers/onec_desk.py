@@ -56,6 +56,13 @@ def desk_queue(tab: str = "wait", db: Session = Depends(get_db), user: User = De
     return {"rows": Q.queue(db, tab), "counts": Q.counts(db)}
 
 
+@router.get("/count")
+def desk_count(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Сколько заявок ждут бухгалтера — только число, для счётчика в меню (19.11.2026). Тот же отбор, что вкладка
+    «Заявки на документы»: один COUNT, а не вся выдача экрана — счётчик опрашивается с каждой страницы раз в минуту."""
+    return {"waiting": Q.counts(db)["wait"]}
+
+
 @router.get("/kit/{kit_id}")
 def desk_kit(kit_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     _, k = _kit(db, kit_id)

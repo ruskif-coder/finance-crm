@@ -117,6 +117,8 @@ ACTION_LABELS = {
     "weborama_provision": "Пиксели Weborama по РК",
     "weborama_attach": "РК привязана к проекту и кампании Weborama",
     "dsp_provision": "Выгрузка креативов РК в DSP",
+    "auto_external_failed": "Пиксель / DSP сами не прошли",
+    "traffic_auto_external_toggle": "Пиксель и DSP: сами / кнопками",
     "creative_withdrawn": "Креатив отозван у площадки",
     "creative_rework_declined": "Правки площадки не приняты",
     "external_resolve": "Сверка с кабинетом DSP/Weborama после попытки без ответа",

@@ -837,6 +837,18 @@ register(Event(
 ))
 
 register(Event(
+    key="traffic_auto_external_failed", direction="traffic", group="Рекламная кампания",
+    title="Пиксель / DSP сами не прошли",
+    description=("Трафики 19.11.2026: пиксель Weborama и выгрузка в DSP идут сами, когда площадка готова (согласовала "
+                 "креатив, у комплекта ЕРИД), — крон раз в 5 минут и сразу после автовыпуска ЕРИД (`app/ad/auto_external`). "
+                 "Уходит, когда по РК что-то не завелось: отказ Weborama или DSP, объёмы больше плана. Тот же отказ по той же "
+                 "сделке — не чаще раза в сутки. Повторить — кнопками «ПИКСЕЛЬ WR» и «В DSP» в расхлопе РК."),
+    tone="bad", action="Открыть дашборд", widget_group="Сделки", scan=False,
+    recipients=[{"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="traffic_boost_ended", direction="traffic", group="Рекламная кампания",
     title="Темп размещения закончен",
     description=("Буст истёк, снят досрочно или РК окончена: объём возвращён к исходному плану (ночной "

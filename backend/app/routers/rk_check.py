@@ -115,6 +115,17 @@ def summary(db: Session = Depends(get_db), user: User = Depends(SUMMARY_VIEW)):
     for cid, v in by.items():
         sm = R.build_summary(v["checks"], common)
         out[str(cid)] = {"code": v["code"], **sm}
+    # Пиксель / DSP сами не прошли (19.11.2026) — живой алерт поверх ночного прогона, шаг «Заведение»
+    from app.ad import auto_external
+    for cid, msg in auto_external.alerts(db).items():
+        base = out.get(str(cid))
+        if base is None:                    # РК без строк ночного прогона (новая) — пустая сводка под алерт
+            code = db.execute(text("SELECT d.code FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id WHERE c.id = :c"),
+                              {"c": cid}).scalar()
+            if code is None:
+                continue
+            base = {"code": code, **R.build_summary([], {})}
+        out[str(cid)] = auto_external.overlay(base, msg)
     return {"run_date": str(day),
             "checked_at": stamp.astimezone(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%dT%H:%M") if stamp else None,
             "need_action": sum(1 for v in out.values() if v["worst"] == R.RED),

@@ -108,6 +108,7 @@ export default function OnecDeskPage() {
   const [closeEdit, setCloseEdit] = useState(false)
   const [archive, setArchive] = useState(null)
   const [mayRedo, setMayRedo] = useState(false)
+  const [redone, setRedone] = useState(null)       // { code, n } — возврат прошёл: экран показывает, куда ушла заявка
   const [redo, setRedo] = useState(null)           // заявка, которую возвращаем на переделку    // «Вернуть на переделку» — по праву «Мастер-сделки · возврат стадии»     // заявки архивных пакетов — только по кнопке (владелец 12.11.2026)
   useEffect(() => { setMounted(true); setMayEdit(can(getPermissions(), 'onec_desk', 'edit')); setMayRedo(can(getPermissions(), 'master_deals_revert', 'edit')) }, [])
   const access = pageAccess(router.pathname, mounted)
@@ -183,11 +184,14 @@ export default function OnecDeskPage() {
       {head}
       {!!err && <div style={{ maxWidth: 2500, margin: '12px auto 0', padding: '0 30px', fontSize: 13, color: 'var(--danger-fg)', fontFamily: UI }}>{err}</div>}
       {data
-        ? <AccountantDocs data={view} now={now} archiveLoaded={!!archive} {...handlers} />
+        ? <AccountantDocs data={view} now={now} archiveLoaded={!!archive} redone={redone} {...handlers} />
         : !err && <div style={{ padding: 40, color: 'var(--text-faint)', fontFamily: UI }}>Загрузка…</div>}
       {ds && <DsViewer kitId={ds.kitId} title={ds.title} onClose={() => setDs(null)} onError={setErr} />}
       {redo && <RedoModal req={redo} onClose={() => setRedo(null)}
-        onSave={why => deskApi.redo(redo.kit_id, why).then(() => { setArchive(null); load() })} />}
+        onSave={why => { const code = redo.code
+          // архив не сбрасываем (иначе вкладка «Архив» схлопывается): живая выдача уже перебивает архивную копию по коду
+          return deskApi.redo(redo.kit_id, why).then(() => Promise.all([load(), archive ? loadArchive() : null])).then(() => setRedone(x => ({ code, n: (x?.n || 0) + 1 })))
+        }} />}
       {closeEdit && data && <CloseEditor settings={data.settings} onClose={() => setCloseEdit(false)}
         onSave={body => deskApi.saveClose(body).then(st => setData(d => ({ ...d, settings: st })))} />}
     </div>

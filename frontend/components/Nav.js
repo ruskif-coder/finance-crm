@@ -277,42 +277,24 @@ function useNotifications() {
   return { notifs, unread, markRead, fresh, markSeen, dismiss }
 }
 
-// Число креативов, ждущих проверки трафика, — для значка на пункте меню. Отдельная
-// лёгкая ручка (`/traffic/queue/count`), обновление раз в минуту, молчит без токена.
-function useTrafficWaiting(enabled) {
+// Счётчики на пунктах меню: креативы на проверку трафика, неразобранные пакеты премодерации SSP (07.11.2026), заявки
+// бухгалтеру в «Закрывающих документах» (19.11.2026). У каждого — отдельная лёгкая ручка `…/count` → {waiting}, обновление
+// раз в минуту, молчит без токена; пункт не виден — запроса нет.
+function useWaitingCount(url, enabled) {
   const [waiting, setWaiting] = useState(0)
   useEffect(() => {
     if (!enabled) { setWaiting(0); return }
     let alive = true
     const load = () => {
       if (typeof window === 'undefined' || !localStorage.getItem('token')) return
-      axios.get('/api/traffic/queue/count', authHdr())
+      axios.get(url, authHdr())
         .then(r => { if (alive) setWaiting(r.data.waiting || 0) })
         .catch(() => {})
     }
     load()
     const t = setInterval(load, 60000)
     return () => { alive = false; clearInterval(t) }
-  }, [enabled])
-  return waiting
-}
-
-// Неразобранные пакеты премодерации SSP (07.11.2026) — тот же порядок: лёгкая ручка, раз в минуту.
-function usePremodWaiting(enabled) {
-  const [waiting, setWaiting] = useState(0)
-  useEffect(() => {
-    if (!enabled) { setWaiting(0); return }
-    let alive = true
-    const load = () => {
-      if (typeof window === 'undefined' || !localStorage.getItem('token')) return
-      axios.get('/api/premod/count', authHdr())
-        .then(r => { if (alive) setWaiting(r.data.waiting || 0) })
-        .catch(() => {})
-    }
-    load()
-    const t = setInterval(load, 60000)
-    return () => { alive = false; clearInterval(t) }
-  }, [enabled])
+  }, [url, enabled])
   return waiting
 }
 
@@ -482,7 +464,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
       </button>
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 280, zIndex: Z.dropdown,
+          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 340, zIndex: Z.dropdown,
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: T.pop,
           overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `m-drop var(--dur-fast) ${T.ease} both`,
         }}>
@@ -495,16 +477,17 @@ function Profile({ onGoto, canSettings, compact = false }) {
               у кого есть доступ в «Настройки»: каждый правит свои и ничьи больше. */}
           <button onClick={() => { setOpen(false); onGoto?.('/settings/notifications') }} style={menuItem(T.t2)}>Мои уведомления</button>
           {THEME_ON && (
-            <span style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, padding: '8px 10px', borderTop: `1px solid ${T.inner}`, borderBottom: `1px solid ${T.inner}` }}>
+            <span style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 4, padding: '8px 10px', borderTop: `1px solid ${T.inner}`, borderBottom: `1px solid ${T.inner}` }}>
               {THEMES.map(t => (
                 <button key={t.key} type="button" onClick={() => pickTheme(t.key)} style={{
-                  ...btnReset, display: 'inline-flex', whiteSpace: 'nowrap', alignItems: 'center', justifyContent: 'center', gap: 5,
-                  padding: '6px 6px', borderRadius: 8, fontSize: 12, fontWeight: theme === t.key ? 700 : 500,
+                  // по сетке 3 × N: квадратик и подпись от левого края ячейки — столбцы ровные (владелец 19.11.2026)
+                  ...btnReset, display: 'inline-flex', whiteSpace: 'nowrap', alignItems: 'center', justifyContent: 'flex-start', gap: 6,
+                  padding: '6px 8px', borderRadius: 8, fontSize: 12, fontWeight: theme === t.key ? 700 : 500,
                   background: theme === t.key ? 'var(--accent-tint)' : 'transparent', color: theme === t.key ? 'var(--accent)' : T.t2,
                 }}>
                   {/* образец фона темы — у каждого пункта, как в хендоффе */}
-                  <span style={{ width: 10, height: 10, borderRadius: 3, background: t.swatch, boxShadow: `inset 0 0 0 1px ${T.border}` }} />
-                  {t.label}
+                  <span style={{ flex: '0 0 10px', width: 10, height: 10, borderRadius: 3, background: t.swatch, boxShadow: `inset 0 0 0 1px ${T.border}` }} />
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.label}</span>
                 </button>
               ))}
             </span>
@@ -704,12 +687,13 @@ export default function Nav({ children, onSearch, asPath }) {
   const rawSections = mounted ? allowedSections(perms, isAdmin).map(s => ({ ...s, items: allowedItems(s, perms, isAdmin) })) : []
   // Значок ставим только если пункт вообще виден — иначе и запрос лишний.
   const visible = href => rawSections.some(s => s.items?.some(i => i.href === href))
-  const trafficWaiting = useTrafficWaiting(visible('/traffic/queue'))
-  const premodWaiting = usePremodWaiting(visible('/traffic/premoderation'))
+  const trafficWaiting = useWaitingCount('/api/traffic/queue/count', visible('/traffic/queue'))
+  const premodWaiting = useWaitingCount('/api/premod/count', visible('/traffic/premoderation'))
+  const deskWaiting = useWaitingCount('/api/onec-desk/count', visible('/finance/onec-desk'))
   // Клонируем ветку с пунктом и вешаем `badge`: механика карты дальше сама покажет число и
   // на пункте, и в значке раздела (sumBadge из lib/navModel). Мутировать nav.data.json нельзя — он общий
   // и кэшируется между рендерами.
-  const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting }
+  const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting, '/finance/onec-desk': deskWaiting }
   const sections = rawSections.map(sec => (sec.items?.some(i => badges[i.href] > 0)
     ? { ...sec, items: sec.items.map(i => (badges[i.href] > 0 ? { ...i, badge: String(badges[i.href]) } : i)) }
     : sec))

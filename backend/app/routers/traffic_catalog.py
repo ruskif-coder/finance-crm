@@ -27,6 +27,7 @@ from app.database import get_db
 # Ключи и чтение настроек обмена с DSP — в модуле DSP (`app.dsp.config`, 02.10.2026);
 # имена здесь — для экрана и прежних импортёров.
 from app.dsp import config as dsp_config
+from app.ad import auto_external
 from app.dsp.config import (PROD_PARTNER, SCRIPT_NO_CODE, SCRIPT_OUR_CODE,  # noqa: F401
                             SCRIPT_VIEWABILITY, TARGETING_CAMPAIGN, TARGETING_PARTNER, TEASER_ICON,
                             creative_script, targeting_cabinet, viewability_src)
@@ -371,6 +372,8 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "targeting_partner": _setting(db, TARGETING_PARTNER),
         "targeting_campaign": _setting(db, TARGETING_CAMPAIGN),
         "weborama_account": _setting(db, WEBORAMA_ACCOUNT),
+        # Пиксель и DSP сами, по мере готовности площадок (19.11.2026, `app/ad/auto_external`)
+        "auto_external": auto_external.enabled(db),
         "suggested": SUGGESTED_SCRIPT,
         "where": "<head> креатива, перед отправкой в DSP",
     }
@@ -408,6 +411,8 @@ class SiteScriptIn(BaseModel):
     targeting_campaign: Optional[str] = None
     # Номер аккаунта WCM: цифры. Выдаёт Weborama списком, из кода не выводится.
     weborama_account: Optional[str] = None
+    # Пиксель Weborama и выгрузка в DSP — сами, когда площадка готова; выключено — только кнопки.
+    auto_external: Optional[bool] = None
 
 
 @router.put("/site-script")
@@ -491,7 +496,13 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
             {"k": WEBORAMA_ACCOUNT, "v": v})
+    toggled = payload.auto_external is not None and payload.auto_external != auto_external.enabled(db)
+    if toggled:
+        auto_external.set_enabled(db, payload.auto_external)
     db.commit()
+    if toggled:
+        log_action(db, user, "traffic_auto_external_toggle", "settings", None,
+                   "Пиксель и DSP — " + ("сами, по мере готовности площадок" if payload.auto_external else "только кнопками"))
     log_action(db, user, "traffic_creative_script", "settings", None,
                f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}"
                f" | видимость: {(payload.viewability or '')[:80]}"

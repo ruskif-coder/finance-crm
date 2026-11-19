@@ -118,6 +118,21 @@ def _dig(data: Any, keys) -> Optional[str]:
     return None
 
 
+# Размер пикселя вставки (инструкция Weborama 19.11.2026: «пропустили в описании параметр placement_list»). Только с
+# ДВОЙНЫМИ кавычками: живьём 19.11.2026 их пример для формы `[['1x1']]` дал 500 «An internal error occured» (вставка не
+# создалась), а `[["1x1"]]` — вставку 1402 с пикселем 1×1 (тестовая кампания 87 «000000 TEST»).
+PIXEL_PLACEMENT_LIST = '[["1x1"]]'
+
+
+def insertion_fields(campaign_id, ad_network_id, ad_space_id, delivery_format_id, verification: bool = True) -> dict:
+    """Поля создания вставки — одна точка для провижнинга и демо-экрана. `verification_enabled` — YES, если верификация
+    нужна, NO — если нет (инструкция Weborama 19.11.2026); `placement_list` — размер пикселя 1x1."""
+    return {"campaign_id": campaign_id, "ad_network_id": ad_network_id, "ad_space_id": ad_space_id,
+            "delivery_format_id": int(delivery_format_id),
+            "verification_enabled": "YES" if verification else "NO",
+            "placement_list": PIXEL_PLACEMENT_LIST}
+
+
 class WcmClient:
     """Один экземпляр = один аккаунт WCM.
 
@@ -241,7 +256,7 @@ class WcmClient:
                                        data={"label": label}), "сеть")
 
     def create_insertion(self, campaign_id, ad_network_id, ad_space_id, label: str,
-                         delivery_format_id: int = enums.DEFAULT_DELIVERY_FORMAT) -> str:
+                         delivery_format_id: int = enums.DEFAULT_DELIVERY_FORMAT, verification: bool = True) -> str:
         """Вставка (флайт). На ней и живёт тег.
 
         `ad_space_id` обязателен, а метода его создания в доке НЕТ — только чтение. Пока
@@ -250,9 +265,8 @@ class WcmClient:
         """
         return self._created(self.call(
             "POST", "/advertiser/insertions/placements/json",
-            data={"campaign_id": campaign_id, "ad_network_id": ad_network_id,
-                  "ad_space_id": ad_space_id, "label": label,
-                  "delivery_format_id": int(delivery_format_id)}), "вставку")
+            data={**insertion_fields(campaign_id, ad_network_id, ad_space_id, delivery_format_id, verification),
+                  "label": label}), "вставку")
 
     def insertion(self, insertion_id) -> Any:
         """Карточка вставки: в какой она кампании и как названа (проверено живьём 19.11.2026)."""

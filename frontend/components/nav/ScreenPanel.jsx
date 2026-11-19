@@ -6,7 +6,7 @@ import { MONO, Z } from '@/components/salesTableKit'
 import { MAX_PINS, panelCols, recentFor } from '@/lib/navModel.mjs'
 import { Ico, EASE, Badge } from './navBits'
 
-const COL = 232
+const COL = 272   // «Закрывающие документы» + счётчик + звезда (19.11.2026: при 232 счётчик наезжал на звезду)
 const ROW = 34
 const HEAD = 28
 const FOOT = 41
@@ -37,8 +37,8 @@ function Row({ it, i, n, isDir, current, focused, pinned, full, onGo, onPin }) {
       {isDir || !it.icon
         ? <span style={{ flex: '0 0 7px', width: 7, height: 7, margin: '0 4px', borderRadius: 2, background: current ? 'var(--accent)' : 'var(--border-hover)' }} />
         : <span style={{ flex: '0 0 16px', display: 'inline-flex', color: current ? 'var(--accent)' : 'var(--text-muted)' }}><Ico d={it.icon} /></span>}
-      <span style={{ flex: '1 1 auto' }}>{it.label}</span>
-      {!!it.badge && <Badge>{it.badge}</Badge>}
+      <span title={it.label} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</span>
+      {!!it.badge && <span style={{ flex: '0 0 auto', display: 'inline-flex' }}><Badge>{it.badge}</Badge></span>}
       {focused && <span style={kbd}>Enter</span>}
       {!isDir && (
         <span role="button" tabIndex={-1} className={pinned ? 'nav3-star on' : 'nav3-star'} title={starTitle(pinned, full)}

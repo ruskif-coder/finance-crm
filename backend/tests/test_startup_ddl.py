@@ -66,6 +66,12 @@ ALLOWED_DESTRUCTIVE = (
     # (повторный запуск не плодит дубли), строки старше трёх календарных месяцев подметаются
     # (решение владельца, `retention.JOURNAL_MONTHS`). Это журнал результатов, не первичные данные.
     "DELETE FROM rk_check_result WHERE run_date = :d AND campaign_id = ANY(:i)",
+    # Алерт автоматики «пиксель / DSP сами» в пульте РК (19.11.2026, `ad/auto_external._remember` / `_forget_except`): строка
+    # `company_settings` `auto_external:<id РК>` — итог последнего прохода с отказом, а не данные. Проход прошёл чисто, РК выпала
+    # из работы или автоматику выключили — строка удаляется, алерт гаснет. Область — только ключи с этим префиксом; держится
+    # test_auto_external.
+    "DELETE FROM company_settings WHERE key = :k",
+    "DELETE FROM company_settings WHERE key LIKE :p AND NOT (key = ANY(:keep))",
     "DELETE FROM rk_check_result WHERE run_date < :c",
     "DELETE FROM notifications WHERE",
     "DELETE FROM notification_deliveries WHERE",

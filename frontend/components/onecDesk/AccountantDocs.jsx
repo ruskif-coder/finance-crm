@@ -30,6 +30,7 @@ import {
 } from './accDocsLogic';
 import { STYLE, MONO, Cap, Card, Btn, Input, Dot, Chip, Pip, CopyField, FileRow, Field, borderFor, StepHead, Sum, TONE, Clip } from './accDocsParts';
 import { parseDocFileName } from '@/lib/docFileName.mjs';   // стенд: № и дата из имени файла 1С (10.11.2026)
+import { diffWords, explainDiff } from '@/lib/textDiff.mjs';   // где не сходится XML со сделкой (19.11.2026)
 import { pctComma } from '@/lib/salesFormat';
 
 const AD_RISE = 'm-rise var(--dur-slow) var(--ease-out) both';   // анимация появления строкой: гейт check-tokens пускает в стили только переменные globals.css
@@ -39,7 +40,7 @@ const ACCEPT = { invPdf: '.pdf', updPdf: '.pdf', updXml: '.xml,.zip' };
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
 const short = name => name.replace(/ ООО$/, '');
 
-export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, onLoadArchive, archiveLoaded, onRedo, onInvoiceXml, now }) {
+export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumber, onSaveDraft, onSubmit, onReturn, onNote, onSeen, onOpenDeal, onExcel, onDsFile, onOpenFile, onRemoveFile, onEditClose, onReload, onLoadArchive, archiveLoaded, onRedo, redone, onInvoiceXml, now }) {
   const nowMs = typeof now === 'number' ? now : Date.parse(now || data.now);
   const cal = data.settings.calendar;
   const [tab, setTab] = useState('wait');
@@ -58,7 +59,8 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   const [toast, setToast] = useState('');
   const [scans, setScans] = useState({});                  // code → File: скан подписанного ДС приложен в этой сессии
   const [naOpen, setNaOpen] = useState(false);             // прогноз «Ещё в пути» раскрыт
-  const toastT = useRef(); const showToast = (t, ms = 1900) => { setToast(t); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToast(''), ms); };
+  const [flash, setFlash] = useState(null);               // { code, tab } — заявка только что сменила вкладку: строка и счётчик вспыхивают
+  const toastT = useRef(); const showToast = (t, ms = 1900, action = null) => { setToast(action ? { text: t, ...action } : t); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToast(''), ms); };
   const fail = e => showToast((e && e.message) || 'Не получилось — попробуйте ещё раз', 5000);
 
   const reqs = useMemo(() => data.requests.map(r => { const r1 = status[r.code] ? { ...r, status: status[r.code] } : r; return scans[r.code] ? { ...r1, ds_signed: true, ds_scan_url: scans[r.code].url, _scanAt: scans[r.code].at } : r1; }), [data.requests, status, scans]);
@@ -77,6 +79,14 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
   const [sel, setSel] = useState(() => (sortQueue(data.requests.filter(r => r.status === 'wait'))[0] || {}).code);
   const r = reqs.find(x => x.code === sel) || list[0];
   const select = useCallback(code => { setSel(code); setRet({ open: false, reason: '', text: '' }); if (!seen[code]) { setSeen(s => ({ ...s, [code]: true })); onSeen && onSeen(code); } }, [seen, onSeen]);
+
+  /* «Вернуть на переделку» прошло (19.11.2026): заявка уходит в «Заявки на документы» у всех на глазах — вкладка, поиск и
+     группировка не трогаются; строка вспыхивает, счётчик вкладки тоже, плашка с переходом. Локальная отметка 'wait' перебивает
+     и отметку 'done', поставленную внесением в этой же сессии, — иначе строка осталась бы во «Внесены». */
+  useEffect(() => { if (!redone) return undefined; const code = redone.code;
+    setStatus(s => ({ ...s, [code]: 'wait' })); setFlash({ code, tab: 'wait' }); setSel(c => (c === code ? null : c));   // панель — на первую строку текущей вкладки, а не на ушедшую
+    showToast(code + ' вернулась в «Заявки на документы»', 6000, { label: 'Открыть', go: () => { setTab('wait'); setQ(''); select(code); setFlash({ code, tab: 'wait', at: Date.now() }); setToast(''); } });
+    const t = setTimeout(() => setFlash(null), 2200); return () => clearTimeout(t); }, [redone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── форма выбранной заявки ── */
   const readOnly = r && r.status === 'done';
@@ -166,7 +176,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
             {TABS.map(([k, label, dot]) => { const on = !searching && tab === k, n = reqs.filter(x => inTab(x, k)).length;
               return <span key={k} role="tab" aria-selected={on} tabIndex={0} onClick={() => { setTab(k); setQ(''); }} onKeyDown={e => e.key === 'Enter' && (setTab(k), setQ(''))}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, boxSizing: 'border-box', padding: '0 14px', borderRadius: 12, fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)', border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
-                {dot && <Dot c={dot} s={7} />}{label}<span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>{k === 'archive' && !archiveLoaded ? '…' : n}</span></span>; })}
+                {dot && <Dot c={dot} s={7} />}{label}<span key={flash && flash.tab === k ? 'f' + (flash.at || 0) : 'n'} style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: on ? 'var(--accent-fg)' : 'var(--text-muted)', padding: '0 4px', borderRadius: 6, animation: flash && flash.tab === k ? 'm-flash 2s var(--ease-out) both' : undefined }}>{k === 'archive' && !archiveLoaded ? '…' : n}</span></span>; })}
           </span>
           <span style={{ marginLeft: 'auto', width: 420 }}><Input value={q} onChange={e => setQ(e.target.value)} placeholder={archiveLoaded ? '⌕  Поиск по всем и архиву: покупатель, ИНН, № ДС, код' : '⌕  Поиск по всем: покупатель, ИНН, № ДС, код'} aria-label="Поиск по всем заявкам" /></span>
         </div>
@@ -226,7 +236,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                       <span style={{ fontSize: 13, fontWeight: 800 }}>{g.head}</span>
                       <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>договор № {g.contract} · {g.items.length} шт.{nr ? ' · готово ' + nr : ''}</span>
                       <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{money(g.items.reduce((a, x) => a + expectedOf(x).gross, 0))}</span></div>; })()}
-                  {g.items.map(x => <QueueRow key={x.code} req={x} grouped={!!g.head} sel={r && x.code === r.code} form={forms[x.code]} seen={seen[x.code]} nowMs={nowMs} cal={cal} onPick={() => select(x.code)} />)}
+                  {g.items.map(x => <QueueRow key={x.code + (flash && flash.code === x.code ? 'f' + (flash.at || 0) : '')} req={x} flash={!!flash && flash.code === x.code} grouped={!!g.head} sel={r && x.code === r.code} form={forms[x.code]} seen={seen[x.code]} nowMs={nowMs} cal={cal} onPick={() => select(x.code)} />)}
                 </React.Fragment>
               ))}
               {!searching && tab === 'archive' && !archiveLoaded && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '40px 16px', textAlign: 'center' }}>
@@ -249,13 +259,14 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
       </div>
-      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: '#FFFFFF', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: 10 }}>{toast}</div>}
+      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: '#FFFFFF', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: 10, display: 'flex', alignItems: 'center', gap: 14 }}>{typeof toast === 'string' ? toast : <>{toast.text}<button type="button" onClick={toast.go}
+        style={{ border: 0, background: 'transparent', color: 'inherit', font: 'inherit', fontWeight: 800, textDecoration: 'underline', cursor: 'pointer', padding: 0 }}>{toast.label}</button></>}</div>}
     </div>
   );
 }
 
 /* ───────── строка очереди ───────── */
-function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
+function QueueRow({ req, flash, grouped, sel, form, seen, nowMs, cal, onPick }) {
   const { pips, readiness } = rowPips(req, form, seen);
   const look = rowLook(req, readiness, sel), ready = look.ready;
   const h = workHours(Date.parse(req.since), nowMs, cal), tone = ageTone(h);
@@ -266,7 +277,7 @@ function QueueRow({ req, grouped, sel, form, seen, nowMs, cal, onPick }) {
     <div role="button" tabIndex={0} className="acc-row" aria-current={sel || undefined} onClick={onPick} onKeyDown={e => e.key === 'Enter' && onPick()}
       style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 150px 112px', gap: '0 12px', alignItems: 'center', padding: '9px 10px', borderRadius: 12, cursor: 'pointer', marginBottom: 2,
         background: ready ? 'var(--income-tint)' : sel ? 'var(--bg-tint)' : 'transparent', border: `1px solid ${sel ? 'var(--accent)' : ready ? 'var(--income-border)' : 'transparent'}`,
-        boxShadow: sel ? '0 0 0 1px var(--accent)' : 'none' }}
+        boxShadow: sel ? '0 0 0 1px var(--accent)' : 'none', animation: flash ? 'm-flash 2s var(--ease-out) both' : undefined }}
       title={look.dsWarn ? 'Всё заполнено, но ДС не подписан' : undefined}>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
         <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
@@ -429,8 +440,10 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
                 {ev.xml.err && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>{ev.xml.rows.map(x => (
                   <span key={x.label} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, gridColumn: x.label === 'основание' ? '1 / -1' : undefined }}>
                     <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><Cap>{x.label}</Cap><span style={{ fontSize: 11.5, fontWeight: 700, color: x.ok ? 'var(--income-fg)' : 'var(--danger-fg)' }}>{x.ok ? '✓' : '≠'}</span></span>
-                    <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: x.ok ? 'var(--income-fg)' : 'var(--danger-fg)' }}>{x.value}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{x.ok ? 'как в сделке' : 'в сделке ' + x.want}</span></span>))}</div>}
+                    {x.ok
+                      ? <><span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--income-fg)' }}>{x.value}</span>
+                          <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>как в сделке</span></>
+                      : <XmlDiff got={x.value} want={x.want} />}</span>))}</div>}
               </div>); })()}
             <Requisites list={r.requisites} />
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 180px', gap: 10 }}>
@@ -518,6 +531,22 @@ function RequestPanel({ r, f, ev, readOnly, nowMs, cal, setF, copy, cstate, copy
 }
 
 /* системные события в ленте: отправка, повторная отправка, возврат, внесение */
+/** Несовпавшее поле сверки XML (владелец 19.11.2026: «подсвечивать кусок, который не сходится, и комментарий, если это не
+ *  очевидно»): в значении из УПД подсвечены слова, которых нет в сделке, в строке «в сделке» — которых нет в УПД; под ними —
+ *  что именно не так словами, в том числе невидимая разница (неразрывный пробел, другое тире). */
+function XmlDiff({ got, want }) {
+  const d = diffWords(got, want), notes = explainDiff(got, want);
+  const mark = (x, i) => x.bad
+    ? <mark key={i} style={{ background: 'var(--danger-border)', color: 'var(--danger-fg)', borderRadius: 3, padding: '0 2px' }}>{x.t}</mark>
+    : <span key={i}>{x.t}</span>;
+  const line = arr => arr.flatMap((x, i) => (i ? [' ', mark(x, i)] : [mark(x, i)]));
+  return (<>
+    <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--danger-fg)', lineHeight: 1.55 }}>{line(d.got)}</span>
+    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55 }}>в сделке {line(d.want)}</span>
+    {notes.map(n => <span key={n} style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger-fg)' }}>⚠ {n}</span>)}
+  </>);
+}
+
 function systemLog(r) {
   const out = [];
   if (r._scanAt) out.push({ at: r._scanAt, who: 'Бухгалтер', text: 'Приложила скан подписанного ДС', tone: 'ok' });

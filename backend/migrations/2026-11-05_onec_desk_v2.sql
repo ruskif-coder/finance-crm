@@ -17,7 +17,7 @@ ALTER TABLE onec_desk_events ADD COLUMN IF NOT EXISTS snapshot JSONB;
 COMMENT ON COLUMN onec_desk_events.snapshot IS 'У возврата: реквизиты покупателя, договор, ДС, суммы и основание на момент возврата';
 ALTER TABLE onec_desk_events DROP CONSTRAINT IF EXISTS onec_desk_events_kind_check;
 ALTER TABLE onec_desk_events ADD CONSTRAINT onec_desk_events_kind_check
-    CHECK (kind IN ('возврат', 'исправлено', 'комментарий', 'ответ', 'внесено', 'правка'));
+    CHECK (kind IN ('возврат', 'исправлено', 'комментарий', 'ответ', 'внесено', 'правка', 'переделка'));   -- «переделка» — 2026-11-19_onec_desk_event_redo.sql
 
 -- 3. Закрытие месяца у бухгалтерии: срок (плашка «До закрытия октября N рабочих дней») и закрыт ли (дата в закрытом
 --    периоде — предупреждение). Строки нет — срок по умолчанию 10-е число следующего месяца, 18:00 МСК, месяц открыт.

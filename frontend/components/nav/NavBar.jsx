@@ -219,10 +219,12 @@ export default function NavBar({ sections, active, path, isAdmin, canSettings, o
           {pins.map(p => {
             const on = p.href === currentHref
             return (
-              <button key={p.href} type="button" className="nav3-btn" onClick={() => go(p.href)} title={`${p.section.title} · ${p.item.label}`}
-                aria-label={`${p.section.title} · ${p.item.label}`}
-                style={{ ...iconBtn, background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>
+              <button key={p.href} type="button" className="nav3-btn" onClick={() => go(p.href)}
+                title={`${p.section.title} · ${p.item.label}${p.item.badge ? `: ${p.item.badge}` : ''}`} aria-label={`${p.section.title} · ${p.item.label}`}
+                style={{ ...iconBtn, position: 'relative', background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent-fg)' : 'var(--text-muted)' }}>
                 <Ico d={p.item.icon || p.section.icon} />
+                {/* счётчик пункта и на закреплённой иконке (владелец 19.11.2026) — тот же, что в меню раздела */}
+                {!!p.item.badge && <Badge corner>{p.item.badge}</Badge>}
               </button>
             )
           })}

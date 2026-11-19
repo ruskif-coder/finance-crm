@@ -74,6 +74,22 @@ def test_edited_template_keeps_text_but_service_is_the_upds_own(monkeypatch):
     assert D.upd_closing(model, k, ROWS, db=db)["text"] == "Услуги: изготовление комплекта рекламных материалов."
 
 
+def test_basis_is_one_clean_line_for_1c(monkeypatch):
+    """Владелец 19.11.2026 (M-0039): основание одной услуги — ОДНОЙ строкой, без неразрывных пробелов и невидимых символов,
+    «N°» → «№», — уже при генерации: бухгалтер копирует его в 1С, и строка в XML УПД должна совпасть буква в букву.
+    Поломка: шаблон с переводами строк («Кл. Заказчик», «Бренд», «РК» с новой строки) уходит в 1С многострочным."""
+    model = {**MODEL, "closing_basis": {"template": "Услуги: {услуга}.\nКл. Заказчик: ООО «Тест».\n\nБренд: «Тест»​, ДС N°1",
+                                        "edited": True, "inherited_from": None}}
+    monkeypatch.setattr("app.sales.annex.deal_brand", lambda db, ids: BRANDS[ids[0]])
+    monkeypatch.setattr(AS, "_addon_phrases", lambda db: PHRASES)
+    monkeypatch.setattr(AS, "_brands_only", lambda db, ids: "Налгезин")
+    db = SimpleNamespace(get=lambda cls, i: SimpleNamespace(upd_by_service=True))
+    k = SimpleNamespace(brand="KRKA / Налгезин", service=None, basis_text=None, master_deal_id=7)
+    out = D.upd_closing(model, k, ROWS, db=db)
+    assert out["text"] == "Услуги: изготовление комплекта рекламных материалов. Кл. Заказчик: ООО «Тест». Бренд: «Тест», ДС №1"
+    assert all("\n" not in x["text"] for x in out["lines"])
+
+
 NAMES = {1: "Эспумизан (взрослый) / Espumisan (adults)", 2: "Райтбуфен", 3: "Налгезин"}
 
 

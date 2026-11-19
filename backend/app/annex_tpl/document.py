@@ -413,10 +413,24 @@ def upd_closing(model: dict, k, rows=None, db=None) -> dict:
         out = closing_resolve(cb["template"], values, False, cb.get("inherited_from") or "основание этого ДС")
     else:
         out = closing_resolve(_closing_template_for(rows), values, False)
+    out = {**out, "text": basis_line(out["text"])}
     # строки УПД — каждая со своим основанием (06.11.2026); у УПД из одной строки оно и есть основание УПД
-    lines = line_bases(out["template"], values, rows, sep) if len(rows or []) > 1 else \
+    lines = [{**x, "text": basis_line(x["text"])} for x in line_bases(out["template"], values, rows, sep)] if len(rows or []) > 1 else \
         [{"row_id": r.get("row_id"), "text": out["text"]} for r in rows or []]
     return {**out, "values": values, "lines": lines}   # подстановки этой УПД — экрану пакета, чтобы подсказка правки совпадала с печатью
+
+
+_BASIS_INVISIBLE = re.compile("[­​-‏⁠﻿]")
+
+
+def basis_line(text: Optional[str]) -> str:
+    """Основание одной услуги — одной чистой строкой (владелец 19.11.2026, M-0039): бухгалтер копирует его в 1С, 1С кладёт в XML
+    УПД одной строкой, и сверка должна совпасть буква в букву. Переводы строк, неразрывные пробелы и табуляции — один пробел,
+    невидимые символы — прочь, «N°» → «№». Кавычки и тире — как написал автор: копирование переносит их без изменений.
+    Перевод строки остаётся только МЕЖДУ услугами у УПД из нескольких строк (`onec_desk.board`)."""
+    t = _BASIS_INVISIBLE.sub("", text or "")
+    t = re.sub(r"N[°º]", "№", t)
+    return re.sub(r"\s+", " ", t).strip()
 
 
 def fixed_kind(annex, contract, model_kind: Optional[str]) -> Optional[str]:

@@ -51,11 +51,15 @@ def _status(k, m) -> Optional[str]:
 
 
 def _thread(evs: list, seen_at) -> list:
-    """Сообщения: вопросы бухгалтера (комментарий) и ответы аккаунта; новые сверху. Системные события экран добавляет сам."""
-    out = [{"at": _iso(e.at), "who": e.who or ("Аккаунт" if e.kind == "ответ" else "Бухгалтер"), "text": e.text,
-            "from_account": e.kind == "ответ", "unread": e.kind == "ответ" and (seen_at is None or e.at > seen_at)}
-           for e in evs if e.kind in ("комментарий", "ответ") and e.text]
-    return out[::-1]
+    """Сообщения: вопросы бухгалтера (комментарий) и ответы аккаунта; новые сверху. Системные события экран добавляет сам —
+    кроме «переделки» (19.11.2026): её сервер знает только по ленте, у заявки после неё нет своего поля."""
+    def one(e) -> dict:
+        if e.kind == "переделка":
+            return {"at": _iso(e.at), "who": e.who or "система", "text": "Вернули на переделку: " + e.text, "tone": "warn",
+                    "from_account": False, "unread": False}
+        return {"at": _iso(e.at), "who": e.who or ("Аккаунт" if e.kind == "ответ" else "Бухгалтер"), "text": e.text,
+                "from_account": e.kind == "ответ", "unread": e.kind == "ответ" and (seen_at is None or e.at > seen_at)}
+    return [one(e) for e in evs if e.kind in ("комментарий", "ответ", "переделка") and e.text][::-1]
 
 
 def snapshot(req: dict) -> dict:

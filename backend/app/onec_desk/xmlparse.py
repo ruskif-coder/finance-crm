@@ -8,6 +8,7 @@
   СвПродПер/СвПер/ОснПер       @НомОсн @НаимОсн (5.01) | @РеквНомерДок @РеквНаимДок (5.03) — договор и ДС
 Сверку со сделкой делают `rules.evaluate` и фронт по тем же полям: ИНН, КПП, № договора."""
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional
@@ -112,15 +113,35 @@ def contract_key(s: Optional[str]) -> str:
     return "".join(parts)
 
 
+_INVISIBLE = re.compile("[­​-‏⁠﻿]")      # мягкий перенос, нулевой ширины, BOM
+_QUOTES = re.compile("[«»“”„‟‘’‚‛\"'`]")
+_DASHES = re.compile("[‐-―−]")                       # ‐ ‑ ‒ – — ― и минус
+_AROUND = re.compile(r"\s*([,.;:!?№\-\"()/])\s*")                   # пробел у знака: «№ 66» = «№66», «РМ -03» = «РМ-03»
+
+
 def text_key(s: Optional[str]) -> str:
-    """Текст основания без оформления: пробелы схлопнуты, кавычки «» “” "" — одни, регистр не важен."""
-    return re.sub(r"\s+", " ", re.sub(r"[«»“”„\"']", '"', s or "")).strip().lower()
+    """Текст основания без оформления — 1С и копирование меняют его незаметно (прод 19.11.2026, разбор владельца «на чём ещё
+    может упасть»): переводы строк и неразрывные пробелы, невидимые символы, вид кавычек и тире, пробелы у знаков, ё/е,
+    регистр, точка в конце, «N°» вместо «№». Слова, цифры и даты — как есть. NFKC не берём: он делает из «№» буквы «No»."""
+    t = re.sub(r"N[°º]", "№", unicodedata.normalize("NFC", s or ""))
+    t = _INVISIBLE.sub("", t)
+    t = _DASHES.sub("-", _QUOTES.sub('"', t)).replace("ё", "е").replace("Ё", "Е")
+    t = re.sub(r"\s+", " ", t).strip()
+    t = _AROUND.sub(r"\1", t)
+    return t.rstrip(". ").lower()
 
 
 def _all_found(basis: Optional[str], services: list) -> bool:
-    want = [b for b in (basis or "").split("\n") if b.strip()]
+    """Основание нашлось в строках УПД: целиком (шаблон пишет ОДНО основание в несколько строк, 1С кладёт его одной строкой —
+    M-0039, 19.11.2026), всеми строками УПД подряд или построчно — у УПД из нескольких строк каждое основание своей (06.11.2026)."""
+    if not (basis or "").strip():
+        return False
+    whole = text_key(basis)
     keys = {text_key(n) for n in services}
-    return bool(want) and all(text_key(b) in keys for b in want)
+    if whole in keys or whole == text_key(" ".join(services)):
+        return True
+    want = [b for b in basis.split("\n") if b.strip()]
+    return all(text_key(b) in keys for b in want)
 
 
 def _root(content: bytes) -> tuple:

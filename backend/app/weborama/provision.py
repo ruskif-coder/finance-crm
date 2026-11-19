@@ -28,7 +28,7 @@ from app.ad.build import pixel_setup
 from app.ad.models import AdCampaign, AdCampaignPlacement
 from app.weborama import enums, naming, tags
 from app.ext_lock import WEBORAMA_PROVISION, only_one
-from app.weborama.client import WcmClient, WcmError, WcmUnknownOutcome
+from app.weborama.client import WcmClient, WcmError, WcmUnknownOutcome, insertion_fields
 from app.weborama.models import (KIND_CAMPAIGN, KIND_INSERTION, KIND_PROJECT,
                                  WeboramaRef, WeboramaSubmission)
 from app.sales.models import SalesDeal, SalesPublisher
@@ -302,9 +302,8 @@ def _provision(db: Session, camp: AdCampaign, landing_url: str, user_id,
         try:
             ins = _ensure(db, c, acc, KIND_INSERTION, p.id, label,
                           "/advertiser/insertions/placements/json",
-                          {"campaign_id": campaign_id, "ad_network_id": space["network"],
-                           "ad_space_id": space["id"],
-                           "delivery_format_id": enums.FORMAT_TRACKING_PIXEL}, user_id)
+                          insertion_fields(campaign_id, space["network"], space["id"], enums.FORMAT_TRACKING_PIXEL),
+                          user_id)
             pixel = _fetch_pixel(db, c, acc, p.id, ins, user_id)
         except ProvisionError as e:
             failed.append({"placement_id": p.id, "name": pub.name if pub else "?",

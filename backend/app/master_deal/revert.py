@@ -239,6 +239,9 @@ def redo_kit(db: Session, m, k, user, reason: str) -> dict:
     _retire_scans(db, m, upd_nos=[k.upd_no])
     was = m.status
     k.onec_state, k.onec_at = None, None
+    # лента комплекта (19.11.2026): кто, когда и почему вернул — у бухгалтера в «Обсуждении и истории» и в карточке пакета
+    from app.master_deal.models import OnecDeskEvent
+    db.add(OnecDeskEvent(upd_id=k.id, kind="переделка", text=reason, by_user=getattr(user, "id", None)))
     if k.sign_state is not None:
         DSG._write_event(db, k, state=EVENT, channel=k.sign_channel, source="вручную", reason=reason, file_id=None,
                          by_user=getattr(user, "id", None))

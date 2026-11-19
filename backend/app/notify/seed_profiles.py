@@ -79,6 +79,8 @@ PLAN = {
                                                  "traffic_manual_over_plan", "traffic_volume_unplaced")},
                        # Сверка затянулась, а факт не снят — ход трафика (14.11.2026)
                        "recon_fact_overdue": ["app", "tg"],
+                       # Пиксель / DSP сами не прошли — повторить кнопкой (19.11.2026)
+                       "traffic_auto_external_failed": ["app", "tg"],
                        # Тревога биддера — мастерам трафика (06.10.2026); рядовым не
                        # адресована резолвером, профиль задаёт только каналы.
                        "cron_bidder_failed": ["app", "tg", "mail"],
