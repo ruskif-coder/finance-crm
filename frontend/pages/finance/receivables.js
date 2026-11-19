@@ -119,14 +119,15 @@ export default function Receivables() {
     }
   }
 
-  const downloadExport = async () => {
+  // Настольная NAVY передаёт свой выбор: контрагенты из списка и тумблер «Факт / Факт + ждём» (19.11.2026); мобильная — свой onlyActual.
+  const downloadExport = async ({ cps = filterCounterparties, fact = onlyActual } = {}) => {
     const token = localStorage.getItem('token')
     try {
       const params = new URLSearchParams()
-      filterCounterparties.forEach(c => params.append('counterparty', c))
+      cps.forEach(c => params.append('counterparty', c))
       filterArticles.forEach(a => params.append('article', a))
       filterPeriods.forEach(p => params.append('period', p))
-      if (onlyActual) params.append('overdue_only', 'true')
+      if (fact) params.append('overdue_only', 'true')
       const qs = params.toString()
       const res = await api(token).get(`/reports/receivables/export${qs ? '?' + qs : ''}`, { responseType: 'blob' })
       const url = window.URL.createObjectURL(new Blob([res.data]))
@@ -246,7 +247,7 @@ export default function Receivables() {
       <Navbar active="receivables" />
       {dsView && <DsViewer annexId={dsView.annexId} title={dsView.title} onClose={() => setDsView(null)} onError={m => setErr(m)} />}
       {invView && <InvoiceViewer kitId={invView.kitId} pdfId={invView.pdfId} title={invView.title} onClose={() => setInvView(null)} onError={m => setErr(m)} />}
-      {!!err && <div style={{ maxWidth: 1880, margin: '0 auto', padding: '12px 26px 0' }}>
+      {!!err && <div style={{ maxWidth: 1600, margin: '0 auto', padding: '12px 26px 0' }}>
         <LoadError text={err} onRetry={() => { setErr(''); load(localStorage.getItem('token')) }} /></div>}
       <ReceivablesNavy data={data} notes={notes} saveNote={saveNoteNavy} noteStatus={noteStatus} canEditNote={canEditNote} onExport={downloadExport}
         onDs={(d, title) => (d.annex_external

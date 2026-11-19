@@ -32,6 +32,16 @@ export const STC = {
 export const BK = [['−61 и ранее', -9999, -61], ['−60…−31', -60, -31], ['−30…−1', -30, -1], ['+1…+15', 0, 15], ['+16…+30', 16, 30],
   ['+31…+60', 31, 60], ['+61 и более', 61, 9999]]
 
+/** Сузить ответ сервера: выбранные контрагенты (пусто — все) и «факт» — только счета, срок которых наступил
+ *  (просрочка и текущая; aging_bucket сервера — тот же отбор, что overdue_only выгрузки). */
+export function narrow(data, cps, fact) {
+  const rows = data.rows
+    .filter(r => !cps.length || cps.includes(r.counterparty))
+    .map(r => (fact ? { ...r, operations: r.operations.filter(o => o.aging_bucket === 'overdue' || o.aging_bucket === 'current') } : r))
+    .filter(r => r.operations.length)
+  return { ...data, rows }
+}
+
 /** Строки сервера → клиенты экрана. notes — правки примечаний поверх сервера. */
 export function clients(data, notes) {
   const today = parseDate(data.as_of)

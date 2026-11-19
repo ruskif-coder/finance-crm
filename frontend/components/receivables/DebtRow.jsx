@@ -5,7 +5,7 @@ import { CAPS, MONO, f } from '@/components/money/kit'
 import { STC, clsOf, fd, groupsOf, invL, addDays } from './model'
 
 export const GRID = '28px minmax(0,1.5fr) 128px 150px minmax(0,1.25fr) minmax(0,1.5fr) 170px'
-const SUB = '26px minmax(0,1fr) 150px 110px 92px 92px 150px 120px 130px'
+const SUB = 'minmax(0,1fr) 150px 110px 92px 92px 150px 120px 130px'
 const ghost = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', boxSizing: 'border-box', background: 'var(--bg-card)',
   border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', fontFamily: 'inherit' }
 
@@ -39,14 +39,12 @@ function Note({ x, canEdit, onSave, status }) {
   )
 }
 
-function Item({ x, it, sel, onSel, onDs, onInv }) {
+function Item({ x, it, onDs, onInv }) {
   const k = clsOf(it.dd), s = STC[k]
   const exp = it.srok ? addDays(it.srok, x.delta) : null
   const d = it.docs
   return (
     <div style={{ display: 'grid', gridTemplateColumns: SUB, gap: 12, alignItems: 'center', padding: '6px 10px', borderTop: '1px solid var(--border-row)' }}>
-      <span onClick={onSel} role="checkbox" aria-checked={sel} style={{ display: 'inline-flex', width: 15, height: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 4,
-        border: `1.5px solid ${sel ? 'var(--hot)' : 'var(--border-hover)'}`, background: sel ? 'var(--hot)' : 'transparent', color: 'var(--hot-fg)', fontSize: 10, cursor: 'pointer' }}>{sel ? '✓' : ''}</span>
       <span style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.art || '—'}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
         <Eye hidden={!d?.annex_id} title={d?.annex_external ? 'Внешний ДС — скачать файл' : 'Посмотреть ДС / ПР'} onClick={() => onDs(d, it.doc)} />
@@ -65,11 +63,9 @@ function Item({ x, it, sel, onSel, onDs, onInv }) {
 }
 
 export default function DebtRow({ x, open, onToggle, sum, only, canEdit, onSaveNote, noteStatus, onDs, onInv }) {
-  const [sel, setSel] = useState({})
   const ab = [['over', x.b[0], 'просрочено '], ['cur', x.b[1], 'текущая '], ['due', x.b[2], 'до срока ']].filter(q => q[1] > 0)
   const sal = x.sum - x.we
   const habitHi = x.delta >= 10
-  const selN = Object.values(sel).filter(Boolean).length
   return (
     <div style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid var(--border-row)', background: open ? 'var(--bg-subtle)' : 'transparent', borderRadius: open ? 12 : 0 }}>
       <div onClick={onToggle} style={{ display: 'grid', gridTemplateColumns: GRID, gap: 14, alignItems: 'center', padding: '11px 8px', cursor: 'pointer' }}>
@@ -110,7 +106,7 @@ export default function DebtRow({ x, open, onToggle, sum, only, canEdit, onSaveN
       {open && (
         <div style={{ padding: '2px 8px 12px 50px', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'grid', gridTemplateColumns: SUB, gap: 12, padding: '6px 10px', borderBottom: '1px solid var(--border-inner)' }}>
-            <span />{['статья', 'документ', 'счёт', 'дата счёта', 'срок', 'статус', 'ждём на деле'].map((h, i) => (
+            {['статья', 'документ', 'счёт', 'дата счёта', 'срок', 'статус', 'ждём на деле'].map((h, i) => (
               <span key={h} style={{ ...CAPS, paddingLeft: i === 1 || i === 2 ? 31 : 0 }}>{h}</span>))}
             <span style={{ ...CAPS, textAlign: 'right' }}>сумма</span>
           </div>
@@ -120,14 +116,10 @@ export default function DebtRow({ x, open, onToggle, sum, only, canEdit, onSaveN
                 <span style={{ fontSize: 12.5, fontWeight: 700 }}>{g.p} <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>· срок {fd(g.srok)} · {invL(g.items.length)}</span></span>
                 <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700 }}>{f(g.s)}</span>
               </div>
-              {g.items.map(it => <Item key={it.id} x={x} it={it} sel={!!sel[it.id]} onSel={() => setSel(s => ({ ...s, [it.id]: !s[it.id] }))} onDs={onDs} onInv={onInv} />)}
+              {g.items.map(it => <Item key={it.id} x={x} it={it} onDs={onDs} onInv={onInv} />)}
             </div>
           ))}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 10px 2px', borderTop: '1px solid var(--border-inner)', marginTop: 4 }}>
-            <button type="button" disabled title="Появится вместе с журналом контактов по долгу" style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px',
-              borderRadius: 10, background: selN ? 'var(--hot)' : 'var(--accent-border)', color: 'var(--hot-fg)', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', border: 0,
-              opacity: 0.6, cursor: 'not-allowed', fontFamily: 'inherit' }}>Напомнить по выбранным · {selN}</button>
-            <button type="button" disabled title="Появится вместе с журналом контактов по долгу" style={{ ...ghost, opacity: 0.6, cursor: 'not-allowed' }}>Записать контакт</button>
             {x.net > 0 && <button type="button" disabled title="Шаблона акта зачёта в системе пока нет" style={{ ...ghost, borderColor: 'var(--money-border)', color: 'var(--money-fg)',
               opacity: 0.6, cursor: 'not-allowed' }}>Подготовить акт зачёта · {f(x.net)}</button>}
             <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>

@@ -1,10 +1,12 @@
-/** «Контрагенты-должники» (хендофф, п. 5): отбор одним переключателем, сортировка по риску / по сумме, отбор по корзине возраста. */
+/** «Контрагенты-должники» (хендофф, п. 5): отбор одним переключателем, сортировка по риску / по сумме, отбор по корзине возраста.
+ *  Выбор контрагентов списком и «Факт / Факт + ждём» — из прежней дебиторки (19.11.2026); выгрузка берёт оба. */
 import { Segmented } from '@/lib/motion'
+import { MultiDrop } from '@/components/salesTableKit'
 import { BTN, CAPS, H, MONO, f } from '@/components/money/kit'
 import { FILTERS, FILTER_FN } from './model'
 import DebtRow, { GRID } from './DebtRow'
 
-export default function DebtTable({ all, list, bkLabel, bkOn, onBkReset, flt, setFlt, sort, setSort, open, setOpen, sumOf, only, onExport, rowProps }) {
+export default function DebtTable({ all, list, cps, setCps, cpOptions, fact, setFact, bkLabel, bkOn, onBkReset, flt, setFlt, sort, setSort, open, setOpen, sumOf, only, onExport, rowProps }) {
   const counts = Object.fromEntries(FILTERS.map(q => [q[0], q[0] ? all.filter(FILTER_FN[q[0]]).length : all.length]))
   const hint = flt ? FILTERS.find(q => q[0] === flt)[3] : 'число — сколько контрагентов попадает в отбор'
   return (
@@ -13,8 +15,13 @@ export default function DebtTable({ all, list, bkLabel, bkOn, onBkReset, flt, se
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span style={H}>Контрагенты-должники</span>
           <span style={CAPS}>{list.length} из {all.length} · {bkOn ? `только счета «${bkLabel}», по сумме` : sort === 'risk' ? 'по риску: просрочка × сумма × привычка' : 'по убыванию суммы'}</span></span>
-        <span style={{ marginLeft: 'auto' }}><Segmented tone="hot" value={sort} onChange={setSort} options={[['risk', 'По риску'], ['sum', 'По сумме']]} /></span>
-        <button type="button" onClick={onExport} style={BTN}>⭳ Выгрузить</button>
+        <span style={{ marginLeft: 'auto' }}><MultiDrop label="Контрагенты" options={cpOptions} selected={cps} onChange={setCps} /></span>
+        <Segmented tone="hot" value={fact ? 'fact' : 'all'} onChange={v => setFact(v === 'fact')}
+          titleOf={v => (v === 'fact' ? 'Только счета, срок оплаты которых наступил: просрочка и текущая' : 'Плюс счета, срок оплаты которых ещё не наступил')}
+          options={[['fact', 'Факт'], ['all', 'Факт + ждём']]} />
+        <Segmented tone="hot" value={sort} onChange={setSort} options={[['risk', 'По риску'], ['sum', 'По сумме']]} />
+        <button type="button" onClick={onExport} style={BTN}
+          title={`В Excel: ${cps.length ? `${cps.length} выбранных контрагентов` : 'все контрагенты'}, ${fact ? 'только наступившие счета' : 'все счета, включая ожидаемые'}`}>⭳ Выгрузить</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '2px 0 4px' }}>
         <span style={CAPS}>показать контрагентов</span>
