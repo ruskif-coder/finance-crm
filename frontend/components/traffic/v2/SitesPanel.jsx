@@ -15,24 +15,27 @@ import { GroupRow, SiteRow, SitesHead } from './SiteRow'
 import SiteCreatives from './SiteCreatives'
 import ByCreatives from './ByCreatives'
 import SitesToolbar from './SitesToolbar'
+import SitesColumns from './SitesColumns'
+import useUiPref from '@/lib/useUiPref'
+import { PREF_KEY, shownCols } from '@/lib/sitesColumns.mjs'
 import { dm } from '@/lib/salesFormat'
 
 const VIEWS = [['sites', 'по площадкам'], ['cr', 'по креативам']]
 const NOTE = { padding: '9px 18px 11px', fontSize: 11, lineHeight: 1.45, color: 'var(--text-faint)' }
 
-const SitesTable = ({ rk, d, rows, sort, onSort, goal, mayEdit, h }) => {
+const SitesTable = ({ rk, d, rows, sort, onSort, goal, mayEdit, h, cols }) => {
   const [openPlace, setOpenPlace] = useState(null)
   const groups = useMemo(() => layout(rows, sort, EXT_TONE), [rows, sort])
   return (
     <div style={{ overflowX: 'auto', containerType: 'inline-size' }}>
       <div style={{ minWidth: 1150 }}>
-        <SitesHead sort={sort} onSort={onSort} goal={goal} />
+        <SitesHead sort={sort} onSort={onSort} goal={goal} cols={cols} />
         {groups.map(g => (
           <Fragment key={g.key}>
-            {g.key !== 'flat' && <GroupRow g={g} />}
+            {g.key !== 'flat' && <GroupRow g={g} cols={cols} />}
             {g.rows.map(p => (
               <Fragment key={p.id}>
-                <SiteRow p={p} d={d} goal={goal} mayEdit={mayEdit} h={h} open={openPlace === p.id}
+                <SiteRow p={p} d={d} goal={goal} mayEdit={mayEdit} h={h} cols={cols} open={openPlace === p.id}
                   onToggle={() => setOpenPlace(x => (x === p.id ? null : p.id))} />
                 {openPlace === p.id && (
                   <SiteCreatives rows={p.creatives} place={p} manual={d.creative_manual} mayEdit={mayEdit} goal={goal}
@@ -89,6 +92,8 @@ export default function SitesPanel({ rk, d, mayEdit, tgt, handlers, filterNoShow
   const rows = useMemo(() => (ns ? placements.filter(p => ns.ids.includes(p.id)) : placements), [ns, placements])
   const goal = goalCtr(d?.goals)
   const sitesView = view === 'sites'
+  const [colPref, setColPref] = useUiPref(PREF_KEY)
+  const cols = useMemo(() => shownCols(colPref), [colPref])
 
   return (
     <div id={`rk-${rk.id}-placements`} style={{ minWidth: 0, ...style }}>
@@ -104,7 +109,7 @@ export default function SitesPanel({ rk, d, mayEdit, tgt, handlers, filterNoShow
         )}
         {!!d && (
           <SitesToolbar rk={rk} d={d} mayEdit={mayEdit} onDownloadCreatives={h.downloadCreatives}
-            onExternal={h.askExternal} />
+            onExternal={h.askExternal} settings={sitesView ? <SitesColumns pref={colPref} onChange={setColPref} /> : null} />
         )}
       </div>
       {(filterNoShows || (d && d.share_sum > 0 && d.share_sum < 0.99)) && (
@@ -121,7 +126,7 @@ export default function SitesPanel({ rk, d, mayEdit, tgt, handlers, filterNoShow
       {!d && <div style={{ ...NOTE, fontSize: 12 }}>загрузка…</div>}
       {!!d && !placements.length && <div style={{ ...NOTE, fontSize: 12 }}>К этой РК не подключена ни одна площадка.</div>}
       {!!d && !!placements.length && sitesView && (
-        <SitesTable rk={rk} d={d} rows={rows} sort={sort} goal={goal} mayEdit={mayEdit} h={h}
+        <SitesTable rk={rk} d={d} rows={rows} sort={sort} goal={goal} mayEdit={mayEdit} h={h} cols={cols}
           onSort={k => setSort(cur => nextSort(cur, k))} />
       )}
       {!!d && !!placements.length && !sitesView && (

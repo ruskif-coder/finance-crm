@@ -254,6 +254,10 @@ class WcmClient:
                   "ad_space_id": ad_space_id, "label": label,
                   "delivery_format_id": int(delivery_format_id)}), "вставку")
 
+    def insertion(self, insertion_id) -> Any:
+        """Карточка вставки: в какой она кампании и как названа (проверено живьём 19.11.2026)."""
+        return self.call("GET", f"/advertiser/insertions/{insertion_id}.json")
+
     def insertion_tag(self, insertion_id) -> Any:
         """Тот самый тег. Ответ отдаём как есть: его форма в доке не приведена, а
         пересказывать неизвестное — способ потерять половину."""

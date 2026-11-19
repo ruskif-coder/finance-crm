@@ -70,3 +70,40 @@ export function sysSquares(r) {
     return { l, ...look, t: `${name} — ${look.word}${countText(x, kind)}` }
   })
 }
+
+// Сортировка списка РК по заголовку колонки (просьба трафиков, 19.11.2026). Клик: первый — по направлению колонки
+// (текст — А→Я, даты — раньше→позже, числа — больше→меньше), второй — обратно, третий — снова порядок сервера.
+// Пустые значения — всегда в конце, в любом направлении.
+const RK_SORT = {
+  code: [r => r.deal_code, 'asc'],
+  title: [r => r.deal_title, 'asc'],
+  product: [r => r.product, 'asc'],
+  sites: [r => r.placements, 'desc'],
+  status: [r => r.status, 'asc'],
+  period: [r => r.date_start, 'asc'],
+  plan: [r => r.plan_show, 'desc'],
+  fact: [r => r.fact_shows, 'desc'],
+  done: [r => r.done_pct, 'desc'],
+  forecast: [r => r.forecast, 'desc'],
+  under: [r => r.under, 'desc'],
+}
+
+export function nextRkSort(cur, key) {
+  const first = RK_SORT[key][1]
+  if (!cur || cur.key !== key) return { key, dir: first }
+  return cur.dir === first ? { key, dir: first === 'asc' ? 'desc' : 'asc' } : null
+}
+
+export function sortRk(rows, sort) {
+  if (!sort || !RK_SORT[sort.key]) return rows
+  const get = RK_SORT[sort.key][0]
+  const sign = sort.dir === 'asc' ? 1 : -1
+  const empty = v => v == null || v === ''
+  return [...rows].sort((a, b) => {
+    const va = get(a)
+    const vb = get(b)
+    if (empty(va) || empty(vb)) return empty(va) - empty(vb)
+    const c = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'ru')
+    return c * sign
+  })
+}

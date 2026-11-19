@@ -13,17 +13,29 @@ export const RK_GRID = '14px 64px minmax(240px,1.6fr) 62px 132px 112px 84px 118p
 const mono = { fontFamily: MONO, fontSize: 12, textAlign: 'right', whiteSpace: 'nowrap' }
 const pctText = (v) => (v == null ? '' : `${Number(v).toFixed(1).replace('.', ',')} %`)
 
-/** Шапка колонок — над всеми карточками, со сдвигом под их рамку и отступ. */
-export function RkHead() {
+/** Название колонки списка РК: клик — сортировка, стрелка у выбранной. */
+const SortCap = ({ k, sort, onSort, children, title, style }) => {
+  const on = sort?.key === k
+  return (
+    <span onClick={() => onSort(k)} title={`${title ? `${title}. ` : ''}Клик — сортировать${on ? ', ещё раз — обратно, третий — как было' : ''}`}
+      style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: on ? 'var(--accent-fg)' : undefined, ...style }}>
+      {children}{on ? (sort.dir === 'asc' ? ' ▴' : ' ▾') : ''}</span>
+  )
+}
+
+/** Шапка колонок — над всеми карточками, со сдвигом под их рамку и отступ. Клик по названию — сортировка (`nextRkSort`). */
+export function RkHead({ sort, onSort }) {
   const cap = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
+  const h = (k, label, extra = {}) => <SortCap k={k} sort={sort} onSort={onSort} {...extra}>{label}</SortCap>
+  const right = { style: { textAlign: 'right' } }
   return (
     <div style={{ display: 'grid', gridTemplateColumns: RK_GRID, gap: 12, alignItems: 'center', padding: '0 15px 0 19px', ...cap }}>
-      <span /><span>Сделка</span><span>Название РК</span><span>Услуга</span><span>Площадки</span><span>Статус РК</span>
+      <span />{h('code', 'Сделка')}{h('title', 'Название РК')}{h('product', 'Услуга')}{h('sites', 'Площадки')}{h('status', 'Статус РК')}
       <span title="Е — ЕРИД креативов · W — пиксель Weborama · D — заведено в DSP · С — скрины запуска" style={{ whiteSpace: 'nowrap' }}>Е · W · D · С</span>
-      <span>Период</span><span style={{ textAlign: 'right' }}>План</span><span style={{ textAlign: 'right' }}>Факт</span>
-      <span title="Цвет — как идёт открутка: зелёный — по темпу, жёлтый — отстаёт, красный — недокрут. Риска — где РК должна быть по календарю. Пипсы площадок — та же шкала по каждой площадке"
-        style={{ cursor: 'help', paddingLeft: 16 }}>Выполнение ⓘ</span>
-      <span style={{ textAlign: 'right' }}>Прогноз</span><span style={{ textAlign: 'right' }}>Недокрут</span><span />
+      {h('period', 'Период')}{h('plan', 'План', right)}{h('fact', 'Факт', right)}
+      {h('done', 'Выполнение ⓘ', { style: { paddingLeft: 16 },
+        title: 'Цвет — как идёт открутка: зелёный — по темпу, жёлтый — отстаёт, красный — недокрут. Риска — где РК должна быть по календарю. Пипсы площадок — та же шкала по каждой площадке' })}
+      {h('forecast', 'Прогноз', right)}{h('under', 'Недокрут', right)}<span />
     </div>
   )
 }

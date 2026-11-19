@@ -43,6 +43,7 @@ import HungAttempts from '@/components/traffic/HungAttempts'
 import { detailText } from '@/lib/loadError'
 import DashHeader, { ListPanel } from '@/components/traffic/v2/DashHeader'
 import RkRow, { RkHead } from '@/components/traffic/v2/RkRow'
+import { nextRkSort, sortRk } from '@/components/traffic/v2/rkModel'
 import RkPult, { ANALYTICS_W } from '@/components/traffic/v2/RkPult'
 import { DayWallV2, WidgetsSummary } from '@/components/traffic/v2/DayWallV2'
 import SitesPanel from '@/components/traffic/v2/SitesPanel'
@@ -228,6 +229,7 @@ export default function TrafficDashboard() {
   const [grain, setGrain] = useState({})      // id РК → день/неделя
   const [range, setRange] = useState({})      // id РК → {from, to} или null
   const [q, setQ] = useState('')
+  const [rkSort, setRkSort] = useState(null)   // сортировка списка РК по заголовку; null — порядок сервера
   const [tab, setTab] = useState('all')
   // Чьи РК показывать: 'mine' | 'all' | id учётки. null означает «как решит сервер»:
   // умолчание считается там (рядовому — свои, мастеру — все), и в состояние не кладётся,
@@ -653,7 +655,7 @@ export default function TrafficDashboard() {
       'Красная проверка заведения, сбора или раскладки (ночной прогон)'],
     ['attention', 'Требует внимания', all.filter(needsAttention).length, 'Без плана, без площадок или с недокрутом'],
   ]
-  const rows = all.filter(r => {
+  const rows = sortRk(all.filter(r => {
     if (tab === 'running' && r.status !== 'запущена') return false
     if (tab === 'waiting' && !waitingStart(r)) return false
     if (tab === 'action' && sumOf(r)?.worst !== 'red') return false
@@ -661,7 +663,7 @@ export default function TrafficDashboard() {
     const s = q.trim().toLowerCase()
     return !s || [r.deal_code, r.deal_title, r.brand, r.product, r.stage].some(
       v => String(v || '').toLowerCase().includes(s))
-  })
+  }), rkSort)
 
   const k = data?.kpi || {}
   const qb = k.queue || {}
@@ -749,7 +751,7 @@ export default function TrafficDashboard() {
           <div ref={stickyRef} data-tp-sticky style={{ position: 'sticky', top: 'var(--nav-h, 58px)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10,
             padding: '6px 0 8px', margin: '-6px 0 -8px', background: stuck ? 'var(--sticky-bg, var(--bg-canvas))' : 'transparent', backgroundAttachment: 'fixed' }}>
           <ListPanel q={q} onQ={setQ} shown={rows.length} total={all.length} tabs={TABS} tab={tab} onTab={setTab} />
-          <RkHead />
+          <RkHead sort={rkSort} onSort={k => setRkSort(cur => nextRkSort(cur, k))} />
           </div>
 
           {!!(data?.fact_sources || []).length && (

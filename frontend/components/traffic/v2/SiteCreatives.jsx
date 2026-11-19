@@ -61,7 +61,7 @@ const CreativeLine = ({ c, p, manual, mayEdit, onStatus, campaignHash, goal }) =
             background: bg, border: `1px solid ${border}`, fontSize: 11, fontWeight: 700, color: fg,
             whiteSpace: 'nowrap' }}>{c.status}</span>
       </span>
-      {/* Системы креатива — те же полоски, что у площадки, но по самому креативу (владелец 17.11.2026) */}
+      {/* Системы креатива — те же буквы, что у площадки, но по самому креативу (владелец 17.11.2026) */}
       <SysCell s={creativeSystemsOf(c, p, EXT_TONE)} />
       <span style={{ justifySelf: 'end' }}>
         {mayEdit && (

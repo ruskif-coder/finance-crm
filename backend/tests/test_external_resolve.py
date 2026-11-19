@@ -98,6 +98,56 @@ def test_weborama_insertion_is_checked_by_its_tag(wdb, monkeypatch):
         "непроверенный id записан как наш")
 
 
+class _Wcm:
+    """Кабинет с одной вставкой: в какой она кампании и как названа."""
+    def __init__(self, campaign_id, label="ТЕСТ · объект"):
+        self.info = {"id": 1401, "campaign_id": campaign_id, "label": label}
+
+    def insertion(self, iid):
+        return self.info
+
+    def insertion_tag(self, iid):
+        return {"tag": "ok"}
+
+
+def _our_wr_campaign(db, wcm_id="83"):
+    db.add(WeboramaRef(account_id=ACC, kind=KIND_CAMPAIGN, local_id=999510, wcm_id=wcm_id, label="ТЕСТ · кампания"))
+    db.commit()
+
+
+def test_weborama_insertion_of_another_campaign_is_refused(wdb, monkeypatch):
+    """Прод 19.11.2026: при сверке вписали 82 — номер ПРОЕКТА. Вставка 82 в кабинете есть (чужая, другого клиента,
+    кампания 8), её тег отдался, и показы площадки легли бы в чужой отчёт. Вставка обязана быть в кампании Weborama
+    ЭТОЙ РК."""
+    _our_wr_campaign(wdb)
+    sub = _hung(wdb, KIND_INSERTION, 999512)
+    monkeypatch.setattr(U, "_placement_ids", lambda db, camp: [999512])
+    with pytest.raises(U.ResolveError) as e:
+        U.resolve(wdb, _wcamp(), "weborama", str(sub.id), found=True, external_id="82",
+                  user=USER, wcm_client=_Wcm(campaign_id=8))
+    assert "кампани" in str(e.value)
+    assert wprov._open_attempt(wdb, ACC, KIND_INSERTION, 999512)
+
+
+def test_weborama_insertion_with_another_name_is_refused(wdb, monkeypatch):
+    """Своя кампания, но вставка другой площадки: имя вставки несёт домен — оно обязано совпасть с заведённым."""
+    _our_wr_campaign(wdb)
+    sub = _hung(wdb, KIND_INSERTION, 999512, "SIMB-AD_banner_Desktop_x_TSTCODE_site-a.test")
+    monkeypatch.setattr(U, "_placement_ids", lambda db, camp: [999512])
+    with pytest.raises(U.ResolveError):
+        U.resolve(wdb, _wcamp(), "weborama", str(sub.id), found=True, external_id="1393",
+                  user=USER, wcm_client=_Wcm(83, "SIMB-AD_banner_Desktop_x_TSTCODE_site-b.test"))
+
+
+def test_weborama_insertion_of_this_campaign_and_name_becomes_ours(wdb, monkeypatch):
+    _our_wr_campaign(wdb)
+    sub = _hung(wdb, KIND_INSERTION, 999512, "SIMB-AD_banner_Desktop_x_TSTCODE_site-a.test")
+    monkeypatch.setattr(U, "_placement_ids", lambda db, camp: [999512])
+    U.resolve(wdb, _wcamp(), "weborama", str(sub.id), found=True, external_id="1401",
+              user=USER, wcm_client=_Wcm(83, "SIMB-AD_banner_Desktop_x_TSTCODE_site-a.test"))
+    assert wprov._ref(wdb, ACC, KIND_INSERTION, 999512).wcm_id == "1401"
+
+
 def test_someone_elses_attempt_is_not_resolved_from_this_campaign(wdb):
     sub = _hung(wdb, KIND_PROJECT, 123)        # проект чужой сделки
     with pytest.raises(U.ResolveError):

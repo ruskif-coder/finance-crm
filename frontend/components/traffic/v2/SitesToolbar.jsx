@@ -1,4 +1,5 @@
-// Правый край панели площадок v2 (хендофф 8.1): «↓ Креативы N», «↓ Excel», «↓ ADFOX», «Пиксель WR», «В DSP».
+// Правый край панели площадок v2 (хендофф 8.1): «↓ Креативы N», «↓ Excel», «↓ ADFOX», «Пиксель WR», «В DSP»; после них —
+// шестерёнка колонок таблицы (`settings`, 19.11.2026).
 // Логика кнопок — боевая (pages/traffic/dashboard.js до v2): цвет «Пиксель WR» / «В DSP» по состоянию с сервера
 // (владелец 30.09.2026: зелёная — есть что сделать, жёлтая — всё готовое сделано, серая — ещё нечего), счётчик
 // незаведённого красной плашкой, подсказка с числами. Геометрия — макета.
@@ -38,7 +39,7 @@ export const TOOL = { display: 'inline-flex', alignItems: 'center', gap: 6, heig
 // Тон кнопки одной рамкой-сокращением: смесь `border` и `borderColor` в одном style React не любит.
 const toned = (t) => (t ? { background: t.background, color: t.color, border: `1px solid ${t.borderColor}` } : null)
 
-export default function SitesToolbar({ rk, d, mayEdit, onDownloadCreatives, onExternal }) {
+export default function SitesToolbar({ rk, d, mayEdit, onDownloadCreatives, onExternal, settings }) {
   const wr = d.buttons?.weborama
   const dsp = d.buttons?.dsp
   return (
@@ -69,6 +70,7 @@ export default function SitesToolbar({ rk, d, mayEdit, onDownloadCreatives, onEx
             В DSP<CountBadge n={dsp?.go} /></button>
         </>
       )}
+      {settings}
     </span>
   )
 }

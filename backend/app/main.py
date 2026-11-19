@@ -24,7 +24,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          traffic_dashboard, annexes, directory_add,
                          exec_dashboard, money as money_router, system_status, mail_admin, search, creative_check, premod,
-                         nav_prefs as nav_prefs_router)
+                         nav_prefs as nav_prefs_router, ui_prefs as ui_prefs_router)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -629,6 +629,7 @@ app.include_router(search.router, prefix="/api/search", tags=["search"])
 app.include_router(system_status.router, prefix="/api/system", tags=["system_status"])
 # Закреплённые и недавние экраны меню — свои у каждого (навигация v3, 17.11.2026).
 app.include_router(nav_prefs_router.router, prefix="/api/nav-prefs", tags=["nav"])
+app.include_router(ui_prefs_router.router, prefix="/api/ui-prefs", tags=["nav"])
 # Почтовый гейт: журнал писем наружу, шаблоны, проверка канала (13.09.2026).
 app.include_router(mail_admin.router, prefix="/api/mail", tags=["mail"])
 # Учётки внешнего кабинета — администрирование со стороны ядра. Сам кабинет живёт

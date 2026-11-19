@@ -194,10 +194,7 @@ def _resolve_wb(db, camp, ref, found, external_id, user, who, client) -> dict:
         raise ResolveError("Укажите id объекта из кабинета Weborama — цифрами")
     checked = sub.kind == KIND_INSERTION
     if checked:
-        try:
-            (client or WcmClient(acc)).insertion_tag(wid)
-        except WcmError as e:
-            raise ResolveError(f"Weborama не отдаёт тег вставки {wid} — проверьте id: {e}")
+        _check_insertion(db, acc, camp, sub, wid, client or WcmClient(acc))
     if wprov._ref(db, acc, sub.kind, sub.local_id):
         raise ResolveError("Этот объект уже записан как наш — обновите экран")
     # Тег доказывает, что вставка есть, но не что она ЭТОЙ площадки. Id, уже записанный
@@ -215,6 +212,27 @@ def _resolve_wb(db, camp, ref, found, external_id, user, who, client) -> dict:
                  + ("" if checked else "; id не проверен через API — метода чтения нет"))
     db.commit()
     return {"system": "weborama", "ref": ref, "found": True, "id": wid, "checked": checked}
+
+
+def _check_insertion(db, acc, camp, sub, wid, client) -> None:
+    """Вставка, которую человек назвал найденной, обязана быть НАШЕЙ: в кампании Weborama этой РК и под тем именем,
+    под которым мы её заводили (имя несёт домен площадки). Тег доказывает только, что вставка существует: 19.11.2026
+    вписали 82 — номер проекта, — и приняли чужую вставку другого клиента; показы площадки легли бы в его отчёт."""
+    ours = wprov._ref(db, acc, KIND_CAMPAIGN, camp.id)
+    if not ours:
+        raise ResolveError("Кампания Weborama этой РК ещё не записана — сначала сверьте её, потом вставки")
+    try:
+        info = client.insertion(wid) or {}
+        client.insertion_tag(wid)
+    except WcmError as e:
+        raise ResolveError(f"Weborama не отдаёт вставку {wid} — проверьте id: {e}")
+    if str(info.get("campaign_id")) != str(ours.wcm_id):
+        raise ResolveError(f"Вставка {wid} — из кампании {info.get('campaign_id')}, а кампания этой РК — {ours.wcm_id}. "
+                           f"Это чужая вставка: проверьте id (номер проекта и кампании сюда не подходят)")
+    want = (sub.request or {}).get("label")
+    if want and info.get("label") != want:
+        raise ResolveError(f"Вставка {wid} называется «{info.get('label')}», а заводили «{want}» — "
+                           f"это вставка другой площадки, проверьте id")
 
 
 def _resolve_dsp(db, camp, ref, found, external_id, who, c: MsClient) -> dict:

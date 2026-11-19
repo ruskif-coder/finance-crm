@@ -5,11 +5,13 @@ import { DASH, PlaceActions, creativeCountsTitle, num } from '@/components/traff
 import PaceCell from '@/components/traffic/PaceCell'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import { ctrTone, groupOf, volTint, volTitle } from '@/lib/sitesModel.mjs'
-import { CAP_V2, CTR_STYLE, NUM, SITE_GRID, StatusDot, ctrTitle, pct1, pct2, SysCell, SysLegend } from './sitesBits'
+import { CAP_V2, CTR_STYLE, NUM, StatusDot, ctrTitle, pct1, pct2, SysCell, SysLegend } from './sitesBits'
+import { gridOf } from '@/lib/sitesColumns.mjs'
 
 const STICKY = { position: 'sticky', left: 0, zIndex: Z.base + 1, alignSelf: 'stretch', boxSizing: 'border-box',
   background: 'inherit', boxShadow: '1px 0 0 var(--border-inner)', display: 'flex', alignItems: 'center' }
-const ROW = { display: 'grid', gridTemplateColumns: SITE_GRID, gap: 8, alignItems: 'center', padding: '0 18px 0 0' }
+// Колонки между «Площадкой» и «Статусом» — выбор человека (`cols`, lib/sitesColumns.mjs, 19.11.2026)
+const rowOf = (cols) => ({ display: 'grid', gridTemplateColumns: gridOf(cols), gap: 8, alignItems: 'center', padding: '0 18px 0 0' })
 const CHIP = { fontFamily: MONO, flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', height: 16, padding: '0 5px',
   borderRadius: 4, fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }
 const WARN_CHIP = { ...CHIP, background: 'var(--warning-tint)', border: '1px solid var(--warning-border)', color: 'var(--warning-fg)' }
@@ -17,7 +19,7 @@ const fk = (v) => (v == null ? DASH : num(Math.round(v / 1000)))
 
 /* ── шапка ─────────────────────────────────────────────────────────────────── */
 
-const COLS = [
+export const COLS = [
   ['name', 'Площадка · код', 'По названию'],
   ['cr', 'Креат.', 'Креативы: всего / согласовано / заведено в DSP'],
   ['weight', 'Вес, т.', 'Вес площадки, тысячи', true],
@@ -34,20 +36,27 @@ const COLS = [
   ['sys', 'Системы', 'Состояние систем по площадке: Е · W · D · С'],
 ]
 
-export const SitesHead = ({ sort, onSort, goal }) => (
-  <div style={{ ...ROW, ...CAP_V2, minHeight: 28, background: 'var(--bg-card)', borderTop: '1px solid var(--border-card)',
+const HEAD = Object.fromEntries(COLS.map(c => [c[0], c]))
+
+const HeadCell = ({ col, sort, onSort, goal, first }) => {
+  const [key, label, hint, right] = col
+  const on = sort.key === key
+  const title = (key === 'ctr' && goal ? `${hint}; цель РК — ${pct2(goal)}` : hint)
+  return (
+    <span onClick={() => onSort(key)} title={`${title ? `${title}. ` : ''}Клик — сортировать`}
+      style={{ whiteSpace: 'nowrap', cursor: 'pointer', color: on ? 'var(--accent-fg)' : 'var(--text-cap)',
+        textAlign: right ? 'right' : 'left', ...(first ? { ...STICKY, paddingLeft: 22 } : null) }}>
+      {label}{on ? (sort.dir === 'asc' ? ' ▴' : ' ▾') : ''}
+    </span>
+  )
+}
+
+export const SitesHead = ({ sort, onSort, goal, cols }) => (
+  <div style={{ ...rowOf(cols), ...CAP_V2, minHeight: 28, background: 'var(--bg-card)', borderTop: '1px solid var(--border-card)',
     borderBottom: '1px solid var(--border-card)' }}>
-    {COLS.map(([key, label, hint, right], i) => {
-      const on = sort.key === key
-      const title = (key === 'ctr' && goal ? `${hint}; цель РК — ${pct2(goal)}` : hint)
-      return (
-        <span key={key} onClick={() => onSort(key)} title={`${title ? `${title}. ` : ''}Клик — сортировать`}
-          style={{ whiteSpace: 'nowrap', cursor: 'pointer', color: on ? 'var(--accent-fg)' : 'var(--text-cap)',
-            textAlign: right ? 'right' : 'left', ...(i === 0 ? { ...STICKY, paddingLeft: 22 } : null) }}>
-          {label}{on ? (sort.dir === 'asc' ? ' ▴' : ' ▾') : ''}
-        </span>
-      )
-    })}
+    {['name', ...cols, 'status', 'sys'].map((k, i) => (
+      <HeadCell key={k} col={HEAD[k]} sort={sort} onSort={onSort} goal={goal} first={i === 0} />
+    ))}
     <span />
   </div>
 )
@@ -56,27 +65,34 @@ export const SitesHead = ({ sort, onSort, goal }) => (
 
 const TOT = { ...NUM, fontSize: 10, color: 'var(--text-muted)' }
 
-export const GroupRow = ({ g }) => {
+const groupCell = (k, t) => {
+  switch (k) {
+    case 'share': return <span key={k} style={TOT}>{pct1(t.share * 100)}</span>
+    case 'plan': return <span key={k} style={TOT}>{num(t.plan)}</span>
+    case 'fact': return <span key={k} style={TOT}>{num(t.fact)}</span>
+    case 'clk': return <span key={k} style={TOT}>{num(t.clicks)}</span>
+    case 'ctr': return <span key={k} style={TOT}>{t.ctr == null ? '' : pct2(t.ctr)}</span>
+    case 'under': return <span key={k} style={{ ...TOT, fontWeight: 700, color: 'var(--text-secondary)' }}>{t.under > 0 ? `−${num(t.under)}` : '0'}</span>
+    case 'wr': return (
+      <span key={k} style={TOT} title="Площадок с расхождением с Weborama за пределом из цели сделки">
+        {t.wrBad ? `${t.wrBad} > ${t.wrLimit != null ? `${t.wrLimit} %` : 'предел'}` : ''}</span>
+    )
+    default: return <span key={k} />
+  }
+}
+
+export const GroupRow = ({ g, cols }) => {
   const t = g.totals
   return (
-    <div style={{ ...ROW, minHeight: 24, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
+    <div style={{ ...rowOf(cols), minHeight: 24, background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
       <span title={g.hint} style={{ ...STICKY, paddingLeft: 22, gap: 8, whiteSpace: 'nowrap' }}>
         <span style={{ flex: '0 0 7px', width: 7, height: 7, borderRadius: 2, background: g.dot }} />
         <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
           {g.title}</span>
         <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{t.n}</span>
       </span>
-      <span /><span />
-      <span style={TOT}>{pct1(t.share * 100)}</span>
-      <span style={TOT}>{num(t.plan)}</span>
-      <span style={TOT}>{num(t.fact)}</span>
-      <span style={TOT}>{num(t.clicks)}</span>
-      <span style={TOT}>{t.ctr == null ? '' : pct2(t.ctr)}</span>
-      <span />
-      <span style={{ ...TOT, fontWeight: 700, color: 'var(--text-secondary)' }}>{t.under > 0 ? `−${num(t.under)}` : '0'}</span>
-      <span style={TOT} title="Площадок с расхождением с Weborama за пределом из цели сделки">
-        {t.wrBad ? `${t.wrBad} > ${t.wrLimit != null ? `${t.wrLimit} %` : 'предел'}` : ''}</span>
-      <span /><span /><SysLegend /><span />
+      {cols.map(k => groupCell(k, t))}
+      <span /><SysLegend /><span />
     </div>
   )
 }
@@ -188,34 +204,43 @@ const Actions = ({ p, h }) => (
  * Клик по строке раскрывает креативы; кнопки и галочка строку не раскрывают. Пауза — строка в 60 % (8.12).
  * Фон: раскрыта — `--bg-tint`; объём площадки больше половины / всего плана РК — жёлтый / красный (27.09.2026).
  */
-export const SiteRow = ({ p, open, onToggle, d, goal, mayEdit, h }) => {
+export const SiteRow = ({ p, open, onToggle, d, goal, mayEdit, h, cols }) => {
   const grp = groupOf(p)
   const tone = ctrTone(p.ctr, goal)
   const bg = open ? 'var(--bg-tint)' : volTint(d.volumes, p.publisher_id) || 'var(--bg-card)'
   const under = p.under == null ? DASH : p.under > 0 ? `−${num(p.under)}` : '0'
+  const cells = {
+    cr: <CrCell key="cr" c={p.creative_counts} />,
+    weight: (
+      <span key="weight" style={{ ...NUM, color: p.no_weight ? 'var(--warning-fg)' : 'var(--text-secondary)' }}
+        title={p.no_weight ? 'Нет индекса в балансировщике — в раскладку не попадёт' : undefined}>
+        {p.no_weight ? 'нет' : fk(p.weight)}</span>
+    ),
+    share: <span key="share" style={{ ...NUM, color: 'var(--text-secondary)' }}>{p.share ? pct1(p.share * 100) : DASH}</span>,
+    plan: <PlanCell key="plan" p={p} />,
+    fact: (
+      <span key="fact" style={{ ...NUM, fontWeight: 700, color: p.fact_shows == null ? 'var(--text-faint)' : undefined }}>
+        {num(p.fact_shows)}</span>
+    ),
+    clk: <span key="clk" style={{ ...NUM, color: 'var(--text-secondary)' }}>{num(p.fact_clicks)}</span>,
+    ctr: <span key="ctr" title={ctrTitle(p.ctr, goal)} style={{ ...NUM, ...CTR_STYLE[tone] }}>{pct2(p.ctr)}</span>,
+    exec: <ExecCell key="exec" p={p} grp={grp} flight={d.pace} />,
+    under: (
+      <span key="under" style={{ ...NUM, fontWeight: 700, color: p.under == null ? 'var(--text-disabled)'
+        : grp === 'lag' ? 'var(--warning-fg)' : 'var(--text-secondary)' }}
+        title="Недокрут к прогнозу: план площадки − прогноз на конец флайта">{under}</span>
+    ),
+    wr: <WrCell key="wr" p={p} />,
+    pace: <span key="pace" style={{ display: 'flex', minWidth: 0, overflow: 'hidden' }}><PaceCell pace={p.pace} /></span>,
+  }
   return (
     <div onClick={onToggle} title={volTitle(d.volumes, p.publisher_id) || (open ? 'Свернуть креативы' : 'Показать креативы площадки')}
       onMouseEnter={e => { if (!open) e.currentTarget.style.background = 'var(--bg-tint)' }}
       onMouseLeave={e => { e.currentTarget.style.background = bg }}
-      style={{ ...ROW, boxSizing: 'border-box', height: 31, borderBottom: '1px solid var(--border-row)', background: bg,
+      style={{ ...rowOf(cols), boxSizing: 'border-box', height: 31, borderBottom: '1px solid var(--border-row)', background: bg,
         opacity: p.status === 'пауза' ? 0.6 : 1, cursor: 'pointer' }}>
       <NameCell p={p} open={open} />
-      <CrCell c={p.creative_counts} />
-      <span style={{ ...NUM, color: p.no_weight ? 'var(--warning-fg)' : 'var(--text-secondary)' }}
-        title={p.no_weight ? 'Нет индекса в балансировщике — в раскладку не попадёт' : undefined}>
-        {p.no_weight ? 'нет' : fk(p.weight)}</span>
-      <span style={{ ...NUM, color: 'var(--text-secondary)' }}>{p.share ? pct1(p.share * 100) : DASH}</span>
-      <PlanCell p={p} />
-      <span style={{ ...NUM, fontWeight: 700, color: p.fact_shows == null ? 'var(--text-faint)' : undefined }}>
-        {num(p.fact_shows)}</span>
-      <span style={{ ...NUM, color: 'var(--text-secondary)' }}>{num(p.fact_clicks)}</span>
-      <span title={ctrTitle(p.ctr, goal)} style={{ ...NUM, ...CTR_STYLE[tone] }}>{pct2(p.ctr)}</span>
-      <ExecCell p={p} grp={grp} flight={d.pace} />
-      <span style={{ ...NUM, fontWeight: 700, color: p.under == null ? 'var(--text-disabled)'
-        : grp === 'lag' ? 'var(--warning-fg)' : 'var(--text-secondary)' }}
-        title="Недокрут к прогнозу: план площадки − прогноз на конец флайта">{under}</span>
-      <WrCell p={p} />
-      <span style={{ display: 'flex', minWidth: 0, overflow: 'hidden' }}><PaceCell pace={p.pace} /></span>
+      {cols.map(k => cells[k])}
       <span style={{ display: 'flex', minWidth: 0 }}>
         <StatusDot value={p.status}
           title={(d.placement_manual || []).includes(p.status) ? p.status : `${p.status} — ставит согласование креативов`} />

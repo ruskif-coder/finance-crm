@@ -4,8 +4,6 @@ import { MONO } from '@/components/salesTableKit'
 import { DASH } from '@/components/traffic/dashboardKit'
 import { ctrTone } from '@/lib/sitesModel.mjs'
 
-/** Сетка таблицы площадок — дословно из макета (8.2), шаг 8. */
-export const SITE_GRID = 'minmax(184px,1.4fr) 44px 50px 44px 96px 60px 42px 50px minmax(70px,1fr) 62px 56px 64px 74px 68px 54px'
 /** Сетка креативов в расхлопе площадки (8.6). */
 export const CR_GRID_V2 = 'minmax(110px,1.3fr) 92px minmax(96px,0.9fr) minmax(96px,0.9fr) 50px 64px 60px 44px 78px 100px 116px 54px'
 
@@ -87,39 +85,42 @@ export const CtrBar = ({ ctr, tone, width = 18, height = 5, goal }) => (
   </span>
 )
 
-/* ── системы: полоски и легенда ─────────────────────────────────────────────── */
+/* ── системы: буквы и легенда ───────────────────────────────────────────────── */
 
-// Легенда столбца «Системы» (владелец 17.11.2026): полоски площадки и креатива — в этом же порядке. Цвета у полосок: зелёная —
-// готово, жёлтая — ждёт или готово частично, красная обводка — ошибка, пустая — ещё не начато.
+// Легенда столбца «Системы» (владелец 17.11.2026): буквы площадки и креатива — в этом же порядке.
 const SYS_LEGEND = [
   ['Е', 'ЕРИД креативов'], ['W', 'Пиксель Weborama'], ['D', 'Заведено в DSP'], ['С', 'Скрины запуска'],
 ]
-const SYS_COLORS = 'Полоски — в этом порядке: зелёная — готово, жёлтая — ждёт или частично, красная — ошибка, пустая — не начато'
+const SYS_COLORS = 'Цвет буквы: заливка — готово, жёлтая — ждёт или частично, жёлтая обводка — не сделано, красная — ошибка, бледные все — ещё не начато'
+
+// Буква в квадратике — и в шапке столбца, и в строке (трафики 19.11.2026: «буквы, как в названии колонки», вместо полосок);
+// промежуток 1 px, чтобы четыре буквы влезали в столбец без подписи.
+const LETTER = { fontFamily: MONO, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16,
+  boxSizing: 'border-box', borderRadius: 5, fontSize: 8.5, fontWeight: 700 }
+// Цвета — роли NAVY (`styles/navy.css`): норма / внимание / плохо; в прежних темах роли указывают на их цвета.
+const LETTER_TONE = {
+  ok: { background: 'var(--ok)', border: '1px solid var(--ok)', color: 'var(--navy-check-fg, var(--on-accent))' },
+  wait: { background: 'var(--attn-tint)', border: '1px solid var(--attn-border)', color: 'var(--attn-fg)' },
+  bad: { background: 'var(--bad-tint)', border: '1px solid var(--bad)', color: 'var(--bad-fg)' },
+  none: { background: 'var(--bg-card)', border: '1px solid var(--border-hover)', color: 'var(--text-disabled)' },
+  // не сделано, когда остальное по строке уже идёт, — обводка «внимания», как было у полосок: это то, чего ждут
+  miss: { background: 'var(--bg-card)', border: '1px solid var(--attn)', color: 'var(--attn-fg)' },
+}
+const letterTone = (m, s) => LETTER_TONE[m.tone === 'none' && !s.empty ? 'miss' : m.tone] || LETTER_TONE.none
 
 export const SysLegend = () => (
-  <span title={SYS_COLORS} style={{ display: 'inline-flex', gap: 3, cursor: 'help' }}>
+  <span title={SYS_COLORS} style={{ display: 'inline-flex', gap: 1, cursor: 'help' }}>
     {SYS_LEGEND.map(([l, what]) => (
       <span key={l} title={`${l} — ${what}. ${SYS_COLORS}`}
-        style={{ fontFamily: MONO, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16,
-          boxSizing: 'border-box', borderRadius: 5, border: '1px solid var(--border-hover)', background: 'var(--bg-card)',
-          fontSize: 8.5, fontWeight: 700, color: 'var(--text-faint)' }}>{l}</span>
+        style={{ ...LETTER, ...LETTER_TONE.none, color: 'var(--text-faint)' }}>{l}</span>
     ))}
   </span>
 )
 
 
-/** Четыре полоски систем (Е · W · D · С) и подпись «ок» / «нет …» — у площадки и у креатива. */
+/** Четыре буквы систем (Е · W · D · С) цветом состояния — у площадки и у креатива; подробности — в подсказке. */
 export const SysCell = ({ s }) => (
-  <span title={s.title} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-    <span style={{ display: 'inline-flex', gap: 2 }}>
-      {s.marks.map(m => (
-        <span key={m.l} style={{ width: 5, height: 12, borderRadius: 1.5, boxSizing: 'border-box',
-          background: m.tone === 'ok' ? 'var(--ok)' : m.tone === 'wait' ? 'var(--warning-tint)' : 'transparent',
-          border: `1px solid ${m.tone === 'ok' ? 'var(--ok)' : m.tone === 'bad' ? 'var(--danger)'
-            : s.empty ? 'var(--text-disabled)' : 'var(--warning)'}` }} />
-      ))}
-    </span>
-    <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
-      color: s.empty ? 'var(--text-disabled)' : !s.missing.length ? 'var(--text-faint)' : 'var(--warning-fg)' }}>{s.label}</span>
+  <span title={s.title} style={{ display: 'inline-flex', gap: 1 }}>
+    {s.marks.map(m => <span key={m.l} style={{ ...LETTER, ...letterTone(m, s) }}>{m.l}</span>)}
   </span>
 )
