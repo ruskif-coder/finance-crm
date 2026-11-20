@@ -62,11 +62,25 @@ def _retire_scans(db: Session, m, annex_ids: list = (), upd_nos: list = ()) -> N
                {"r": RETIRED, "m": m.id, "a": list(annex_ids) or [0], "u": list(upd_nos) or [0]})
 
 
+def _mark_redo(db: Session, m, kits: list, user, reason: str) -> None:
+    """Внесённые комплекты снова у бухгалтера — их операции со старыми цифрами до повторного внесения (20.11.2026)."""
+    from app import operation_issues as OI
+    from app.models import Operation
+    by_kit = {k.id: k for k in kits}
+    if not by_kit:
+        return
+    for op in db.query(Operation).filter(Operation.master_deal_upd_id.in_(list(by_kit))).all():
+        k = by_kit[op.master_deal_upd_id]
+        OI.raise_issue(db, op, OI.REDO, f"Документы УПД № {k.upd_no} пакета {m.code} вернули на переделку: {reason}. Цифры "
+                       "операции — до повторного внесения в 1С.", kit_id=k.id, user=user)
+
+
 def _reset_kits(db: Session, m, user, reason: str) -> tuple:
     """Комплекты — снова у бухгалтера и не у клиента. (сколько комплектов, сколько из них уже было внесено в 1С)."""
     from app.master_deal.models import MasterDealUpd
     kits = db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).all()
     in_1c = sum(1 for k in kits if k.onec_at is not None)          # возвращённые аккаунту в 1С не вносились
+    _mark_redo(db, m, [k for k in kits if k.onec_at is not None], user, reason)
     for k in kits:
         k.onec_state, k.onec_at = None, None
         if k.sign_state is not None:
@@ -242,6 +256,8 @@ def redo_kit(db: Session, m, k, user, reason: str) -> dict:
     # лента комплекта (19.11.2026): кто, когда и почему вернул — у бухгалтера в «Обсуждении и истории» и в карточке пакета
     from app.master_deal.models import OnecDeskEvent
     db.add(OnecDeskEvent(upd_id=k.id, kind="переделка", text=reason, by_user=getattr(user, "id", None)))
+    # операция по счёту комплекта остаётся со старыми цифрами до повторного внесения — пометить, чтобы их не приняли за итог
+    _mark_redo(db, m, [k], user, reason)
     if k.sign_state is not None:
         DSG._write_event(db, k, state=EVENT, channel=k.sign_channel, source="вручную", reason=reason, file_id=None,
                          by_user=getattr(user, "id", None))

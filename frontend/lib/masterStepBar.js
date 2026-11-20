@@ -30,6 +30,7 @@ export function packDocs(m) {
   return out
 }
 
+// zip — какой архив предложить рядом с кнопкой: 'diadoc' (ЭДО) | 'paper' (печать бумажного пакета, 20.11.2026) | false
 const bar = (tone, title, sub, extra = {}) => ({ tone, title, sub, zip: false, btn: null, link: null, ...extra })
 
 function issueEdo(docs, canEdit) {
@@ -43,19 +44,19 @@ function issueEdo(docs, canEdit) {
   const all = left.length === docs.length
   return bar('act', `${sent ? 'Осталось отправить' : 'Отправьте'} клиенту через Диадок: ${left.length} ${docsWord(left.length)} — ${left.map(d => d.label).join(', ')}`,
     `Скачайте файлы, загрузите в Диадок, отправьте клиенту — и отметьте здесь. Отправлено ${sent} из ${docs.length}; после последней отметки пакет перейдёт в «ждём оплату».`,
-    { zip: true, btn: canEdit ? { label: all ? `Отметить: отправил все ${docs.length}` : left.length === 1 ? `Отметить: отправил ${left[0].label}` : `Отметить: отправил остальные ${left.length}`,
+    { zip: 'diadoc', btn: canEdit ? { label: all ? `Отметить: отправил все ${docs.length}` : left.length === 1 ? `Отметить: отправил ${left[0].label}` : `Отметить: отправил остальные ${left.length}`,
       title: 'Отметить отправку всех оставшихся документов разом', body: { items: left.map(d => d.ref), on: true, state: SENT } } : null })
 }
 
 function issuePaper(docs, canEdit) {
   if (docs.some(d => d.sign?.state !== OURS && d.sign?.state !== 'отклонён' && !OUT.has(d.sign?.state))) {
     return bar('act', 'Распечатайте и подпишите документы у нас',
-      'ДС и комплекты (счёт и УПД) — кнопки «ДС pdf», «Счёт», «УПД» ниже. Следующий шаг — отправить клиенту почтой или курьером.',
-      { btn: canEdit ? { label: 'Отметить: подписано у нас', title: 'Документы подписаны с нашей стороны', body: { items: [], on: true, state: OURS } } : null })
+      'ДС и комплекты (счёт и УПД) — одним архивом «для печати» или кнопками «ДС pdf», «Счёт», «УПД» ниже. Следующий шаг — отправить клиенту почтой или курьером.',
+      { zip: 'paper', btn: canEdit ? { label: 'Отметить: подписано у нас', title: 'Документы подписаны с нашей стороны', body: { items: [], on: true, state: OURS } } : null })
   }
   return bar('act', 'Отправьте подписанные документы клиенту',
     'Почтой или курьером. Трек-номер можно указать при отметке. Дальше — ждём оплату и сканы подписанных клиентом документов.',
-    { btn: canEdit ? { label: 'Отметить: отправлено клиенту', title: 'Отметить отправку клиенту', track: true, body: { items: [], on: true, state: SENT } } : null })
+    { zip: 'paper', btn: canEdit ? { label: 'Отметить: отправлено клиенту', title: 'Отметить отправку клиенту', track: true, body: { items: [], on: true, state: SENT } } : null })
 }
 
 function scans(docs, canEdit) {

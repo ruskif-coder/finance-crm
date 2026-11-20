@@ -17,7 +17,7 @@ test('ЭДО, ничего не отправлено — все три доку�
   assert.equal(b.no, 4)
   assert.equal(b.tone, 'act')
   assert.equal(b.title, 'Отправьте клиенту через Диадок: 3 документа — ДС № 4, комплект 1, комплект 2')
-  assert.equal(b.zip, true)
+  assert.equal(b.zip, 'diadoc')
   assert.equal(b.btn.label, 'Отметить: отправил все 3')
   assert.deepEqual(b.btn.body, { items: [{ annex_id: 4 }, { upd_no: 1 }, { upd_no: 2 }], on: true, state: 'выставлен' })
 })
@@ -33,7 +33,7 @@ test('ЭДО, ДС отправлен — главная кнопка тольк
 test('без права на правку — объяснение без кнопки', () => {
   const b = stepBar(pack('выставление', edo('согласован', null, null)), false)
   assert.equal(b.btn, null)
-  assert.equal(b.zip, true)
+  assert.equal(b.zip, 'diadoc')
 })
 
 test('ждём 1С — серая полоса без действия; без канала — красная со ссылкой на договор', () => {
@@ -48,10 +48,11 @@ test('бумага на выставлении — сначала «подпис
   const ours = stepBar(pack('выставление', edo('согласован', null, null), { channel: 'бумага', paper: true }), true)
   assert.equal(ours.title, 'Распечатайте и подпишите документы у нас')
   assert.deepEqual(ours.btn.body, { items: [], on: true, state: 'подписан у нас' })
-  assert.equal(ours.zip, false)
+  assert.equal(ours.zip, 'paper', 'бумагу печатают — архив «для печати», как у ЭДО «для Диадока» (владелец 20.11.2026)')
   const out = stepBar(pack('выставление', edo('подписан у нас', 'подписан у нас', 'подписан у нас'), { channel: 'бумага', paper: true }), true)
   assert.equal(out.title, 'Отправьте подписанные документы клиенту')
   assert.equal(out.btn.track, true)
+  assert.equal(out.zip, 'paper', 'перепечатать перед отправкой — тот же архив')
 })
 
 test('согласование у юриста — ждём, у аккаунта — ссылка к ДС', () => {

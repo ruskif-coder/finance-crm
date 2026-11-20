@@ -19,6 +19,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import PayPlanSummary, { DupTag, FilterChip } from '@/components/operations/PayPlanSummary'
 import OperationPanelHost from '@/components/operations/OperationPanelHost'
+import { IssueMark } from '@/components/operations/OperationIssues'
 import OpsSummary, { QUICK_LABEL } from '@/components/operations/OpsSummary'
 import { RegistryFooter } from '@/components/accounts/mpRegistry/controls'
 import { downloadFile } from '@/lib/download'
@@ -753,6 +754,8 @@ export default function Operations2() {
               ? <span title="Нет контрагента — операция в «Незаполненных»" style={{ fontWeight: 600, fontStyle: 'italic', color: 'var(--attn-fg)' }}>без контрагента</span>
               : <span title={cpn} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: payPlan && planSum?.stub_ids?.includes(o.id) ? 'var(--danger-fg)' : undefined }}>{cpn}</span>}
             {payPlan && <DupTag tag={planSum?.tags?.[o.id]} />}
+            {/* проблемы операции (20.11.2026) — в широкой колонке: в статусе значок обрезался */}
+            <IssueMark issues={o.issues} />
           </span>
         )
       }
@@ -1032,7 +1035,7 @@ export default function Operations2() {
         hasPrev={panelAt > 0} hasNext={panelAt >= 0 && panelAt < rows.length - 1}
         onPrev={() => panelAt > 0 && setPanelId(rows[panelAt - 1].id)}
         onNext={() => panelAt >= 0 && panelAt < rows.length - 1 && setPanelId(rows[panelAt + 1].id)}
-        onRefreshRegistry={() => { setPanelId(null); loadOps() }} />}
+        onRefreshRegistry={() => { setPanelId(null); loadOps() }} onIssuesChanged={() => loadOps()} />}
     </div>
   )
 }

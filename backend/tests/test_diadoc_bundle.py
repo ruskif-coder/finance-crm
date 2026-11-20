@@ -58,3 +58,64 @@ def test_pack_docs_keep_sign_and_links():
             assert {"sign", "doc_url", "edo_link"} <= set(d), d.keys()
     finally:
         db.close()
+
+
+# ── бумага: «Скачать для печати» (владелец 20.11.2026: «для мастер-сделок на бумаге тоже нужно скачать архив, как для ЭДО») ──
+
+def test_paper_bundle_takes_printable_1c_files_only():
+    """На бумагу печатают PDF счёта и УПД; XML УПД и сканы подписанной бумаги в архив для печати не идут."""
+    from types import SimpleNamespace as NS
+    assert bundle.pack_file(NS(kind="счёт 1С", annex_id=None), set(), "paper") is True
+    assert bundle.pack_file(NS(kind="УПД 1С", annex_id=None), set(), "paper") is True
+    assert bundle.pack_file(NS(kind="УПД 1С xml", annex_id=None), set(), "paper") is False
+    assert bundle.pack_file(NS(kind="скан УПД", annex_id=None), set(), "paper") is False
+    assert bundle.pack_file(NS(kind="скан ДС", annex_id=7), {7}, "paper") is True, "ДС, подписанный вне системы, — сам документ"
+    assert bundle.pack_file(NS(kind="УПД 1С xml", annex_id=None), set(), "diadoc") is True
+
+
+def test_paper_bundle_names_missing_pdfs_without_asking_for_xml():
+    kits = [{"upd_no": 1}, {"upd_no": 2}]
+    files = {1: {"invoice": {"id": 5}, "upd": {"id": 6}}, 2: {"upd": {"id": 8}}}
+    assert bundle.missing_onec(kits, files, "paper") == ["Комплект 2: нет счёта (pdf) из 1С"]
+    assert bundle.missing_onec(kits, files) == ["Комплект 1: нет XML УПД из 1С", "Комплект 2: нет счёта (pdf) и XML УПД из 1С"]
+
+
+def test_paper_bundle_has_ds_both_as_docx_and_pdf(monkeypatch):
+    """Владелец 20.11.2026: в архиве для печати ДС — PDF «дублем», docx оставить. Сайдкар печати лёг — docx на месте, PDF
+    назван в «не вошло.txt». В архиве для Диадока PDF ДС нет."""
+    import io
+    import zipfile
+    from fastapi import HTTPException
+    import app.model_registry  # noqa: F401
+    from sqlalchemy import text
+    from app.database import SessionLocal
+    from app.master_deal.models import MasterDeal
+    db = SessionLocal()
+    try:
+        mid = db.execute(text("""SELECT m.id FROM master_deals m JOIN sales_annexes a ON a.master_deal_id = m.id
+                                  WHERE a.origin IS DISTINCT FROM 'загружен' ORDER BY m.id LIMIT 1""")).scalar()
+        if mid is None:
+            import pytest
+            pytest.skip("нет пакетов с ДС")
+        m = db.get(MasterDeal, mid)
+        monkeypatch.setattr(bundle, "_annex_docx", lambda db_, aid: ("x.docx", b"DOCX"))
+        monkeypatch.setattr(bundle, "_annex_pdf", lambda db_, aid: ("x.pdf", b"%PDF"))
+
+        def names(**kw):
+            z = zipfile.ZipFile(io.BytesIO(bundle.build(db, m, **kw)[1]))
+            return z, [n for n in z.namelist() if z.read(n) in (b"DOCX", b"%PDF")]
+        _, paper = names(paper=True)
+        assert sum(n.endswith(".docx") for n in paper) >= 1
+        assert sum(n.endswith(".pdf") for n in paper) == sum(n.endswith(".docx") for n in paper), paper
+        _, edo = names(diadoc=True)
+        assert not any(n.endswith(".pdf") for n in edo), "в Диадок ДС уходит docx, как и было"
+
+        def down(db_, aid):
+            raise HTTPException(502, "Сервис генерации PDF недоступен")
+        monkeypatch.setattr(bundle, "_annex_pdf", down)
+        z, paper = names(paper=True)
+        assert any(n.endswith(".docx") for n in paper) and not any(n.endswith(".pdf") for n in paper)
+        assert "Сервис генерации PDF недоступен" in z.read("не вошло.txt").decode()
+    finally:
+        db.rollback()
+        db.close()

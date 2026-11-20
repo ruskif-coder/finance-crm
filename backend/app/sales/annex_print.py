@@ -4,6 +4,9 @@
 Жила в роутере `routers/annexes.py`, и архив мастер-сделки (`master_deal/bundle.py`) брал её оттуда тремя приватными функциями:
 их переименование ломало сборку архива, а заметить это можно было только руками. Теперь это сервис; роутер держит прежние
 имена ссылками сюда, поэтому ручки и тесты, подменяющие их в роутере, не изменились."""
+import os
+
+import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -96,3 +99,31 @@ def printable_docx(db: Session, annex_id: int) -> tuple:
     from app.doc_names import for_annex
     name = for_annex(db, a, ".docx")              # имя — общим правилом документов (владелец 09.11.2026)
     return name, docx_build.build_docx(doc)
+
+
+PDF_SERVICE_URL = os.getenv("PDF_SERVICE_URL", "http://pdf:3001")
+
+
+def render_pdf(doc: dict, annex_id: int, with_basis: bool = False) -> bytes:
+    """PDF ДС сайдкаром печати: он открывает НАШУ печатную страницу и печатает её — второй вёрстки нет, расходиться нечему.
+    Одна функция на ручку `/annexes/{id}/pdf` и архив пакета «для печати» (20.11.2026). Сайдкар лёг — 502 с причиной."""
+    from fastapi.encoders import jsonable_encoder
+    # Адрес печатной формы переехал вместе с разделом в Справочники (05.09.2026)
+    payload = {"path": f"/directory/annexes/pdf/{annex_id}", "key": "__ANNEX__", "footer": doc.get("master_code") or "",
+               "flag": "__ANNEX_RENDERED__", "data": jsonable_encoder({**doc, "with_basis": bool(with_basis and doc.get("closing_basis"))})}
+    try:
+        r = httpx.post(f"{PDF_SERVICE_URL}/render", json=payload, timeout=60.0)
+        r.raise_for_status()
+    except Exception:
+        raise HTTPException(502, "Сервис генерации PDF недоступен")
+    return r.content
+
+
+def printable_pdf(db: Session, annex_id: int) -> tuple:
+    """(имя, байты) чистового PDF ДС — то же, что ручка `/annexes/{id}/pdf`; отказ — HTTPException с причиной."""
+    a = annex_of(db, annex_id)
+    assert_no_open_legal(db, a)
+    doc = printable_doc(db, a)
+    assert_printable(doc)
+    from app.doc_names import for_annex
+    return for_annex(db, a, ".pdf"), render_pdf(doc, a.id)

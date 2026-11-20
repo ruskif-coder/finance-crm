@@ -112,6 +112,14 @@ def onec_desk(db: Session, key: str, m, user=None, upd_no=None, text=None) -> No
         _master(db, key, m, "счёт и УПД из 1С внесены", "Документы 1С по всем комплектам внесены — можно выставлять клиенту.", user)
 
 
+@_safe
+def operation_issue(db: Session, op, kind: str, text: str, user=None) -> None:
+    """Проблемная операция (20.11.2026): комплект удалён при оплаченной операции, расхождение с 1С у оплаченной."""
+    amount = f"{float(op.income or op.expense or 0):,.2f}".replace(",", " ")
+    _emit(db, "operation_issue", title=f"Операция #{op.id} · {amount} ₽ — {kind}", body=text,
+          link=f"/finance/operations?op={op.id}", entity_type="operation", entity_id=op.id, actor=user, tone="warn")
+
+
 # ── просрочки (сканер) ────────────────────────────────────────────────────────────────────────────
 
 def recon_route(flow: str, fact_state: str) -> str:

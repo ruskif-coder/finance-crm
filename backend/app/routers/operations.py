@@ -276,8 +276,14 @@ def _overdue_cond():
     return _sort_map()['dz'] < date.today() - timedelta(days=GRACE_DAYS)
 
 
+def _issues_cond():
+    """Плитка «Проблемные» (20.11.2026): у операции есть открытая проблема — `app/operation_issues`."""
+    from app import operation_issues as OI
+    return OI.open_cond()
+
+
 QUICK = {'in': lambda: Operation.income > 0, 'out': lambda: Operation.expense > 0,
-         'over': _overdue_cond, 'empty': _empty_cond}
+         'over': _overdue_cond, 'empty': _empty_cond, 'issues': _issues_cond}
 
 
 def _order_by(sort_col, sort_dir):
@@ -463,13 +469,14 @@ def operations_summary(
         func.count(case((over, Operation.id))),
         func.min(case((over, dz))),
         func.count(case((_empty_cond(), Operation.id))),
+        func.count(case((_issues_cond(), Operation.id))),
     ).one()
-    in_f, in_p, out_f, out_p, over_sum, over_n, oldest, empty_n = row
+    in_f, in_p, out_f, out_p, over_sum, over_n, oldest, empty_n, issues_n = row
     oldest_days = (date.today() - (oldest.date() if hasattr(oldest, 'date') else oldest)).days if oldest else None
     return {"income_fact": float(in_f), "income_plan": float(in_p), "expense_fact": float(out_f), "expense_plan": float(out_p),
             "saldo_fact": float(in_f) - float(out_f), "saldo_plan": float(in_p) - float(out_p),
             "overdue_sum": float(over_sum), "overdue_count": int(over_n), "overdue_oldest_days": oldest_days,
-            "empty_count": int(empty_n)}
+            "empty_count": int(empty_n), "issues_count": int(issues_n)}
 
 
 @router.get("/")
@@ -535,6 +542,8 @@ def get_operations(
         db.query(Operation.parent_operation_id, func.count(Operation.id))
         .filter(Operation.parent_operation_id.in_(op_ids))
         .group_by(Operation.parent_operation_id).all()) if op_ids else {}
+    from app import operation_issues as OI
+    issues_by_op = OI.open_by_op(db, op_ids)           # открытые проблемы — тоже одним запросом на страницу
 
     return {
         "total": total,
@@ -565,6 +574,7 @@ def get_operations(
                 "receivable_due": _receivable_due(op),     # срок оплаты — подсказка у точки ДЗ (17.11.2026)
                 "no_counterparty": op.counterparty is None or op.counterparty.name == PLAN_COUNTERPARTY,
                 "pay_plan": op.pay_plan_at is not None,
+                "issues": issues_by_op.get(op.id, []),
             }
             for op in operations
         ]
@@ -582,6 +592,25 @@ def operation_context(op_id: int, db: Session = Depends(get_db),
     # PDF и XML 1С отдаёт экран бухгалтера под своим правом: без него ссылки на панели серые, а не отказ после клика
     can_docs = bool(get_permissions_for_user(db, current_user).get("onec_desk", {}).get("view"))
     return OC.build(db, op, can_download_docs=can_docs)
+
+
+class IssueResolveIn(BaseModel):
+    resolution: Optional[str] = None
+
+
+@router.post("/issues/{issue_id}/resolve")
+def resolve_operation_issue(issue_id: int, body: IssueResolveIn, db: Session = Depends(get_db),
+                            current_user: User = Depends(require_permission("operations", "edit"))):
+    """Закрыть проблему операции руками — с комментарием, что сделали (20.11.2026)."""
+    from app import operation_issues as OI
+    try:
+        row = OI.resolve(db, issue_id, body.resolution, current_user)
+    except OI.IssueError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    log_action(db, current_user, "operation_issue_resolve", entity_type="operation", entity_id=row.operation_id,
+               details=f"{row.kind}: {row.resolution}")
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/periods")

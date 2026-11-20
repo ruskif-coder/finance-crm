@@ -1,7 +1,7 @@
 /**
- * Полоса итогов «Операций» (хендофф design_handoff_operations_navy, 17.11.2026, раздел 2): пять плиток по ВСЕМ операциям текущего
+ * Полоса итогов «Операций» (хендофф design_handoff_operations_navy, 17.11.2026, раздел 2): шесть плиток по ВСЕМ операциям текущего
  * фильтра — считает сервер (`GET /operations/summary`), страница видит только 100–500 строк. Четыре плитки — быстрые фильтры
- * (`quick`: in | out | over | empty), «Сальдо» — только число. Активна одна плитка; повторный клик снимает фильтр.
+ * (`quick`: in | out | over | empty | issues — «Проблемные» добавлена 20.11.2026), «Сальдо» — только число. Активна одна плитка; повторный клик снимает фильтр.
  * Стекло (`.navy-glass`), ночью — светлая зона (`data-tone="light"`); в прежних темах атрибуты ничего не меняют.
  */
 import { MONO } from '@/components/salesTableKit'
@@ -46,7 +46,7 @@ export default function OpsSummary({ s, quick, onQuick }) {
   const inF = money(s.income_fact), outF = money(s.expense_fact), sal = money(s.saldo_fact, true), over = money(s.overdue_sum)
   return (
     <div className="navy-glass" data-tone="light"
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+      style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0,1fr))', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
         borderRadius: 20, boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
       <Tile first label="Поступления" big={inF.num} unit={`${inF.unit} факт`} fg="var(--money-fg)"
         sub={`ожидаем ещё ${short(s.income_plan)} по плану`} active={quick === 'in'} onClick={pick('in')} />
@@ -59,8 +59,11 @@ export default function OpsSummary({ s, quick, onQuick }) {
         active={quick === 'over'} onClick={pick('over')} />
       <Tile label="Незаполненные" big={String(s.empty_count)} unit={ops(s.empty_count)} fg={s.empty_count ? 'var(--attn-fg)' : undefined}
         sub="нет контрагента или статьи" active={quick === 'empty'} onClick={pick('empty')} />
+      {/* проблемные (20.11.2026): удалённый пакет у оплаченной, переделка, расхождение с 1С — разбирать руками */}
+      <Tile label="Проблемные" big={String(s.issues_count || 0)} unit={ops(s.issues_count || 0)} fg={s.issues_count ? 'var(--attn-fg, var(--warning-fg))' : undefined}
+        sub={s.issues_count ? 'разобрать руками' : 'проблем нет'} active={quick === 'issues'} onClick={pick('issues')} />
     </div>
   )
 }
 
-export const QUICK_LABEL = { in: 'Поступления', out: 'Списания', over: 'Просроченная ДЗ', empty: 'Незаполненные' }
+export const QUICK_LABEL = { in: 'Поступления', out: 'Списания', over: 'Просроченная ДЗ', empty: 'Незаполненные', issues: 'Проблемные' }

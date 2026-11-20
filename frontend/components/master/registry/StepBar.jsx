@@ -16,6 +16,11 @@ const TONE = {
   bad: ['var(--danger-tint)', 'var(--danger-border)', 'var(--danger-fg)'],
   ok: ['var(--income-tint)', 'var(--income-border)', 'var(--income-fg)'],
 }
+// Архив рядом с главной кнопкой: у ЭДО — то, что грузят в Диадок; у бумаги — то, что печатают (владелец 20.11.2026)
+const ZIP = {
+  diadoc: { q: 'diadoc', label: 'Скачать для Диадока · zip', title: 'Все документы, которые нужно загрузить в Диадок: ДС и комплекты · pdf и xml' },
+  paper: { q: 'paper', label: 'Скачать для печати · zip', title: 'Всё, что печатаем и подписываем: ДС, счёт и УПД из 1С · без xml и сканов' },
+}
 const BTN = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 14px', boxSizing: 'border-box', borderRadius: 9, fontSize: 12,
   fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }
 const Svg = ({ d, w = 2 }) => (
@@ -54,11 +59,11 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
         {!!b.sub && <span style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{b.sub}</span>}
       </span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
-        {b.zip && (
-          <span onClick={() => downloadFile(`/master-deals/${m.code}/zip?diadoc=true`, null, setErr)}
-            title="Все документы, которые нужно загрузить в Диадок: ДС и комплекты · pdf и xml"
+        {!!ZIP[b.zip] && (
+          <span onClick={() => downloadFile(`/master-deals/${m.code}/zip?${ZIP[b.zip].q}=true`, null, setErr)}
+            title={ZIP[b.zip].title}
             style={{ ...BTN, padding: '0 12px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
-            <Svg d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14" />Скачать для Диадока · zip</span>
+            <Svg d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14" />{ZIP[b.zip].label}</span>
         )}
         {!!b.btn && (
           <button type="button" data-act="main" disabled={busy} onClick={run} title={b.btn.title}

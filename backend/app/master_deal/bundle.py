@@ -21,19 +21,28 @@ def _annex_docx(db: Session, annex_id: int) -> tuple:
     return annex_print.printable_docx(db, annex_id)
 
 
+def _annex_pdf(db: Session, annex_id: int) -> tuple:
+    """(имя, байты) PDF ДС — тем же сайдкаром печати, что ручка `/annexes/{id}/pdf`."""
+    from app.sales import annex_print
+    return annex_print.printable_pdf(db, annex_id)
+
+
 _ONEC = (("invoice", "счёта (pdf)"), ("upd", "УПД (pdf)"), ("xml", "XML УПД"))
+# Бумага (владелец 20.11.2026): печатают PDF счёта и УПД; XML нужен только электронному документообороту
+_PRINT = ("invoice", "upd")
 
 
 def _and(parts: list) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " и " + parts[-1]
 
 
-def missing_onec(kits: list, files: dict) -> list:
-    """Чего из 1С нет у каждого комплекта — строки для «не вошло.txt» архива для Диадока."""
+def missing_onec(kits: list, files: dict, mode: str = "diadoc") -> list:
+    """Чего из 1С нет у каждого комплекта — строки для «не вошло.txt» архива для Диадока или для печати (`mode="paper"`)."""
+    slots = [(slot, name) for slot, name in _ONEC if mode != "paper" or slot in _PRINT]
     out = []
     for k in kits:
         have = files.get(k["upd_no"]) or {}
-        lack = [name for slot, name in _ONEC if slot not in have]
+        lack = [name for slot, name in slots if slot not in have]
         if lack:
             out.append(f"Комплект {k['upd_no']}: нет {_and(lack)} из 1С")
     return out
@@ -51,8 +60,21 @@ def diadoc_file(f, external_ids: set) -> bool:
     return f.kind in diadoc_kinds() or (f.annex_id is not None and f.annex_id in external_ids)
 
 
-def build(db: Session, m, diadoc: bool = False) -> tuple:
-    """(имя архива, байты). Пустой пакет (ДС ещё нет и сканов нет) — архив с одним «не вошло.txt»."""
+def pack_file(f, external_ids: set, mode: str) -> bool:
+    """Файл пакета — в архив этого вида? `diadoc` — электронные документы 1С; `paper` — то, что печатают: PDF счёта и УПД (без
+    XML). В обоих — файл ДС, подписанного вне системы. Сканы подписанной бумаги — ни в один: это уже ответ клиента."""
+    if mode == "paper":
+        from app.onec_desk.files import SLOTS
+        if f.kind in {SLOTS[s][0] for s in _PRINT}:
+            return True
+        return f.annex_id is not None and f.annex_id in external_ids
+    return diadoc_file(f, external_ids)
+
+
+def build(db: Session, m, diadoc: bool = False, paper: bool = False) -> tuple:
+    """(имя архива, байты). Пустой пакет (ДС ещё нет и сканов нет) — архив с одним «не вошло.txt».
+    Без флагов — «скачать всё» (ДС и сканы); `diadoc` — для загрузки в Диадок; `paper` — для печати бумажного пакета."""
+    mode = "diadoc" if diadoc else "paper" if paper else None
     from app.files_safe import existing_upload_path
     buf, skipped, used = BytesIO(), [], set()
 
@@ -79,18 +101,22 @@ def build(db: Session, m, diadoc: bool = False) -> tuple:
             try:
                 _, data = _annex_docx(db, a["id"])
                 put(z, DN.for_annex(db, row, ".docx", number=a["number"]), data)     # черновик — номером из раскладки
+                if mode == "paper":         # печатают PDF; docx — рядом, если надо поправить перед печатью (владелец 20.11.2026)
+                    _, pdf = _annex_pdf(db, a["id"])
+                    put(z, DN.for_annex(db, row, ".pdf", number=a["number"]), pdf)
 
             except Exception as e:  # noqa: BLE001 — причина уходит в «не вошло.txt»
                 skipped.append(f"{a['number']}: {getattr(e, 'detail', None) or e}")
         from app.master_deal.models import MasterDealFile
         q = db.query(MasterDealFile).filter(MasterDealFile.master_deal_id == m.id)
-        if diadoc:
+        if mode:
             from sqlalchemy import text as sa_text
             from app.master_deal.docs import _onec_files
             ext = {a["id"] for a in TA.annexes_of(db, m) if X.is_external(db.get(SalesAnnex, a["id"]))}
             kits = [{"upd_no": r[0]} for r in db.execute(sa_text("SELECT upd_no FROM master_deal_upds WHERE master_deal_id = :m ORDER BY upd_no"),
                                                          {"m": m.id})]
-            skipped.extend(missing_onec(kits, _onec_files(db, m)))
+            skipped.extend(missing_onec(kits, _onec_files(db, m), mode))
+        if diadoc:
             from app.master_deal.models import MasterDealUpd
             from app.onec_desk import invoice_xml as IX
             for k in db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).order_by(MasterDealUpd.upd_no):
@@ -100,7 +126,7 @@ def build(db: Session, m, diadoc: bool = False) -> tuple:
                 except IX.InvoiceXmlError as e:
                     skipped.append(f"Комплект {k.upd_no}: XML счёта не собран — {e.message}")
         for f in q.order_by(MasterDealFile.id):
-            if diadoc and not diadoc_file(f, ext):
+            if mode and not pack_file(f, ext, mode):
                 continue
             try:
                 with open(existing_upload_path(f.path), "rb") as fh:

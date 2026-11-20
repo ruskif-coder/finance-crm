@@ -13,6 +13,8 @@ import safeHref from '@/lib/safeHref'
 import OperationPanel from './OperationPanel'
 import DsViewer from '@/components/onecDesk/DsViewer'
 import { detailText } from '@/lib/loadError'
+import { can, getPermissions } from '@/lib/auth'
+import OperationIssues from './OperationIssues'
 
 const LINKS = {
   package: code => `/accounts/master/${code}`,
@@ -31,20 +33,25 @@ export function toPanelOp(c) {
     note: c.note && { ...c.note, document_link: safeHref(c.note.document_link) } }
 }
 
-export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onNext, onClose, onOpen, onRefreshRegistry }) {
+export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onNext, onClose, onOpen, onRefreshRegistry, onIssuesChanged }) {
   const router = useRouter()
   const [op, setOp] = useState(null)
   const [error, setError] = useState(null)
   const [fail, setFail] = useState('')      // не 404 — у панели слота нет, говорим строкой над ней
   const [dsView, setDsView] = useState(null)   // ДС модалкой экрана бухгалтера (владелец 09.11: «такой же модалкой»)
+  const [rev, setRev] = useState(0)           // закрыли проблему — перечитать панель, не сбрасывая её
+  const [canEdit, setCanEdit] = useState(false)
+  useEffect(() => { setCanEdit(can(getPermissions(), 'operations', 'edit')) }, [])
   useEffect(() => {
     let alive = true
-    setOp(null); setError(null); setFail('')
+    if (!rev) setOp(null)
+    setError(null); setFail('')
     api.get(`/operations/${opId}/context`, auth())
       .then(r => { if (alive) setOp(toPanelOp(r.data)) })
       .catch(e => { if (!alive) return; if (e.response?.status === 404) setError('not_found'); else setFail(detailText(e, 'Не удалось загрузить операцию — повторите')) })
     return () => { alive = false }
-  }, [opId])
+  }, [opId, rev])
+  useEffect(() => { setRev(0) }, [opId])
   const onAction = (key, o) => {
     if (key === 'open_package') router.push(`/finance/onec-desk?code=${encodeURIComponent(o.package.code)}`)
     else if (key === 'open_bank_row') onOpen(o.payment.op_id)          // банковских строк нет — оплата это операция цепочки
@@ -57,6 +64,8 @@ export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onN
     <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--scrim)' }}>
       <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, overflow: 'auto' }}>
         {!!fail && <div role="alert" style={{ width: 560, boxSizing: 'border-box', padding: '10px 26px', background: 'var(--danger-tint)', color: 'var(--danger-fg)', fontSize: 13 }}>{fail}</div>}
+        {/* проблемы операции (20.11.2026) — над панелью хендоффа, сама панель не правится */}
+        <OperationIssues issues={op?.issues} canEdit={canEdit} onResolved={() => { setRev(n => n + 1); onIssuesChanged?.() }} />
         {/* пока открыт ДС, клавиши панели к ней не относятся: Esc закрывает модалку, стрелки не листают операции за ней */}
         <OperationPanel op={op} error={error} now={new Date().toISOString()} hasPrev={hasPrev && !dsView} hasNext={hasNext && !dsView}
           onPrev={onPrev} onNext={onNext} onClose={dsView ? () => setDsView(null) : onClose} onRefreshRegistry={onRefreshRegistry}

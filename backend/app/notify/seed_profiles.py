@@ -62,6 +62,8 @@ PLAN = {
                        "master_scans_overdue": ["app", "tg"]},       # подпись и сканы после выставления — финансы (14.11.2026)
     "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
                        "sales_status_reminder": ["app", "tg", "mail"],
+                       # Проблемная операция (20.11.2026) — владелец: «мне в тг и почту»; бухгалтеру — галочкой в профиле «Финансы»
+                       "operation_issue": ["app", "tg", "mail"],
                        # Поломка фонового задания — срочно (владелец 27.09.2026): крон
                        # ломается ночью, панель увидят только утром.
                        **{k: ["app", "tg", "mail"] for k in ("cron_erid_auto_failed",

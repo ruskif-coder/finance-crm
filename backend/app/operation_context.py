@@ -136,6 +136,15 @@ def _note(op, k) -> Optional[dict]:
     return n if any(n.values()) else None
 
 
+def _issues(db: Session, op) -> list:
+    """Проблемы операции (20.11.2026): открытые сверху, закрытые — с тем, кто и как закрыл."""
+    rows = db.execute(text("""SELECT i.id, i.kind, i.text, i.created_at, i.resolved_at, i.resolution, u.name AS resolved_by
+                                FROM operation_issues i LEFT JOIN users u ON u.id = i.resolved_by
+                               WHERE i.operation_id = :o ORDER BY (i.resolved_at IS NULL) DESC, i.id DESC"""), {"o": op.id}).all()
+    return [{"id": r.id, "kind": r.kind, "text": r.text, "at": _utc(r.created_at), "open": r.resolved_at is None,
+             "resolved_at": _utc(r.resolved_at), "resolution": r.resolution, "resolved_by": r.resolved_by} for r in rows]
+
+
 def build(db: Session, op, can_download_docs: bool = False) -> dict:
     k, m = _kit(db, op)
     kind, direction = _kind(op)
@@ -156,4 +165,4 @@ def build(db: Session, op, can_download_docs: bool = False) -> dict:
             "ds": ds, "deals": deals, "upd": _upd(db, k, m, op), "can_download_docs": bool(can_download_docs), "edo": None,
             "payments": payments, "counterparty": {"id": cp.id, "short": cp.name, "inn": cp.inn} if cp else None,
             "contract": contract, "our_entity": own.name if own else None, "note": _note(op, k),
-            "history": _history(db, op, k, payments)}
+            "history": _history(db, op, k, payments), "issues": _issues(db, op)}

@@ -56,7 +56,8 @@ def test_pdf_request_carries_master_code_as_footer(db, monkeypatch):
 
         def raise_for_status(self):
             return None
-    monkeypatch.setattr(AX.httpx, "post", lambda url, json, timeout: sent.update(json) or R())
+    from app.sales import annex_print as AP        # печать PDF — общая функция ручки и архива пакета (20.11.2026)
+    monkeypatch.setattr(AP.httpx, "post", lambda url, json, timeout: sent.update(json) or R())
     user = db.query(User).filter(User.role.has(key="admin")).first()
     AX.annex_pdf(a.id, db, user)
     assert sent["footer"] == db.get(MasterDeal, a.master_deal_id).code

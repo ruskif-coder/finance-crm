@@ -231,7 +231,7 @@ def revert(db: Session, m: MasterDeal, user=None) -> int:
     # остаётся в своём пакете (отвязывать некуда), пересобранный — назад нельзя.
     prim = [] if SP.in_start_phase(db, m) else [a for a in rows if a.issue_kind == "primary"]
     if m.issued_at_start and prim and all(DSG.is_signed(a) for a in prim):
-        return _revert_signed_start(db, m)
+        return _revert_signed_start(db, m, user)
     if any(a.rows is not None for a in prim):
         raise MS.MasterError(409, "Первичный ДС уже пересобран по факту — вернуть в раскладку нельзя, правьте ДС в конструкторе")
     if any(a.no is not None for a in rows if a not in prim):
@@ -241,6 +241,8 @@ def revert(db: Session, m: MasterDeal, user=None) -> int:
                        {"a": [a.id for a in rows if a not in prim] or [0]}).scalar()
     if legal:
         raise MS.MasterError(409, "По ДС пакета есть заявки юристу — вернуть в раскладку нельзя, правьте ДС в конструкторе")
+    from app import operation_issues as OI
+    OI.retire_package(db, m, user, "пакет возвращён в раскладку")      # операции комплектов — до удаления, одним правилом
     db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).delete(synchronize_session=False)
     for a in rows:
         if a in prim:
@@ -253,8 +255,10 @@ def revert(db: Session, m: MasterDeal, user=None) -> int:
     return len(rows)
 
 
-def _revert_signed_start(db: Session, m: MasterDeal) -> int:
+def _revert_signed_start(db: Session, m: MasterDeal, user=None) -> int:
     """Стартовый пакет закрывался на подписанный ДС старта: убрать комплекты УПД, ДС остаётся в пакете как был подписан."""
+    from app import operation_issues as OI
+    OI.retire_package(db, m, user, "стартовый пакет возвращён в раскладку")
     n = db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).delete(synchronize_session=False)
     m.status, m.updated_at = "черновик", datetime.utcnow()
     db.flush()

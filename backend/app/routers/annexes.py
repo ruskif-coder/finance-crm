@@ -17,15 +17,12 @@
 сжигать номер, а занятый номер не должен меняться задним числом.
 """
 import logging
-import os
 from datetime import date, datetime
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
 
-import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func as sa_func
@@ -1041,9 +1038,6 @@ def party_phrase(payload: PhraseIn, user: User = Depends(VIEW)):
     }
 
 
-PDF_SERVICE_URL = os.getenv("PDF_SERVICE_URL", "http://pdf:3001")
-
-
 @router.get("/{annex_id}/pdf")
 def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW), with_basis: bool = False):
     """Нативный PDF приложения — тем же сайдкаром, что печатает медиаплан.
@@ -1058,15 +1052,7 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
         _assert_no_open_legal(db, a)
     doc = _doc(db, a)
     assert_printable(doc)
-    # Адрес печатной формы переехал вместе с разделом в Справочники (05.09.2026):
-    # приложения к договору живут рядом с самими договорами, а не в контуре аккаунтов.
-    payload = {"path": f"/directory/annexes/pdf/{a.id}", "key": "__ANNEX__", "footer": doc.get("master_code") or "",
-               "flag": "__ANNEX_RENDERED__", "data": jsonable_encoder({**doc, "with_basis": bool(with_basis and doc.get("closing_basis"))})}
-    try:
-        r = httpx.post(f"{PDF_SERVICE_URL}/render", json=payload, timeout=60.0)
-        r.raise_for_status()
-    except Exception:
-        raise HTTPException(502, "Сервис генерации PDF недоступен")
+    content = AP.render_pdf(doc, a.id, with_basis)
     # Имя файла — кириллицей, а заголовки HTTP умеют только latin-1. Поэтому RFC 5987:
     # ASCII-запасное имя для старых клиентов и `filename*` в UTF-8 для остальных. Без
     # этого ручка падала пятисоткой на кодировке заголовка, а не на документе.
@@ -1075,7 +1061,7 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}{'_with_basis' if with_basis else ''}.pdf"
     quoted = quote(human)
     return StreamingResponse(
-        BytesIO(r.content), media_type="application/pdf",
+        BytesIO(content), media_type="application/pdf",
         headers={"Content-Disposition":
                  f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"})
 

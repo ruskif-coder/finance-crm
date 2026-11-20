@@ -131,6 +131,8 @@ def sync(db: Session, m) -> list:
             a.total_amount = tpl_doc.live(db, c, version, a, deal_ids)["amount"]
     if db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).count():
         ann = {ds["kind"]: a.id for ds, a in pairs}
+        from app import operation_issues as OI
+        OI.retire_package(db, m, None, "строки ДС пакета пересобраны из сделок")     # до удаления комплектов — одно правило
         db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).delete(synchronize_session=False)
         for ds, a in pairs:
             TA.write_kits(db, m, ds, ann[ds["kind"]])

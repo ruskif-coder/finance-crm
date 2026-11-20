@@ -594,14 +594,15 @@ async def master_file_upload(code: str, file: UploadFile = File(...), annex_id: 
 
 
 @router.get("/{code}/zip")
-def master_zip(code: str, diadoc: bool = False, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
+def master_zip(code: str, diadoc: bool = False, paper: bool = False, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
     """«Скачать всё · zip»: ДС пакета (.docx) и сканы; что не собралось — в «не вошло.txt». `diadoc` — «Скачать для Диадока»
-    (реестр v3): ДС и файлы из 1С без сканов, недостающее у комплектов — в «не вошло.txt» (владелец 12.11.2026)."""
+    (реестр v3): ДС и файлы из 1С без сканов, недостающее у комплектов — в «не вошло.txt» (владелец 12.11.2026). `paper` —
+    «Скачать для печати» бумажного пакета: ДС и PDF счёта и УПД, без XML и сканов (владелец 20.11.2026)."""
     from io import BytesIO
     from urllib.parse import quote
     from fastapi.responses import StreamingResponse
     from app.master_deal import bundle
-    name, data = bundle.build(db, _master_ro(db, code, user), diadoc=diadoc)
+    name, data = bundle.build(db, _master_ro(db, code, user), diadoc=diadoc, paper=paper and not diadoc)
     return StreamingResponse(BytesIO(data), media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename=\"{code}.zip\"; filename*=UTF-8''{quote(name)}"})
 
