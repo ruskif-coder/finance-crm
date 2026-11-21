@@ -203,3 +203,13 @@ export const ago = (v) => {
   if (days < 7) return `${days} ${days < 5 ? 'дня' : 'дней'}`
   return fmtDateOfMoment(v)
 }
+
+/** Следующий календарный день по метке «ГГГГ-ММ-ДД» (нужно «Бизнесу»: статистика РК приходит за прошлый день,
+    загружается на следующий). Арифметика целиком в UTC — часовых поясов здесь нет, поэтому `new Date` живёт
+    в этом модуле: сторож `check-dates` разрешает его только тут. Пустой вход — пустой выход. */
+export const nextDay = (v) => {
+  if (!v) return ''
+  const d = new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}

@@ -24,10 +24,11 @@ function Threshold({ thr, setThr }) {
   )
 }
 
-export default function Header({ today, thr, setThr, mode, setMode }) {
+export default function Header({ today, thr, setThr, mode, setMode, tabs }) {
   const d = parseDate(today)
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      {tabs}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
         <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em' }}>Деньги</span>
         <span style={{ ...CAPS, fontSize: 11 }}>сегодня {d.getDate()} {MONTHS_GEN[d.getMonth()]}, {WD_FULL[d.getDay()].toLowerCase()} · выписок нет — по проведённым операциям</span>

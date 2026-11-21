@@ -255,6 +255,13 @@ export default function SalesRegistry2() {
       setSel(s => ({ ...s, ...(advId ? { advertiser_id: [Number(advId)] } : {}), ...(agId ? { agency_id: [Number(agId)] } : {}) }))
       setHideArchive(false)
     }
+    // Из светофора «Бизнеса» (20.11.2026): ?money_layer=<слой>&month=ГГГГ-ММ — сделки слоя за месяц, архивные тоже
+    const layer = router.query.money_layer, month = router.query.month
+    if (layer || month) {
+      if (layer) setSel(s => ({ ...s, money_layer: [String(layer)] }))
+      if (/^\d{4}-\d{2}$/.test(String(month || ''))) { setDateFrom(String(month)); setDateTo(String(month)) }
+      setHideArchive(false)
+    }
   }, [router.isReady])
   useEffect(() => { const t = setTimeout(() => setSearchQ(search), 300); return () => clearTimeout(t) }, [search])
   useEffect(() => { setLastIdx(null) }, [deals])

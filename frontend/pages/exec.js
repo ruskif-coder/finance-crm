@@ -11,6 +11,10 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
+import { useRouter } from 'next/router'
+import { Segmented } from '@/lib/motion'
+import Business, { useBusiness } from '@/components/money/business/Business'
+import MoneyPath from '@/components/money/MoneyPath'
 import Navbar from '@/components/Navbar'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -55,6 +59,12 @@ export default function MoneyScreen() {
   const [day, setDay] = useState(0)
   const [dz, setDz] = useState('')
   const [thr, setThr] = useThreshold()
+  const router = useRouter()
+  const tab = router.query.tab === 'business' ? 'business' : 'money'      // «Бизнес» (20.11.2026) — адрес вкладки ?tab=, расчёт app/money/business.py
+  const setTab = (t) => router.replace({ pathname: router.pathname, query: t === 'business' ? { tab: t } : {} }, undefined, { shallow: true })
+  // переключатель — в шапке обоих экранов (хендофф 20.11.2026); данные «Бизнеса» — один раз: из них и «Путь денег» на «Деньгах»
+  const tabs = <Segmented tone="hot" value={tab} onChange={setTab} options={[['money', 'Деньги'], ['business', 'Бизнес']]} />
+  const biz = useBusiness()
 
   const load = useCallback(async () => {
     setErr('')
@@ -83,18 +93,21 @@ export default function MoneyScreen() {
 
   return (
     <>
-      <Head><title>Деньги | SIMB-AD ERP</title></Head>
+      <Head><title>{tab === 'business' ? 'Бизнес' : 'Деньги'} | SIMB-AD ERP</title></Head>
       <Navbar />
       <div className="navy-scr" style={{ minHeight: '100vh', fontFamily: UI, color: 'var(--text-primary)' }}>
         <div style={{ maxWidth: 1880, margin: '0 auto', boxSizing: 'border-box', padding: '22px 26px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {!!err && <div style={{ padding: '14px 18px', borderRadius: 14, background: 'var(--bad-tint)', border: '1px solid var(--bad-border)', color: 'var(--bad-fg)' }}>{err}</div>}
-          {data && calc && <>
-            <Header today={data.today} thr={thr} setThr={setThr} mode={mode} setMode={setMode} />
+          {tab === 'business' && <Business tabs={tabs} biz={biz} />}
+          {tab === 'money' && !!err && <div style={{ padding: '14px 18px', borderRadius: 14, background: 'var(--bad-tint)', border: '1px solid var(--bad-border)', color: 'var(--bad-fg)' }}>{err}</div>}
+          {tab === 'money' && data && calc && <>
+            <Header today={data.today} thr={thr} setThr={setThr} mode={mode} setMode={setMode} tabs={tabs} />
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.78fr)', gap: 16 }}>
               <Hero R={calc.R} data={data} real={real} thr={thr} />
               <Todo items={todoItems({ R0: calc.R0, thr, data, overdue: calc.overdue, move: calc.move, scen, setScen, pickDay: setDay, pickBucket: setDz })} />
               <Accounts data={data} />
             </div>
+            {/* путь денег: от размещения до банка (README хендоффа п. 3а); первые два шага — из «Бизнеса» */}
+            {biz.data && <MoneyPath biz={biz.data} inv={calc.inv} data={data} />}
             {scenOn && <WhatIfBar text={scenText} from={fs(calc.R0.minB)} to={{ s: fs(calc.R.minB), v: calc.R.minB }} thr={thr} onReset={() => setScen({})} />}
             <Calendar R={calc.R} real={real} thr={thr} day={day} setDay={setDay} />
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.55fr) minmax(0,1fr)', gap: 16, alignItems: 'stretch' }}>

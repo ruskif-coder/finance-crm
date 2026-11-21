@@ -22,6 +22,11 @@
 [data-theme="navy"] { --chart-in:var(--money); --chart-out:#7C8EA3; --chart-fact:var(--accent); --chart-forecast:var(--accent-border) }
 [data-theme="navy-dark"] { --chart-in:var(--money); --chart-out:#A2B1C1; --chart-fact:var(--accent); --chart-forecast:var(--accent-border) }
 
+/* Слой «в работе» светофора «Бизнеса» (хендофф design_handoff_money_navy, 20.11.2026): днём --hot, ночью --ok; в прежних темах — акцент */
+:root { --tl-work:var(--accent) }
+[data-theme="navy"] { --tl-work:var(--hot) }
+[data-theme="navy-dark"] { --tl-work:var(--ok) }
+
 /* Наш слой совместимости: токены кода, которых в хендоффе нет, — по ролям NAVY (как сделано для ночи и графита в globals.css) */
 [data-theme^="navy"] {
   --warning-bg:var(--attn-tint); --danger-bg:var(--bad-tint); --income-bg:var(--money-tint); --warning-text:var(--attn-fg);

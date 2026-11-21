@@ -21,3 +21,10 @@ router = APIRouter()
 @router.get("/overview")
 def overview(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return build(db, msk_date(datetime.utcnow()))
+
+
+@router.get("/business")
+def business(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    """Вкладка «Бизнес» (20.11.2026): светофор продаж по месяцам, деньги в размещении, сверка с учётом, маржа по услугам."""
+    from ..money.business import build as build_business
+    return build_business(db, msk_date(datetime.utcnow()))

@@ -125,6 +125,25 @@ def sales_percent_many(db: Session, deals) -> dict:
     return out
 
 
+def modes_many(db: Session, deals) -> dict:
+    """{deal_id: (способ, %)} пакетом — тем же правилом, что `of_deal`: поправка сделки, иначе правило «Агентских условий».
+    Нет ни того, ни другого — (None, None): способ неизвестен. Экран «Бизнес» (20.11.2026) вычитает из денег только
+    «скидку в счёт» — с неизвестным способом не гадаем (оценка 30 % у `sales_percent_many` — для бонусов, не для денег)."""
+    from app.agency_terms import rules as R
+    deals = list(deals)
+    rules = _rules(db)
+    own = _overrides(db, [d.id for d in deals])
+    out = {}
+    for d in deals:
+        if d.id in own:
+            out[d.id] = own[d.id]
+            continue
+        pf = getattr(d, "period_from", None)
+        rule = R.pick(rules, features_of(d), R.close_date(pf.strftime("%Y-%m")), R.MAIN) if pf else None
+        out[d.id] = (rule["mode"], float(rule["percent"])) if rule else (None, None)
+    return out
+
+
 def set_deal(db: Session, deal, mode: Optional[str], percent: Optional[float], user) -> FinalReconDeal:
     validate(mode, percent)
     row = db.query(FinalReconDeal).filter(FinalReconDeal.deal_id == deal.id).first()
