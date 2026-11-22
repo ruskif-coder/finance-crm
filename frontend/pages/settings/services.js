@@ -10,6 +10,7 @@ import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // ── Справочник услуг (конструктор) — отдельная страница раздела «Настройки» ──
 // Услуга: тип размещения + форма расчёта + единая/раздельная (web/app) цена + базовые
@@ -34,6 +35,7 @@ const numOrNull = (v) => (v === '' || v == null) ? null : Number(v)
 const NEW_SVC = { name: '', placement_type: '', calc_form: '', separate_price: false, unit_price: '', unit_price_web: '', unit_price_app: '', constants: {}, revenue_article_id: '' }
 
 export default function SettingsServices() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const [services, setServices] = useState([])
   const [addons, setAddons] = useState([])

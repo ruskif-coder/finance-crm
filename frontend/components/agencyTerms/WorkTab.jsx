@@ -10,6 +10,7 @@ import { moneyNum } from '@/lib/money'
 import { defaultValidFrom, workBonuses } from '@/lib/agencyTerms.mjs'
 import { CAPS, Card, Field, Pick, Scroll, Title } from './kit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const COLS = 'minmax(120px,.9fr) minmax(150px,1.1fr) minmax(90px,.7fr) minmax(280px,2.6fr) minmax(170px,1.2fr) 120px 150px 40px'
 // Креативы / отчёты бонусом (владелец 27.10.2026): флажок и «при каком условии»; снял флажок — комментарий не сохранится
@@ -91,6 +92,7 @@ function Editor({ item, opts, canEdit, onClose, onSaved }) {
 }
 
 export default function WorkTab({ opts, canEdit, tick }) {
+  const { confirm } = useDialogs()
   const [items, setItems] = useState(null)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
@@ -108,7 +110,7 @@ export default function WorkTab({ opts, canEdit, tick }) {
   const agencies = [...new Map((items || []).filter((w) => w.agency_id).map((w) => [w.agency_id, w.names?.agency])).entries()]
     .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'))
   const removeItem = async (w) => {
-    if (!window.confirm('Удалить условие работы?')) return
+    if (!await confirm('Удалить условие работы?')) return
     try { await api.delete(`/agency-terms/work/${w.id}`, auth()); load() } catch (e) { setErr(detailText(e, 'Не удалось удалить')) }
   }
   return (

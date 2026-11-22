@@ -8,8 +8,10 @@ import api, { auth } from '@/lib/api'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import { SnoozeDialog, BookingConfirm, LaunchPrepDialog } from '@/components/accounts/QueueDialogs'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 export default function useQueueActions({ router, load, onExpand }) {
+  const { confirm, alert } = useDialogs()
   const [moveDeal, setMoveDeal] = useState(null)
   const [snoozeFor, setSnoozeFor] = useState(null)
   const [prepFor, setPrepFor] = useState(null)
@@ -28,7 +30,7 @@ export default function useQueueActions({ router, load, onExpand }) {
 
   // «Завершить» своего запуска (контур аккаунта, приоритезация) — тот же путь, что кнопка в карточке: `final_recon/launch`.
   const finish = async (row) => {
-    if (!window.confirm('Завершить запуск? Сделка перейдёт на «Итоговую сверку».')) return
+    if (!await confirm('Завершить запуск? Сделка перейдёт на «Итоговую сверку».')) return
     try { await api.post(`/final-recon/deal/${row.id}/finish`, {}, auth()); load() }
     catch (e) { alert(detailText(e, 'Не удалось завершить')) }
   }

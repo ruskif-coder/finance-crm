@@ -8,6 +8,7 @@ import { MONO, UI, Modal, Z, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 import UserRow, { COLS } from '@/components/settings/users/UserRow'
 import AccessOverview from '@/components/settings/users/AccessOverview'
 import {
@@ -47,6 +48,8 @@ export default function SettingsUsers() {
   const [accessOpen, setAccessOpen] = useState(false)
   const seq = useRef(0)
   const dirtyRef = useRef(false)
+  const allowNavRef = useRef(false)
+  const { confirm } = useDialogs()
   const timers = useRef({})
 
   const rolesByKey = useMemo(() => Object.fromEntries(roles.map(r => [r.key, r])), [roles])
@@ -78,10 +81,13 @@ export default function SettingsUsers() {
     if (!isAdmin()) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     load()
     const beforeUnload = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = '' } }
-    const beforeRoute = () => {
-      if (dirtyRef.current && !window.confirm('Есть несохранённые изменения пользователей. Уйти без сохранения?')) {
-        router.events.emit('routeChangeError'); throw 'пользователи: уход отменён'
-      }
+    const beforeRoute = (url) => {
+      if (!dirtyRef.current || allowNavRef.current) return
+      router.events.emit('routeChangeError')
+      confirm('Есть несохранённые изменения пользователей. Уйти без сохранения?').then(ok => {
+        if (ok) { allowNavRef.current = true; router.push(url) }
+      })
+      throw 'пользователи: уход отменён'
     }
     const outside = (e) => { if (!e.target.closest?.('[data-pop-root]')) setOpen(null) }
     window.addEventListener('beforeunload', beforeUnload)

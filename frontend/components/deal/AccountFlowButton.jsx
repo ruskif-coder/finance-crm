@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { UI } from '@/components/salesTableKit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const LABEL = { launch: 'Запустить', finish: 'Завершить' }
 const ASK = {
@@ -20,6 +21,7 @@ const GREEN = { height: 38, border: 'none', background: 'var(--income)', color: 
 // onAny — «Сменить стадию» для админа: любая стадия мимо запретов, с причиной (владелец 23.10.2026). Нужна и там, где
 // следующей стадии нет (2T7US3 на последней «Оплате» не двигалась никак).
 export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, nextTitle, onNext, onLost, lostLabel, onAny }) {
+  const { confirm } = useDialogs()
   const [action, setAction] = useState(null)
   const [selfLaunch, setSelfLaunch] = useState(false)   // приоритезация на старте — переходит сама (16.11.2026)
   const [busy, setBusy] = useState(false)
@@ -31,7 +33,7 @@ export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, 
   useEffect(() => { load() }, [load, stageId])
 
   const run = async () => {
-    if (!window.confirm(ASK[action])) return
+    if (!await confirm(ASK[action])) return
     setBusy(true); setErr('')
     try { await api.post(`/final-recon/deal/${dealId}/${action}`, {}, auth()); if (onDone) onDone() }
     catch (e) { setErr(detailText(e, 'Не удалось перевести сделку')) }

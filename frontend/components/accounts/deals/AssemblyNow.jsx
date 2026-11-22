@@ -10,6 +10,7 @@ import { detailText } from '@/lib/loadError'
 import { MONO } from '@/components/salesTableKit'
 import { StatePips } from '@/components/ord/AssemblyOrd'
 import { FactChip } from '@/components/deal/Section'
+import { useDialogs } from '@/components/dialogs'
 
 const CAP = { fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const PIP = { ok: 'done', warn: 'todo', off: 'skip' }
@@ -17,10 +18,11 @@ const PIP = { ok: 'done', warn: 'todo', off: 'skip' }
 /** Контур аккаунта (OLV, Альфарм-Таргет, Polza): запуск во внешней системе, аккаунт подтверждает его — сделка «В размещении».
  *  Та же ручка, что кнопка «Запустить» в карточке (`/final-recon/deal/{id}/launch`, AccountFlowButton). */
 function ExternalLaunch({ dealId, canEdit, onDone }) {
+  const { confirm } = useDialogs()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const run = async () => {
-    if (!window.confirm('Подтвердить запуск? Сделка перейдёт в «В размещении».')) return
+    if (!await confirm('Подтвердить запуск? Сделка перейдёт в «В размещении».')) return
     setBusy(true); setErr('')
     try { await api.post(`/final-recon/deal/${dealId}/launch`, {}, auth()); onDone() }
     catch (e) { setErr(detailText(e, 'Не удалось подтвердить запуск')) }

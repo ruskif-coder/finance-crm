@@ -9,6 +9,7 @@ import { fmtDate, fmtDateTimeShort } from '@/lib/dates'
 import { grp0, rub2 } from '@/lib/salesFormat'
 import { MONO, card, inp, btn, btnSm, th, td, LoadError } from '@/components/salesTableKit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const monthLabel = (ym) => {
   const [y, m] = ym.split('-').map(Number)
@@ -96,6 +97,7 @@ function Rows({ rows }) {
 }
 
 export default function OrdReports() {
+  const { confirm } = useDialogs()
   const [months, setMonths] = useState(null)
   const [month, setMonth] = useState('')
   const [data, setData] = useState(null)
@@ -153,8 +155,8 @@ export default function OrdReports() {
       setMsg(`Загружено: правок ${c['правка']}, добавлено строк ${c['добавлена']}, убрано ${c['убрана']}`)
     })
   }
-  const reset = () => {
-    if (!window.confirm(`Сбросить правки из файла за ${monthLabel(month)}? Отчёт вернётся к расчёту.`)) return
+  const reset = async () => {
+    if (!await confirm(`Сбросить правки из файла за ${monthLabel(month)}? Отчёт вернётся к расчёту.`)) return
     act('reset', async () => { await api.delete(`/ord/reports/${month}/overrides`, auth()); setMsg('Правки сброшены — отчёт по расчёту') })
   }
   const snapshot = () => act('snap', async () => {

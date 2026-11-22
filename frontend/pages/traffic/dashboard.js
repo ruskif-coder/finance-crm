@@ -41,6 +41,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { isAdmin as isAdminNow } from '@/lib/auth'
 import HungAttempts from '@/components/traffic/HungAttempts'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 import DashHeader, { ListPanel } from '@/components/traffic/v2/DashHeader'
 import RkRow, { RkHead } from '@/components/traffic/v2/RkRow'
 import { nextRkSort, sortRk } from '@/components/traffic/v2/rkModel'
@@ -200,6 +201,7 @@ function WrAttach({ campaignId, pl, onDone }) {
 
 
 export default function TrafficDashboard() {
+  const { confirm } = useDialogs()
   const router = useRouter()
   const [data, setData] = useState(null)
   // Открыт РОВНО ОДИН расхлоп (владелец 04.09.2026): в нём таблица площадок и график,
@@ -492,7 +494,7 @@ export default function TrafficDashboard() {
      аккаунт, поэтому кнопка не просто меняет статус, а двигает сделку на «Итоговую
      сверку». Спрашиваем подтверждение: переход стадии назад откатывать некому. */
   const finish = async (row) => {
-    const ok = window.confirm(
+    const ok = await confirm(
       `Завершить РК «${row.deal_title}»? Статус станет «окончена», `
       + 'сделка уедет на «Итоговую сверку» — дальше её ведёт аккаунт. '
       + 'Креативы, которые ещё ждут согласования площадок, будут отозваны.')
@@ -565,8 +567,8 @@ export default function TrafficDashboard() {
     const fit = g.places.filter(c => (s === 'отклонён' ? c.status !== 'отклонён'
       : ['согласован', 'пауза', 'запущен'].includes(c.status) && c.status !== s))
     if (!fit.length) { say('Менять нечего: у всех площадок креатив уже в этом статусе или не согласован'); return }
-    if (s === 'отклонён' && !window.confirm(`Отключить креатив «${g.name || 'без названия'}» на ${fit.length} площадк. сразу? `
-      + 'Его объём уйдёт остальным креативам этих площадок.')) return
+    if (s === 'отклонён' && !(await confirm(`Отключить креатив «${g.name || 'без названия'}» на ${fit.length} площадк. сразу? `
+      + 'Его объём уйдёт остальным креативам этих площадок.'))) return
     let done = 0
     const errs = []
     for (const c of fit) {

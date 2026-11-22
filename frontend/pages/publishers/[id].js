@@ -9,12 +9,14 @@ import { MONO, UI, btn } from '@/components/salesTableKit'
 import PublisherCard from '@/components/publishers/PublisherCard'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
+import { useDialogs } from '@/components/dialogs'
 
 // Страница карточки площадки: загрузка, режим правки и сохранение. Вся вёрстка — в
 // components/publishers/PublisherCard. Режим правки включается и ссылкой ?edit=1 —
 // из реестра кнопка ✎ ведёт сюда, а не разворачивает форму в строке.
 
 export default function PublisherCardPage() {
+  const { confirm, prompt } = useDialogs()
   const router = useRouter()
   const { id, edit } = router.query
   const [data, setData] = useState(null)
@@ -145,7 +147,7 @@ export default function PublisherCardPage() {
       } catch (e) { fail(e, 'Не удалось завести поверхность') }
     },
     dropSurface: async (kind) => {
-      if (!window.confirm(`Убрать поверхность ${kind.toUpperCase()}?\nВместе с ней снимутся отмеченные на ней услуги.`)) return
+      if (!(await confirm(`Убрать поверхность ${kind.toUpperCase()}?\nВместе с ней снимутся отмеченные на ней услуги.`))) return
       try { await api.delete(`/publishers/${id}/surfaces/${kind}`, auth()); await load() }
       catch (e) { fail(e, 'Не удалось убрать поверхность') }
     },
@@ -204,14 +206,14 @@ export default function PublisherCardPage() {
       await downloadFile(`/publishers/${id}/documents/${docId}`, filename, setError)
     },
     deleteDocument: async (docId) => {
-      if (!window.confirm('Удалить документ?')) return
+      if (!(await confirm('Удалить документ?'))) return
       try { await api.delete(`/publishers/${id}/documents/${docId}`, auth()); await load() }
       catch (e) { fail(e, 'Не удалось удалить документ') }
     },
     // Ссылка на договор в ЭДО. Схемы кроме http(s) отклоняет сервер: javascript:
     // и data: — это XSS, а не адрес документа.
     setContractEdo: async (linkId, current) => {
-      const url = window.prompt('Ссылка на договор в ЭДО', current || '')
+      const url = await prompt('Ссылка на договор в ЭДО', { initial: current || '' })
       if (url === null) return
       try {
         await api.put(`/publishers/${id}/contracts/${linkId}/document-url`, { document_url: url }, auth())
@@ -229,7 +231,7 @@ export default function PublisherCardPage() {
       } catch (e) { fail(e, 'Не удалось вернуть договор') }
     },
     archiveContract: async (linkId) => {
-      if (!window.confirm('Убрать договор в архив?\nЗапись сохранится, из карточки исчезнет.')) return
+      if (!(await confirm('Убрать договор в архив?\nЗапись сохранится, из карточки исчезнет.'))) return
       try { await api.post(`/publishers/${id}/contracts/${linkId}/archive`, {}, auth()); await load() }
       catch (e) { fail(e, 'Не удалось убрать в архив') }
     },

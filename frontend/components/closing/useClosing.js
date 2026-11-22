@@ -5,8 +5,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import api, { auth } from '@/lib/api'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 export default function useClosing(dealId, reloadKey) {
+  // Глобальный диалог подтверждения (`components/dialogs.jsx`). Не путать с `confirm(on)` в возврате ниже:
+  // это подтверждение СВЕРКИ (свой PATCH-запрос), а не нативное окно, и его не трогаем.
+  const { confirm } = useDialogs()
   const [s, setS] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -36,7 +40,7 @@ export default function useClosing(dealId, reloadKey) {
     saveFact: (rows, note) => put('fact', { rows, note: note || null }),
     confirm: (on) => put('closing/confirm', { on }),
     closeNoDocs: () => call(async () => {
-      if (!window.confirm('Закрыть без документов? Бонусное размещение: сверка замораживается, сделка уходит в «Архив успешных сделок». ДС и закрывающих не будет.')) return
+      if (!await confirm('Закрыть без документов? Бонусное размещение: сверка замораживается, сделка уходит в «Архив успешных сделок». ДС и закрывающих не будет.')) return
       setS((await api.post(`${url}/close-no-docs`, {}, auth())).data)
     }),
   }

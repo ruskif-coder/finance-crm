@@ -11,6 +11,7 @@ import { MONO, UI } from '@/components/salesTableKit'
 import safeHref from '@/lib/safeHref'
 import { detailText } from '@/lib/loadError'
 import { shortAnnexNumber } from '@/lib/annexNumber'
+import { useDialogs } from '@/components/dialogs'
 
 const CAPS = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }
 const ICON = {
@@ -52,9 +53,10 @@ export function KitDocs({ kit, upd_no, paper, code, onPick, setErr, canEdit, onD
 
 /** Бухгалтер вернула комплект из «Документов для 1С»: что не так и «Исправлено» — комплект снова у неё в очереди. */
 function DeskReturned({ kit, upd_no, code, canEdit, onDone, setErr }) {
+  const { prompt } = useDialogs()
   const [busy, setBusy] = useState(false)
   const fixed = async () => {
-    const text = window.prompt('Что исправили? (можно оставить пустым)')
+    const text = await prompt('Что исправили? (можно оставить пустым)')
     if (text === null) return
     setBusy(true); setErr?.('')
     try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-fixed`, { text: text || null }, auth())).data) }
@@ -72,9 +74,10 @@ function DeskReturned({ kit, upd_no, code, canEdit, onDone, setErr }) {
 
 /** Бухгалтер спросила в «Документах для бухгалтерии», не возвращая комплект: вопрос и «Ответить» — у неё в очереди будет «ответ». */
 function DeskQuestion({ kit, upd_no, code, canEdit, onDone, setErr }) {
+  const { prompt } = useDialogs()
   const [busy, setBusy] = useState(false)
   const reply = async () => {
-    const text = window.prompt(`Ответ бухгалтеру на «${kit.desk.question}»`)
+    const text = await prompt(`Ответ бухгалтеру на «${kit.desk.question}»`)
     if (!text || !text.trim()) return
     setBusy(true); setErr?.('')
     try { onDone?.((await api.post(`/master-deals/${code}/upd/${upd_no}/onec-reply`, { text: text.trim() }, auth())).data) }
@@ -150,16 +153,17 @@ export function DocButton({ label, off, offText = 'ждём 1С', onDoc, paper, 
  * по желанию; подпись бумаги ставит скан, а не кнопка. Правила и запреты — на сервере (`doc_sign.py`). */
 /** `stack` — кнопки столбиком в правой ячейке строки ДС/комплекта (владелец 18.11.2026: справа в конце, две — в две строки). */
 export function SignActions({ code, url, target, sign, onDone, setErr, small = false, stack = false }) {
+  const { prompt } = useDialogs()
   const [busy, setBusy] = useState(false)
   const next = sign?.next || []
   if (!next.length) return null
   const run = async (state) => {
     let reason = null
     if (state === 'отклонён') {
-      reason = window.prompt('Почему клиент отклонил документ? Причина нужна, чтобы его переделать.')
+      reason = await prompt('Почему клиент отклонил документ? Причина нужна, чтобы его переделать.')
       if (!reason || !reason.trim()) return
     } else if (state === 'выставлен' && sign?.channel === 'бумага') {
-      reason = window.prompt('Трек-номер отправки (можно оставить пустым)')
+      reason = await prompt('Трек-номер отправки (можно оставить пустым)')
       if (reason === null) return
     }
     setBusy(true); setErr?.('')

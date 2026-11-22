@@ -16,6 +16,7 @@ import { bucketCounts, cellsOpen, closedByDefault, filterRows, pageView } from '
 import RegistryRow, { RowDetail, GRID, TABLE_MIN_W } from '@/components/accounts/mpRegistry/RegistryRow'
 import { GroupHead, RegistryFooter, SortBlock, StageChips, Toggle } from '@/components/accounts/mpRegistry/controls'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { useDialogs } from '@/components/dialogs'
 
 // Реестр медиапланов (контур аккаунта), v2 — хендофф design_handoff_mp_registry (17.11.2026): расхлоп строки
 // с планом (как в карточке сделки), колонки «Услуга» и «Обновлён», замок и виза у ID, группы по месяцам, чипы этапов
@@ -38,6 +39,7 @@ const periodOptions = () => {
 }
 
 export default function MpRegistry() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -237,7 +239,7 @@ export default function MpRegistry() {
   }
 
   const del = async (it) => {
-    if (!confirm(`Удалить медиаплан «${it.title || it.id}» со всеми версиями?`)) return
+    if (!(await confirm(`Удалить медиаплан «${it.title || it.id}» со всеми версиями?`))) return
     try { await api.delete(`/sales/media-plans/${it.id}?whole_group=true`, auth()); load() } catch (e) { alert('Ошибка удаления') }
   }
   const exportXlsx = async (it) => {

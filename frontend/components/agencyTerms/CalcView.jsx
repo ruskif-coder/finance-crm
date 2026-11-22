@@ -14,6 +14,7 @@ import { calcPeriods, groupCalc, newRuleFor, periodLabel, skGap } from '@/lib/ag
 import { plural } from '@/lib/publisherRecon.mjs'
 import { CAPS, Card, FilterChip, fmtPct, KpiStrip, MiniSeg, modeTone, NUM, Scroll, Title } from './kit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const CCOLS = 'minmax(220px,1.6fr) minmax(220px,1.5fr) 80px 130px 190px 56px 120px'
 const OCOLS = '80px minmax(180px,1.6fr) 100px 120px minmax(170px,1fr)'
@@ -83,6 +84,7 @@ function CalcRow({ r, onOpenRule }) {
 }
 
 export default function CalcView({ canEdit, isAdmin, tick, onGoEmpty, onOpenRule }) {
+  const { confirm } = useDialogs()
   const { periods, initial } = calcPeriods(monthMsk())
   const [period, setPeriod] = useState(initial)
   const [mode, setMode] = useState('')
@@ -126,16 +128,16 @@ export default function CalcView({ canEdit, isAdmin, tick, onGoEmpty, onOpenRule
             {month.closed ? `месяц закрыт ${fmtDayOfMoment(month.closed_at)} — снимок` : 'месяц открыт — считается на лету'}</span>}
           {!!month && !month.closed && canEdit && (
             <button type="button" disabled={busy || noRule > 0} title={noRule ? `Сделок без условия СК: ${noRule} — задайте условия, потом закрывайте` : ''}
-              onClick={() => {
-                if (window.confirm(`Закрыть ${periodLabel(period)}? СК зафиксируется снимком, правка правил его больше не изменит.`)) {
+              onClick={async () => {
+                if (await confirm(`Закрыть ${periodLabel(period)}? СК зафиксируется снимком, правка правил его больше не изменит.`)) {
                   act(() => api.post(`/agency-terms/months/${period}/close`, {}, auth()), 'месяц закрыт')
                 }
               }}
               style={{ height: 34, padding: '0 15px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, fontFamily: 'inherit', whiteSpace: 'nowrap',
                 background: noRule ? 'var(--text-disabled)' : 'var(--accent)', color: 'var(--on-accent)', cursor: noRule ? 'not-allowed' : 'pointer' }}>Закрыть месяц</button>)}
           {!!month && month.closed && isAdmin && (
-            <button type="button" disabled={busy} onClick={() => {
-              if (window.confirm(`Открыть ${periodLabel(period)} заново? Снимок снимется, расчёт пойдёт по текущим правилам.`)) {
+            <button type="button" disabled={busy} onClick={async () => {
+              if (await confirm(`Открыть ${periodLabel(period)} заново? Снимок снимется, расчёт пойдёт по текущим правилам.`)) {
                 act(() => api.delete(`/agency-terms/months/${period}`, auth()), 'месяц открыт заново')
               }
             }} style={{ height: 34, padding: '0 14px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5,

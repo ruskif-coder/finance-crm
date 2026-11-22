@@ -7,6 +7,7 @@ import { inp, btn, th, td } from '../components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { canDelete } from '../lib/auth'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 
 const TYPE_META = {
@@ -20,6 +21,7 @@ const EMPTY = { name: '', group: '', type: 'expense', pl_line: '' }
 const NO_PL_LINE = 'не размечена'
 
 export default function Articles({ embedded = false } = {}) {
+  const { confirm } = useDialogs()
   const router = useRouter()
   const [items, setItems] = useState([])
   const [groups, setGroups] = useState([])
@@ -95,7 +97,7 @@ export default function Articles({ embedded = false } = {}) {
   }
 
   const remove = async (a) => {
-    if (!window.confirm(`Удалить статью «${a.name}»?`)) return
+    if (!(await confirm(`Удалить статью «${a.name}»?`))) return
     setError('')
     try {
       await api.delete(`/articles/${a.id}`, auth())

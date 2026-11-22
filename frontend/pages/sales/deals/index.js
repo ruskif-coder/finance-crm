@@ -25,6 +25,7 @@ import { downloadFile } from '@/lib/download'
 import { todayMsk } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -48,6 +49,7 @@ const COL_BY_KEY = DEAL_COL_BY_KEY
 const MIDDLE_KEYS = DEAL_MIDDLE_KEYS   // переставляемые/скрываемые
 
 export default function SalesRegistry2() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -301,7 +303,7 @@ export default function SalesRegistry2() {
     } catch (e) { setErr(detailText(e, 'Не удалось применить')) } finally { setSaving(false) }
   }
   const deleteBulk = async () => {
-    if (!window.confirm(`Удалить ${selDealIds.length} сделок вместе со всем, что к ним привязано у нас (медиапланы, РК, сборка, сверка, файлы)? Действие необратимо. Если что-то уже ушло наружу — DSP, ОРД, кабинет площадки, мастер-сделка — не удалится ничего.`)) return
+    if (!(await confirm(`Удалить ${selDealIds.length} сделок вместе со всем, что к ним привязано у нас (медиапланы, РК, сборка, сверка, файлы)? Действие необратимо. Если что-то уже ушло наружу — DSP, ОРД, кабинет площадки, мастер-сделка — не удалится ничего.`))) return
     setSaving(true); setErr('')
     try { const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds }, auth()); alert(r.data.message); setSelDeals({}); load(offset) }
     catch (e) { setErr(detailText(e, 'Не удалось удалить')) } finally { setSaving(false) }

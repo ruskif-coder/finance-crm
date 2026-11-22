@@ -20,6 +20,7 @@ import { overlayClose } from '@/lib/overlay'
 import { fmtDate as fmtCalendarDate, daysUntil } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { errText, detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -57,6 +58,7 @@ function contractExpiry(endDateText) {
 
 // ────────────────────────────────────────────────────────────────────────────
 export default function CounterpartyCard() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const { id } = router.query
   const isMobile = useIsMobile()

@@ -14,11 +14,13 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ValuePopover from '@/components/ValuePopover'
 import safeHref from '@/lib/safeHref'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', legal_name: '', website: '', inn: '' }
 
 export default function Advertisers() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const [items, setItems] = useState([])
@@ -55,7 +57,7 @@ export default function Advertisers() {
 
   // keepId остаётся, dropId вливается и исчезает
   const merge = async (keepId, dropId, keepName, dropName) => {
-    if (!window.confirm(`Влить «${dropName}» в «${keepName}»?\n\nБренды и сделки перейдут на «${keepName}», «${dropName}» будет удалён.`)) return
+    if (!(await confirm(`Влить «${dropName}» в «${keepName}»?\n\nБренды и сделки перейдут на «${keepName}», «${dropName}» будет удалён.`))) return
     setError('')
     try {
       const r = await api.post(`/sales/directories/producers/${keepId}/merge`, { source_id: dropId }, auth())
@@ -66,7 +68,7 @@ export default function Advertisers() {
   }
 
   const deleteBrand = async (brandId, name) => {
-    if (!window.confirm(`Удалить бренд «${name}»? Сделки, ссылавшиеся на него, потеряют бренд.`)) return
+    if (!(await confirm(`Удалить бренд «${name}»? Сделки, ссылавшиеся на него, потеряют бренд.`))) return
     setError('')
     try {
       const r = await api.delete(`/sales/directories/brands/${brandId}/hard`, auth())
@@ -116,9 +118,9 @@ export default function Advertisers() {
     const keepName = selAdv[keepId].name
     const dropIds = selAdvIds.filter(id => id !== keepId)
     const dropNames = dropIds.map(id => selAdv[id].name).join(', ')
-    if (!window.confirm(
+    if (!(await confirm(
       `Схлопнуть в «${keepName}»?\n\nВольются: ${dropNames}\n\n` +
-      `Их бренды и сделки перейдут на «${keepName}», сами записи удалятся.`)) return
+      `Их бренды и сделки перейдут на «${keepName}», сами записи удалятся.`))) return
     setError('')
     try {
       // бэкенд сливает по одному источнику; идём последовательно
@@ -139,7 +141,7 @@ export default function Advertisers() {
 
   const deleteSelectedProducers = async () => {
     if (!selAdvIds.length) return
-    if (!window.confirm(`Скрыть из справочника выбранных рекламодателей (${selAdvIds.length})?\nСделки не удаляются, записи деактивируются.`)) return
+    if (!(await confirm(`Скрыть из справочника выбранных рекламодателей (${selAdvIds.length})?\nСделки не удаляются, записи деактивируются.`))) return
     setError('')
     try {
       for (const id of selAdvIds) await api.delete(`/sales/directories/producers/${id}`, auth())
@@ -175,7 +177,7 @@ export default function Advertisers() {
     // оставляем бренд с самым коротким именем (обычно каноничное написание)
     const keepId = selIds.slice().sort((a, b) => sel[a].length - sel[b].length)[0]
     const keepName = sel[keepId]
-    if (!window.confirm(`Схлопнуть ${selIds.length} брендов в «${keepName}»?\n\nОстальные удаляются, их сделки переходят на «${keepName}».`)) return
+    if (!(await confirm(`Схлопнуть ${selIds.length} брендов в «${keepName}»?\n\nОстальные удаляются, их сделки переходят на «${keepName}».`))) return
     setError('')
     try {
       const r = await api.post('/sales/directories/brands/merge',

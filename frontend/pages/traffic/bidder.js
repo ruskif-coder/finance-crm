@@ -13,6 +13,7 @@ import api, { auth } from '@/lib/api'
 import { can, getPermissions } from '@/lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const ru = (d) => (d ? String(d).split('-').reverse().join('.') : '—')
 
@@ -112,12 +113,13 @@ const Op = ({ c }) => <div style={{ fontFamily: MONO, fontSize: 20, color: 'var(
 // Стоп ночного пересчёта (16.10.2026): сбор статистики DSP сломался — пересчёт по дырявому факту раскладывал
 // бы объём по нулям. Снимает стоп только человек, когда статистика снова верная.
 function HoldBanner({ hold, onResumed }) {
+  const { confirm } = useDialogs()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [mayEdit, setMayEdit] = useState(false)
   useEffect(() => { setMayEdit(can(getPermissions(), 'bidder', 'edit')) }, [])
   const resume = async () => {
-    if (!window.confirm('Возобновить ночной пересчёт долей? Он пойдёт в 02:00 UTC по факту, который будет к тому времени.')) return
+    if (!(await confirm('Возобновить ночной пересчёт долей? Он пойдёт в 02:00 UTC по факту, который будет к тому времени.'))) return
     setBusy(true); setErr('')
     try { await api.post('/bidder/resume', {}, auth()); onResumed() }
     catch (e) { setErr(detailText(e, 'Не удалось возобновить')) }

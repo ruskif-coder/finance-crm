@@ -39,6 +39,7 @@ import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
 import { fmtDayTime, fmtDayOfMoment } from '@/lib/dates'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -822,6 +823,7 @@ function NotifyCatalog({ mayEdit }) {
 }
 
 export default function CabinetsPage() {
+  const { confirm } = useDialogs()
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -910,11 +912,11 @@ export default function CabinetsPage() {
   const setFlag = (c, patch) => run(() => api.put(
     `/publishers/${c.publisher_id}/contacts/${c.contact_id}`, patch, auth()))
 
-  const deleteContact = (c) => {
+  const deleteContact = async (c) => {
     // Контакт — общая запись с карточкой паблишера, поэтому спрашиваем: удаление здесь
     // убирает человека и оттуда.
-    if (!window.confirm(
-      `Удалить контакт «${c.name}»? Он исчезнет и из карточки площадки ${c.publisher_name}.`)) return
+    if (!(await confirm(
+      `Удалить контакт «${c.name}»? Он исчезнет и из карточки площадки ${c.publisher_name}.`))) return
     return run(() => api.delete(
       `/publishers/${c.publisher_id}/contacts/${c.contact_id}`, auth()))
   }

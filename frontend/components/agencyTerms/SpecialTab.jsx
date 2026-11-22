@@ -13,6 +13,7 @@ import useLatest from '@/lib/useLatest'
 import { FEATURES, calcPeriods, defaultValidFrom, parsePct, periodLabel } from '@/lib/agencyTerms.mjs'
 import { CAPS, Card, Field, fmtPct, KpiStrip, MiniSeg, ModePill, NUM, Scroll, Title } from './kit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const PCOLS = 'minmax(130px,1fr) minmax(170px,1.3fr) minmax(150px,1.2fr) 140px 70px 190px 90px'
 const SCOLS = '120px minmax(140px,1fr) minmax(240px,2fr) 70px 120px 170px 40px'
@@ -231,6 +232,7 @@ function SpecialCalc({ names, tick }) {
 }
 
 export default function SpecialTab({ names, canEdit, tick, onOpenRule, reloadKey }) {
+  const { confirm } = useDialogs()
   const [items, setItems] = useState(null)
   const [partners, setPartners] = useState([])
   const [err, setErr] = useState('')
@@ -243,7 +245,7 @@ export default function SpecialTab({ names, canEdit, tick, onOpenRule, reloadKey
   }
   useEffect(() => { load() }, [tick, reloadKey])          // eslint-disable-line react-hooks/exhaustive-deps
   const removeItem = async (it) => {
-    if (!window.confirm(`Удалить спец. условие «${it.title}»?`)) return
+    if (!await confirm(`Удалить спец. условие «${it.title}»?`)) return
     try { await api.delete(`/agency-terms/special/${it.id}`, auth()); load() } catch (e) { setErr(detailText(e, 'Не удалось удалить')) }
   }
   return (

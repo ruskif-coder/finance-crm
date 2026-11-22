@@ -18,6 +18,7 @@ import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
 import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
 import { fmtDate as fmtCalendarDate, fileStamp } from '@/lib/dates'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -156,6 +157,7 @@ function SelectWithOther({ value, options, onChange, style, emptyLabel }) {
 }
 
 export default function Contracts() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const [perms, setPerms] = useState({})
@@ -333,7 +335,7 @@ export default function Contracts() {
   }
 
   const handleDelete = async (c) => {
-    if (!confirm(`Удалить договор № ${c.contract_number || '—'} (${c.counterparty_name || '—'})?`)) return
+    if (!(await confirm(`Удалить договор № ${c.contract_number || '—'} (${c.counterparty_name || '—'})?`))) return
     try { await api.delete(`/contracts/${c.id}`, auth()); loadAll() }
     catch (e) { alert(detailText(e, 'Ошибка при удалении')) }
   }
@@ -387,7 +389,7 @@ export default function Contracts() {
   const handleDownload = (id) => downloadFile(`/contracts/${id}/download`, null, () => alert('Не удалось скачать файл'))
 
   const handleDeleteDoc = async (id) => {
-    if (!confirm('Удалить прикреплённый документ?')) return
+    if (!(await confirm('Удалить прикреплённый документ?'))) return
     try { await api.delete(`/contracts/${id}/document`, auth()); loadAll() }
     catch (err) { alert(detailText(err, 'Ошибка при удалении документа')) }
   }
@@ -400,7 +402,7 @@ export default function Contracts() {
     if (bulkDays !== '') fields.payment_term_days = parseInt(bulkDays, 10)
     if (bulkCondition) fields.payment_term_condition = bulkCondition
     if (!Object.keys(fields).length) { alert('Выберите хотя бы одно поле'); return }
-    if (!confirm(`Изменить ${selectedIds.length} договоров?`)) return
+    if (!(await confirm(`Изменить ${selectedIds.length} договоров?`))) return
     setBulkSaving(true)
     try {
       await api.patch('/contracts/bulk', { ids: selectedIds, ...fields }, auth())
@@ -411,7 +413,7 @@ export default function Contracts() {
   }
 
   const handleBulkDelete = async () => {
-    if (!confirm(`Удалить ${selectedIds.length} договоров? Необратимо.`)) return
+    if (!(await confirm(`Удалить ${selectedIds.length} договоров? Необратимо.`))) return
     setBulkSaving(true)
     try {
       await api.delete('/contracts/bulk', { data: { ids: selectedIds }, ...auth() })

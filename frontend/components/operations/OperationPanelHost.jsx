@@ -15,6 +15,7 @@ import DsViewer from '@/components/onecDesk/DsViewer'
 import { detailText } from '@/lib/loadError'
 import { can, getPermissions } from '@/lib/auth'
 import OperationIssues from './OperationIssues'
+import { useDialogs } from '@/components/dialogs'
 
 const LINKS = {
   package: code => `/accounts/master/${code}`,
@@ -34,6 +35,7 @@ export function toPanelOp(c) {
 }
 
 export default function OperationPanelHost({ opId, hasPrev, hasNext, onPrev, onNext, onClose, onOpen, onRefreshRegistry, onIssuesChanged }) {
+  const { alert } = useDialogs()
   const router = useRouter()
   const [op, setOp] = useState(null)
   const [error, setError] = useState(null)

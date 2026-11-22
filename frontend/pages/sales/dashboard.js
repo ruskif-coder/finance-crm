@@ -28,6 +28,7 @@ import { todayMsk } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
 import useLatest from '@/lib/useLatest'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -70,6 +71,7 @@ const quarterMonths = (qs) => {
   return { from: p(m0), to: p(m0 + 2) }
 }
 export default function SalesDashboard2() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const [data, setData] = useState(null)
   const [expandedId, setExpandedId] = useState(null) // раскрытая строка-детализация сделки

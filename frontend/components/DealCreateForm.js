@@ -7,6 +7,7 @@ import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
 import { GenTitleBtn, Z } from './salesTableKit'
 import { COLS, COL_LIGHT, COL_SHORT, GROUP } from '@/lib/salesStatus'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -74,6 +75,7 @@ const IcoBtn = ({ title, onClick, active, children }) => (
 /* `initial` — признаки, с которыми форму открывают из ячейки «Статусов продаж» (владелец 23.10.2026):
    рекламодатель, бренд, период и светофор вероятности. С ним в форме появляется выбор вероятности. */
 export default function DealCreateForm({ open, onClose, canPickRep, onCreated, initial }) {
+  const { alert } = useDialogs()
   const [opts, setOpts] = useState({})
   const [services, setServices] = useState([])
   const [pipelines, setPipelines] = useState([])

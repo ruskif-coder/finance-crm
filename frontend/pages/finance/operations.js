@@ -26,6 +26,7 @@ import { downloadFile } from '@/lib/download'
 import useLatest from '@/lib/useLatest'
 import { shortAnnexNumber } from '@/lib/annexNumber'
 import CreditLines from '@/components/settings/CreditLines'   // третья вкладка «Кредиты» (владелец 10.11.2026)
+import { useDialogs } from '@/components/dialogs'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -332,6 +333,7 @@ function DzMark({ status, due }) {
 }
 
 export default function Operations2() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
      адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
@@ -625,7 +627,7 @@ export default function Operations2() {
     } finally { setFilesBusy(false) }
   }
   const removeFromExisting = async (id, fl) => {
-    if (!confirm(`Убрать файл «${fl.original_name}»?`)) return
+    if (!(await confirm(`Убрать файл «${fl.original_name}»?`))) return
     try { await api(tok()).delete(`/operations/${id}/files/${fl.id}`); await loadOpFiles(id) }
     catch (e) { alert(detailText(e, 'Не удалось удалить файл')) }
   }
@@ -656,7 +658,7 @@ export default function Operations2() {
     }
   }
   const mobileDelete = (id) => deleteOne(id)
-  const delOp = (id) => { if (!window.confirm('Удалить операцию?')) return; deleteOne(id) }
+  const delOp = async (id) => { if (!(await confirm('Удалить операцию?'))) return; deleteOne(id) }
 
   const selIds = Object.keys(sel).filter(k => sel[k]).map(Number)
   const selRows = rows.filter(o => sel[o.id])
@@ -686,7 +688,7 @@ export default function Operations2() {
   // тот же запрос с ним (решение владельца 23.09.2026).
   const bulkDelete = (ids, password) => api(tok()).delete('/operations/bulk', { data: { ids, password } })
   const delBulk = async () => {
-    if (!window.confirm(`Удалить ${selIds.length} операций?`)) return
+    if (!(await confirm(`Удалить ${selIds.length} операций?`))) return
     setSaving(true)
     try { await bulkDelete(selIds); setSel({}); loadOps() }
     catch (e) {

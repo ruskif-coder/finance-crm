@@ -9,8 +9,10 @@ import { plural } from '@/lib/publisherRecon.mjs'
 import { todayMsk } from '@/lib/dates'
 import { Field, Pick } from './kit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 export default function RuleModal({ rule, opts, canEdit, onClose, onSaved }) {
+  const { confirm } = useDialogs()
   const [r, setR] = useState({ valid_from: defaultValidFrom(todayMsk()), valid_to: null, note: '', ...rule,
     percent: rule.percent != null ? String(rule.percent).replace('.', ',') : '' })
   const [err, setErr] = useState('')
@@ -34,7 +36,7 @@ export default function RuleModal({ rule, opts, canEdit, onClose, onSaved }) {
     } catch (e) { setErr(detailText(e, 'Не удалось сохранить')) } finally { setBusy(false) }
   }
   const remove = async () => {
-    if (!window.confirm('Удалить правило? Если оно уже в закрытом месяце, сервер откажет — тогда закройте его датой «по».')) return
+    if (!await confirm('Удалить правило? Если оно уже в закрытом месяце, сервер откажет — тогда закройте его датой «по».')) return
     setBusy(true); setErr('')
     try { await api.delete(`${base}/${r.id}`, auth()); onSaved(null) } catch (e) { setErr(detailText(e, 'Не удалось удалить')) } finally { setBusy(false) }
   }

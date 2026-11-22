@@ -9,6 +9,7 @@ import DiadocImport from '@/components/DiadocImport'
 import { card, btn, inp, CAP, MONO, UI } from '@/components/salesTableKit'
 import { fmtFull, fmtDateShort, grpDash as fmt } from '@/lib/salesFormat'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -95,6 +96,7 @@ function Section({ title, hint, count, open, onToggle, children }) {
 }
 
 export default function Import() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const [openSec, setOpenSec] = useState({ ops: false, diadoc: false })
   const toggle = (k) => setOpenSec(s => ({ ...s, [k]: !s[k] }))

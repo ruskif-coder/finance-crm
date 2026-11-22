@@ -8,6 +8,7 @@ import axios from 'axios'
 import { PageLoader } from '../components/LogoLoader'
 import MobileStub from '../components/mobile/MobileStub'
 import { applyTheme, readTheme } from '../lib/theme'
+import { DialogsProvider } from '../components/dialogs'
 
 // Локальный шрифт вместо next/font/google: раньше каждая сборка (docker compose
 // up -d --build) скачивала Onest с fonts.googleapis.com/fonts.gstatic.com, и при
@@ -109,7 +110,7 @@ export default function App({ Component, pageProps }) {
       </Head>
       <main className={onest.className}>
         {(!ready || nav) && <PageLoader />}
-        {ready ? <Component {...pageProps} /> : null}
+        {ready ? <DialogsProvider><Component {...pageProps} /></DialogsProvider> : null}
         {ready && <MobileStub />}
       </main>
     </>

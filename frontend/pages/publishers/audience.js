@@ -13,6 +13,7 @@ import { ACTIVE, dataOf, gapText, gapTone, surfacesOf } from '@/components/publi
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { shortNum, pct } from '@/lib/salesFormat'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // Паблишеры → «Аудитория» (владелец 09.10.2026, визуал — макет Claude Design): заявленное
 // площадкой (MAU/DAU/соцдем из медиакитов, с источником и датой) рядом с тем, что намерили мы
@@ -40,6 +41,7 @@ const Seg = ({ options, value, onPick, mono }) => (
 )
 
 export default function PublisherAudience() {
+  const { confirm } = useDialogs()
   const router = useRouter()
   const [ready, setReady] = useState(false)
   const [canEdit, setCanEdit] = useState(false)
@@ -117,7 +119,7 @@ export default function PublisherAudience() {
     setModal(false); load(); loadDetail(selId)
   }
   const delMeasure = async (h) => {
-    if (!window.confirm(`Удалить замер ${h.source} от ${h.measured_at}?`)) return
+    if (!(await confirm(`Удалить замер ${h.source} от ${h.measured_at}?`))) return
     await api.delete(`/publisher-audience/measures/${h.id}`, auth())
     load(); loadDetail(selId)
   }

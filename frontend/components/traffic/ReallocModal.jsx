@@ -12,6 +12,7 @@ import { ReallocActions, ReallocKpis } from './realloc/ReallocTop'
 import { ReallocFilters, ReallocTable } from './realloc/ReallocTable'
 import { ReallocChart, ReallocHistory } from './realloc/ReallocChart'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const ghost = { display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 15px', borderRadius: 10, background: 'var(--bg-card)',
   border: '1px solid var(--border-card)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'inherit' }
@@ -19,6 +20,7 @@ const nf = (v) => grp(Math.round(v || 0))
 const ddmm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '')
 
 export default function ReallocModal({ row, auth, canEdit = true, onClose, onDone, onBack }) {
+  const { confirm } = useDialogs()
   const [v, setV] = useState(null)
   const [edits, setEdits] = useState({})
   const [filter, setFilter] = useState('all')
@@ -43,7 +45,7 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
 
   // Действие, которое пишет сразу (буст, снять, сбросить записанное): подтверждение → ручка → пересчёт окна.
   const act = async (ask, fn, msg) => {
-    if (!window.confirm(ask)) return
+    if (!await confirm(ask)) return
     setBusy(true); setErr('')
     try { await fn(); await load(); setEdits({}); setDone(msg); onDone && onDone() }
     // часть действия могла пройти («Снять» — по площадке за запрос): экран перечитываем и при сбое (ревью 27.10.2026)

@@ -12,6 +12,7 @@ import { downloadFile } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { CAPS, Dot, MonthSwitch, StatusPill, Toast, actBtn, useToast } from './reconKit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const COLS = 'minmax(150px,0.9fr) minmax(100px,0.6fr) minmax(110px,0.6fr) minmax(110px,0.6fr) minmax(90px,0.5fr) minmax(104px,0.6fr) minmax(168px,0.8fr) minmax(76px,0.4fr) minmax(140px,0.8fr) 112px'
 const TILES = [
@@ -29,6 +30,7 @@ const ACT = {
 }
 
 export default function ReconBoard({ month, setMonth, current, canEdit, onAnswers, openPub, setOpenPub }) {
+  const { confirm } = useDialogs()
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [filter, setFilter] = useState(null)
@@ -70,7 +72,7 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
   const sendAll = async () => {
     if (!c.ready || busy) return
     // необратимо и уходит площадкам в кабинет и почту — спрашиваем, сколько и за какой месяц (ревью 27.10.2026)
-    if (!window.confirm(`Отправить сверку за ${monthLabel(month)} всем готовым площадкам — ${c.ready}? Карточки появятся у них в кабинете.`)) return
+    if (!await confirm(`Отправить сверку за ${monthLabel(month)} всем готовым площадкам — ${c.ready}? Карточки появятся у них в кабинете.`)) return
     setBusy(true)
     try {
       const { data: d } = await api.post('/publisher-recon/send-all', { period: month }, auth())

@@ -13,6 +13,7 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Редактор/генератор медиаплана. id === 'new' — новый; число — правка сохранённого.
@@ -22,6 +23,7 @@ const num = (v) => (v === '' || v == null ? null : +v)
 const MODEL_OF = (cf) => { const m = String(cf || '').toUpperCase(); return m === 'CPM' ? 'CPM' : m === 'CPC' ? 'CPC' : 'Fix' }
 
 export default function MpEditor() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const { id } = router.query
@@ -174,9 +176,9 @@ export default function MpEditor() {
   // здесь только подтверждение и показ результата.
   const onCreateDeal = async () => {
     if (!savedId) return
-    if (!window.confirm('Создать сделку по этому медиаплану?\n\n'
+    if (!(await confirm('Создать сделку по этому медиаплану?\n\n'
       + 'Реквизиты, сумма и период возьмутся из плана, название соберётся по шаблону.\n'
-      + 'Сделка сразу встанет на стадию «МП Отправлено» — план к ней уже прикреплён.')) return
+      + 'Сделка сразу встанет на стадию «МП Отправлено» — план к ней уже прикреплён.'))) return
     try {
       const r = await api.post(`/sales/media-plans/${savedId}/create-deal`, {}, auth())
       await reloadPlan(); loadDealBrief(); loadVersions()

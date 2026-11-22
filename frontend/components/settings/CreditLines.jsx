@@ -14,6 +14,7 @@ import { MONO, card, inp, sel, primaryBtn, btn, PickValue } from '../salesTableK
 import ValuePopover from '../ValuePopover'
 import { grp0 } from '../../lib/salesFormat'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const EMPTY = { bank: '', counterparty_id: null, limit_amount: '', used_amount: '0', as_of: '', note: '', is_active: true }
 const LABEL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)' }
@@ -62,6 +63,7 @@ function Row({ banks, form, setForm, onSave, busy, canEdit, isNew, line, cps, on
 }
 
 export default function CreditLines() {
+  const { alert } = useDialogs()
   const [banks, setBanks] = useState([])
   const [lines, setLines] = useState([])
   const [forms, setForms] = useState({})

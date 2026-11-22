@@ -9,6 +9,7 @@ import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { flagsForLevel } from '../../lib/roleLevels.mjs'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // ── Роли и права доступа — раздел «Настройки» ──
 // Матрица «раздел × роль»: уровень доступа — плашка, клик по тексту переключает на следующий,
@@ -108,6 +109,8 @@ export default function SettingsRoles() {
   const [toDelete, setToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const dirtyRef = useRef(false)
+  const allowNavRef = useRef(false)
+  const { confirm } = useDialogs()
 
   const changes = useMemo(() => {
     const m = {}
@@ -125,10 +128,13 @@ export default function SettingsRoles() {
     if (!isAdmin()) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     loadRoles()
     const beforeUnload = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = '' } }
-    const beforeRoute = () => {
-      if (dirtyRef.current && !window.confirm('Есть несохранённые изменения ролей. Уйти без сохранения?')) {
-        router.events.emit('routeChangeError'); throw 'роли: уход отменён'
-      }
+    const beforeRoute = (url) => {
+      if (!dirtyRef.current || allowNavRef.current) return
+      router.events.emit('routeChangeError')
+      confirm('Есть несохранённые изменения ролей. Уйти без сохранения?').then(ok => {
+        if (ok) { allowNavRef.current = true; router.push(url) }
+      })
+      throw 'роли: уход отменён'
     }
     window.addEventListener('beforeunload', beforeUnload)
     router.events.on('routeChangeStart', beforeRoute)

@@ -14,8 +14,9 @@ export default function ProbDot({ d, canEdit, onPick }) {
   )
 }
 
-/** Сохранить светофор: сразу на экране, после ответа — цвет, посчитанный сервером; отказ (сделка в работе) — откат и текст. */
-export async function saveProbability(id, color, deals, setDeals) {
+/** Сохранить светофор: сразу на экране, после ответа — цвет, посчитанный сервером; отказ (сделка в работе) — откат и текст.
+ * `notify` — модальный alert из useDialogs() (передают вызывающие из компонентов); по умолчанию — нативный alert. */
+export async function saveProbability(id, color, deals, setDeals, notify = alert) {
   const prev = deals.find(x => x.id === id)
   setDeals(ps => ps.map(x => (x.id === id ? { ...x, probability_color: color, probability_auto: color || x.probability_auto } : x)))
   try {
@@ -23,6 +24,6 @@ export async function saveProbability(id, color, deals, setDeals) {
     setDeals(ps => ps.map(x => (x.id === id ? { ...x, probability_auto: r.data.probability_auto } : x)))
   } catch (e) {
     setDeals(ps => ps.map(x => (x.id === id ? { ...x, probability_color: prev?.probability_color ?? null, probability_auto: prev?.probability_auto } : x)))
-    alert(detailText(e, 'Не удалось сохранить вероятность'))
+    notify(detailText(e, 'Не удалось сохранить вероятность'))
   }
 }

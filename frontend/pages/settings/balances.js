@@ -9,6 +9,7 @@ import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // ── Остатки по банкам — отдельная страница раздела «Настройки» ──
 // Стартовый остаток по счёту + обороты (из /settings/bank-balances), привязка юрлица
@@ -27,6 +28,7 @@ const REQ_FIELDS = [
 ]
 
 export default function SettingsBalances() {
+  const { alert } = useDialogs()
   const router = useRouter()
 
   // Остатки по банкам

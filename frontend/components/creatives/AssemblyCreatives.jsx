@@ -28,6 +28,7 @@ import { CreativePreview } from './CreativePreview'
 import { fmtDateTime, fmtDayOfMoment } from '@/lib/dates'
 import { aimTone, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -1414,6 +1415,7 @@ const preparedNote = (list) => {
 }
 
 function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan, vol, groups = [] }) {
+  const { confirm } = useDialogs()
   // «Удалить креатив» — право «удаление» (отдельно от правки с 07.10.2026); вложения и отвязки остаются правкой
   const [mayDeleteSet, setMayDeleteSet] = useState(false)
   useEffect(() => { setMayDeleteSet(canDelete(getPermissions(), 'creatives')) }, [])
@@ -1471,7 +1473,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     setBusy(false)
   }
   const dropLetter = async () => {
-    if (!window.confirm('Снять письмо о правах?')) return
+    if (!await confirm('Снять письмо о правах?')) return
     setBusy(true); setErr('')
     try {
       await api.delete(`/launch-prep/set/${set.id}/rights-letter`, auth())
@@ -1907,6 +1909,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
 
 /* ── экран ──────────────────────────────────────────────────────────────── */
 export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin = false, onChanged }) {
+  const { confirm } = useDialogs()
   const copying = useRef(false)      // двойной щелчок по «Скопировать креатив» делал две копии (ревью 27.10.2026)
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
@@ -2017,7 +2020,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     canWithdraw: !!data?.can_withdraw,
     withdraw: setWithdrawFor,
     reopen: async (rec) => {
-      if (!window.confirm(`Вернуть «${rec.name}» в согласование? Следующий креатив снова уйдёт этой площадке.`)) return
+      if (!await confirm(`Вернуть «${rec.name}» в согласование? Следующий креатив снова уйдёт этой площадке.`)) return
       setErr('')
       try {
         await api.post(`/launch-prep/target/${rec.target_id}/reopen`, {}, auth())
@@ -2025,7 +2028,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       } catch (e) { setErr(detailText(e, 'Не удалось вернуть площадку')) }
     },
     resend: async (rec) => {
-      if (!window.confirm(`Повторно отправить креатив площадке «${rec.name}»? Отказ снимется, прежний ответ уйдёт в журнал действий.`)) return
+      if (!await confirm(`Повторно отправить креатив площадке «${rec.name}»? Отказ снимется, прежний ответ уйдёт в журнал действий.`)) return
       setErr('')
       try {
         await api.post(`/launch-prep/pair/${rec.pair_id}/resend`, {}, auth())

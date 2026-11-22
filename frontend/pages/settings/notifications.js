@@ -30,9 +30,11 @@ import { isAdmin as checkAdmin } from '../../lib/auth'
 import { fmtDateTime } from '@/lib/dates'
 import { TONE, toneOf } from '@/lib/tone'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { useDialogs } from '@/components/dialogs'
 
 
 export default function NotificationSettings() {
+  const { prompt } = useDialogs()
   const [isAdmin, setIsAdmin] = useState(false)
   const [mode, setMode] = useState('me')            // 'profiles' | 'me'
   const [catalog, setCatalog] = useState(null)
@@ -149,7 +151,7 @@ export default function NotificationSettings() {
   }
 
   async function createProfile() {
-    const label = window.prompt('Название нового профиля')
+    const label = await prompt('Название нового профиля')
     if (!label) return
     try {
       // Копия текущего профиля — самый частый способ завести новый.

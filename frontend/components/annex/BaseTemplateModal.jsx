@@ -27,12 +27,14 @@ import ContractTemplatesBar from '@/components/annex/ContractTemplatesBar'
 import ContractTemplateCards from '@/components/annex/ContractTemplateCards'
 import ContractAnnexList from '@/components/annex/ContractAnnexList'
 import { Segmented } from '@/components/salesTableKit'
+import { useDialogs } from '@/components/dialogs'
 
 // Вид документа по договору (владелец 31.10.2026): «при пересохранении — выбор ДС/Приложение, если ещё не выбрано».
 // Подписи — как на наших экранах; в самом документе слово печатается полностью.
 const WORDS = [{ value: 'приложение', label: 'ПР' }, { value: 'дс', label: 'ДС' }]
 
 export default function BaseTemplateModal({ open, onClose, contract }) {
+  const { confirm } = useDialogs()
   const [step, setStep] = useState('pick')
   const [baseId, setBaseId] = useState(null)
   const [edit, setEdit] = useState(false)
@@ -71,15 +73,15 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
   const put = (next) => setDraft(next)
   const patch = (id, p) => put(blocks.map(b => (b.id === id ? { ...b, ...p } : b)))
   const reset = () => { setEdit(false); setDraft(null); setHist(false); setHsel(null); setAdopt(false); D.setErr(null) }
-  const sure = (text) => !draft || window.confirm(text)
+  const sure = async (text) => !draft || await confirm(text)
 
-  const close = () => {
-    if (!sure('Есть несохранённые правки шаблона. Закрыть без сохранения?')) return
+  const close = async () => {
+    if (!await sure('Есть несохранённые правки шаблона. Закрыть без сохранения?')) return
     reset(); setStep('pick'); setBaseId(null); onClose()
   }
   const pickBase = (id) => { reset(); setBaseId(id); setStep('tpl'); setSel('p1') }
-  const back = () => {
-    if (!sure('Есть несохранённые правки шаблона. Выйти без сохранения?')) return
+  const back = async () => {
+    if (!await sure('Есть несохранённые правки шаблона. Выйти без сохранения?')) return
     reset()
     if (contract) { setView('cards'); return }
     setStep('pick'); setBaseId(null)
@@ -105,7 +107,7 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
     if (done) reset()
   }
   const rollback = async (row) => {
-    if (!window.confirm(`Вернуть шаблон к версии v${row.v}? Появится новая версия с её текстом, история сохранится.`)) return
+    if (!await confirm(`Вернуть шаблон к версии v${row.v}? Появится новая версия с её текстом, история сохранится.`)) return
     if (await D.restore(detail.id, row.v)) { setHist(false); setHsel(null) }
   }
   const adoptBase = async () => {
@@ -114,7 +116,7 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
       setDraft(base.blocks.map(b => ({ ...b }))); setAdopt(true); setEdit(true); setSel('p1')
     } catch (_) { D.setErr({ message: 'Не удалось загрузить базовый шаблон', issues: [] }) }
   }
-  const pickTpl = (id) => { if (id !== (detail && detail.id) && sure('Есть несохранённые правки шаблона. Перейти без сохранения?')) { reset(); setTplId(id) } }
+  const pickTpl = async (id) => { if (id !== (detail && detail.id) && await sure('Есть несохранённые правки шаблона. Перейти без сохранения?')) { reset(); setTplId(id) } }
   const createTpl = async (title, sourceId, main) => {
     setBusy(true)
     const id = await D.fork({ title, sourceId, main, annexId: contract.annexId })

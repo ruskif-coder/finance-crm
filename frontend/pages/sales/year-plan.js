@@ -11,6 +11,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { hasUnsaved } from '@/lib/unsaved'
 import { nowTime, todayMsk } from '@/lib/dates'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Годовой план продаж: план по рекламодателям/брендам × 12 месяцев, персональный по сейлзам.
@@ -61,6 +62,7 @@ const groupsToLines = (groups) => {
 }
 
 export default function YearPlanPage() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const [perms, setPerms] = useState(null)
@@ -217,7 +219,7 @@ export default function YearPlanPage() {
       alert(why ? `Ошибка сохранения: ${why}` : `Не удалось сохранить (${e.response?.status || e.message || 'нет ответа от сервера'})`)
     }
     finally { setSaving(false) }
-  }, [year, view, advertisers, scopeRepId, canWriteOwn, loadedFor])
+  }, [year, view, advertisers, scopeRepId, canWriteOwn, loadedFor, alert])
 
   const onAddTargeting = useCallback(async (group, value) => {
     try {
@@ -275,7 +277,7 @@ export default function YearPlanPage() {
       try { msg = JSON.parse(await e.response?.data?.text()).detail } catch {}
       alert(msg || 'Не удалось выгрузить годовой медиаплан')
     } finally { setExporting(false) }
-  }, [year, view])
+  }, [year, view, alert])
 
   const onVerifyPassword = useCallback(async (password) => {
     try { await api.post('/auth/verify-password', { password }, auth()); return true }
@@ -291,7 +293,7 @@ export default function YearPlanPage() {
       return r.data.matched || []
     } catch (e) { alert(detailText(e, 'Ошибка сверки')); return null }
     finally { setMatching(false) }
-  }, [year, scopeRepId])
+  }, [year, scopeRepId, alert])
 
   if (isMobile) return (<><Navbar /><NotOnMobile title="Годовой план" backHref="/sales" backLabel="К продажам" /></>)
 

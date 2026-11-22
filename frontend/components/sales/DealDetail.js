@@ -14,6 +14,7 @@ import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { CampaignBrief } from '@/components/campaign/CampaignSummary'
+import { useDialogs } from '@/components/dialogs'
 
 // ── Раскрытая сводка сделки (раскрытие строки реестра /sales и дашборда) ──
 // Четыре колонки: Данные сделки → Медиаплан и документы → История → Оплаты.
@@ -82,6 +83,7 @@ function DocLine({ title, meta, empty, onAdd, addLabel = '+ Добавить', r
 // кампания на две колонки, под ней история и оплаты. Блоки те же — меняется только
 // раскладка, поэтому вторая копия сводки не заводится.
 export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onOpenBrief, onGenerate, onChanged, layout = 'registry' }) {
+  const { alert, confirm } = useDialogs()
   const queue = layout === 'queue'
   const d = deal
   const router = useRouter()
@@ -218,7 +220,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
                   onClick={() => downloadBlob(`/sales/deals/${d.id}/files/${kind}/download`, f.filename)}><DownloadIcon /></button>}
                 {canEdit && <button style={addBtn} onClick={() => pickAndUploadDoc(d.id, kind, onChanged, setDocBusy)}>{f ? 'Заменить' : '+ Добавить'}</button>}
                 {canEdit && f && <button style={{ ...addBtn, color: 'var(--danger)' }} title="Удалить"
-                  onClick={() => deleteDoc(d.id, kind, onChanged, setDocBusy)}>×</button>}
+                  onClick={() => deleteDoc(d.id, kind, onChanged, setDocBusy, confirm)}>×</button>}
               </span>
             } />
         )

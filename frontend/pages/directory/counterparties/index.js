@@ -15,6 +15,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -41,6 +42,7 @@ const COLS = [
 const RIGHT = new Set(['term', 'paytime', 'op', 'receivable', 'payable', 'income', 'expense', 'diff'])
 
 export default function Counterparties() {
+  const { alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const [perms, setPerms] = useState({})

@@ -6,8 +6,10 @@ import api, { auth } from '../lib/api'
 import { canDelete } from '../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 export default function Pipelines({ embedded = false } = {}) {
+  const { confirm, prompt } = useDialogs()
   const router = useRouter()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -103,7 +105,7 @@ export default function Pipelines({ embedded = false } = {}) {
 
   const rename = async (p) => {
     setError('')
-    const next = window.prompt(`Новое название воронки «${p.name}»:`, p.name)
+    const next = await prompt(`Новое название воронки «${p.name}»:`, { initial: p.name })
     if (next === null) return
     const name = next.trim()
     if (!name || name === p.name) return
@@ -118,9 +120,9 @@ export default function Pipelines({ embedded = false } = {}) {
     setError('')
     // Удаление воронки уносит все её сделки. Подтверждение обязательно
     // и показывает число сделок, чтобы удаление не было случайным.
-    if (!window.confirm(
+    if (!(await confirm(
       `Удалить воронку «${p.name}» и все её сделки (${p.deals} шт.)?\n\n` +
-      `Это необратимо. Данные и их сырьё будут удалены физически.`)) return
+      `Это необратимо. Данные и их сырьё будут удалены физически.`))) return
     try {
       const r = await api.delete(`/sales/directories/pipelines/${p.id}`, auth())
       flash(r.data.message)
@@ -139,7 +141,7 @@ export default function Pipelines({ embedded = false } = {}) {
   const td = { padding: '10px 12px', fontSize: 13.5, borderBottom: '1px solid var(--border-row)' }
 
   const setFlow = async (p, value) => {
-    if (!window.confirm(`Цикл воронки «${p.name}»: ${value}? Он определяет, кто ведёт сделки её услуг — трафик или аккаунт.`)) return
+    if (!(await confirm(`Цикл воронки «${p.name}»: ${value}? Он определяет, кто ведёт сделки её услуг — трафик или аккаунт.`))) return
     try {
       await api.put(`/sales/directories/pipelines/${p.id}/flow`, { closing_flow: value }, auth())
       setItems(xs => xs.map(x => x.id === p.id ? { ...x, closing_flow: value } : x))

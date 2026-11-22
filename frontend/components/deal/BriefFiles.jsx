@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import api, { auth } from '@/lib/http'
 import { downloadFile } from '@/lib/download'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 /* Файлы брифа сделки: один компонент на все экраны, где бриф виден.
  *
@@ -21,6 +22,7 @@ import { detailText } from '@/lib/loadError'
 export default function BriefFiles({ base, readOnly = false, disabled = false,
                                      disabledHint = 'Файл прикрепится после привязки сделки',
                                      compact = false }) {
+  const { confirm } = useDialogs()
   const [items, setItems] = useState([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -52,7 +54,7 @@ export default function BriefFiles({ base, readOnly = false, disabled = false,
   }
 
   const remove = async (f) => {
-    if (!window.confirm(`Снять файл «${f.name}»?`)) return
+    if (!await confirm(`Снять файл «${f.name}»?`)) return
     setErr('')
     try { await api.delete(`${base}/${f.id}`, auth()); await load() }
     catch (e) { setErr(detailText(e, 'Не удалось снять файл')) }

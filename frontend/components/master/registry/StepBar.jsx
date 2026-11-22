@@ -9,6 +9,7 @@ import { downloadFile } from '@/lib/download'
 import { stepBar } from '@/lib/masterStepBar'
 import { MONO } from '@/components/salesTableKit'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 const TONE = {
   act: ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)'],
@@ -28,6 +29,7 @@ const Svg = ({ d, w = 2 }) => (
 )
 
 export default function StepBar({ m, canEdit, onDone, setErr }) {
+  const { prompt } = useDialogs()
   const [busy, setBusy] = useState(false)
   const b = stepBar(m, canEdit)
   const [bg, border, fg] = TONE[b.tone] || TONE.wait
@@ -35,7 +37,7 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
     const { btn } = b
     let body = btn.body
     if (btn.track) {
-      const track = window.prompt('Трек-номер отправки (можно оставить пустым)')
+      const track = await prompt('Трек-номер отправки (можно оставить пустым)')
       if (track === null) return
       body = { ...body, reason: track.trim() || null }
     }

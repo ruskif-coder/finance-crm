@@ -37,6 +37,7 @@ import OrdReports from '../../components/ord/OrdReports'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { Cube } from '../../components/LogoLoader'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 // Согласование числительного: «удалить 2 договоров» читается как машинный текст,
 // а подтверждение сноса — ровно то место, где человек должен читать внимательно.
@@ -87,6 +88,7 @@ const KIND_LABEL = {
 }
 
 export default function OrdDirectory() {
+  const { confirm, alert } = useDialogs()
   const [tab, setTab] = useState('initial')
   const [rows, setRows] = useState([])
   const [q, setQ] = useState('')
@@ -137,10 +139,10 @@ export default function OrdDirectory() {
      не действие, а сверка не с тем кабинетом. */
   const syncOrd = async () => {
     const env = (conn && conn.env) || '—'
-    if (!window.confirm(
+    if (!(await confirm(
       `Сверить зеркало с кабинетом ОРД, контур «${env}»?\n\n` +
       'Читаются юрлица и договоры, в ОРД ничего не отправляется. ' +
-      'Записи, размеченные другим контуром, будут перепроверены.')) return
+      'Записи, размеченные другим контуром, будут перепроверены.'))) return
     setErr(''); setReport(null)
     try {
       setSyncing('юрлица')
@@ -257,10 +259,10 @@ export default function OrdDirectory() {
   const dropPicked = async (withLinks = false) => {
     const ids = [...picked]
     if (!ids.length) return
-    if (!window.confirm(
+    if (!(await confirm(
       `Удалить ${ids.length} изнач. ${plural(ids.length)} из нашего зеркала?\n\n` +
       'В ОРД ничего не удаляется — строка вернётся следующим синком, если она есть ' +
-      'в кабинете.' + (withLinks ? '\n\nВМЕСТЕ СО СВЯЗЯМИ с нашими доходными договорами.' : ''))) return
+      'в кабинете.' + (withLinks ? '\n\nВМЕСТЕ СО СВЯЗЯМИ с нашими доходными договорами.' : '')))) return
     setBusy(true); setErr(''); setDropMsg(null)
     try {
       const r = await api.post('/ord/initial/delete', { ids, with_links: withLinks }, auth())
@@ -551,7 +553,7 @@ export default function OrdDirectory() {
                         {mayEdit ? (
                           <>
                             <button style={{ ...btn(false), padding: '4px 10px', fontSize: 12 }}
-                              onClick={() => { if (window.confirm('Вы проверили кабинет ОРД и записи там НЕТ? Повтор будет разрешён.')) resolve(r, false) }}>
+                              onClick={async () => { if (await confirm('Вы проверили кабинет ОРД и записи там НЕТ? Повтор будет разрешён.')) resolve(r, false) }}>
                               записи нет
                             </button>
                             <button style={{ ...btn(false), padding: '4px 10px', fontSize: 12, marginLeft: 6 }}

@@ -12,6 +12,7 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import useLatest from '@/lib/useLatest'
+import { useDialogs } from '@/components/dialogs'
 const BalanceMobile = dynamic(() => import('@/components/mobile/BalanceMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -154,6 +155,7 @@ function AgingBadges({ aging }) {
 }
 
 function DebtPanel({ data, mode, canEditNote, onSaveNote }) {
+  const { alert } = useDialogs()
   const isReceivables = mode === 'receivables'
   const amountColor = isReceivables ? 'var(--income)' : 'var(--expense)'
   const groupLabel = isReceivables ? 'Контрагент' : 'Статья'
@@ -415,6 +417,7 @@ function DebtPanel({ data, mode, canEditNote, onSaveNote }) {
 }
 
 export default function Balance() {
+  const { alert } = useDialogs()
   const router = useRouter()
   /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
      адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как

@@ -68,8 +68,8 @@ export function pickAndUploadDoc(dealId, kind, onDone, onBusy) {
   inp.click()
 }
 
-export async function deleteDoc(dealId, kind, onDone, onBusy) {
-  if (!window.confirm('Удалить документ?')) return
+export async function deleteDoc(dealId, kind, onDone, onBusy, confirmFn = window.confirm) {
+  if (!(await confirmFn('Удалить документ?'))) return
   onBusy && onBusy(kind)
   try { await api.delete(`/sales/deals/${dealId}/files/${kind}`, auth()); onDone && onDone() }
   catch (e) { alert(detailText(e, 'Не удалось удалить')) }

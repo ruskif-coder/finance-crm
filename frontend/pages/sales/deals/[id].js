@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import BriefFiles from '@/components/deal/BriefFiles'
 import MasterDocs, { masterDocsCount } from '@/components/deal/MasterDocs'
@@ -477,6 +478,7 @@ const MONEY_LBL = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', text
 // Таблицы медиаплана (размещение, прогноз, доп. услуги, таргетинг) — components/mediaplan/MpReadView.
 
 export default function DealCard() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const { id } = router.query
   const isMobile = useIsMobile()
@@ -753,7 +755,7 @@ export default function DealCard() {
       alert(detailText(e, 'Не удалось завести ДС на старте'))
     } finally { setDocBusy('') }
   }
-  const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy)
+  const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy, confirm)
 
   // Порядок = колонки свёрнутой сетки (3×2, заполнение по столбцам): кто рекламируется,
   // через кого продано, когда и где. Пара в столбце — связанные вопросы, а не соседи

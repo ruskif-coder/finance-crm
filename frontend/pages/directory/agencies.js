@@ -10,11 +10,13 @@ const AgenciesMobile = dynamic(() => import('@/components/mobile/AgenciesMobile'
 import SectionTabs from '@/components/SectionTabs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', holding: '' }
 
 export default function Agencies() {
+  const { confirm, alert } = useDialogs()
   const router = useRouter()
   const isMobile = useIsMobile()
   const [saving, setSaving] = useState(false)
@@ -61,9 +63,9 @@ export default function Agencies() {
       : selAgIds.slice().sort((x, y) => selAg[y].deals - selAg[x].deals)[0]  // по умолчанию — макс. сделок
     const keepName = selAg[keepId].name
     const dropIds = selAgIds.filter(id => id !== keepId)
-    if (!window.confirm(
+    if (!(await confirm(
       `Схлопнуть в «${keepName}»?\n\nВольются: ${dropIds.map(id => selAg[id].name).join(', ')}\n\n` +
-      `Их юрлица и сделки перейдут на «${keepName}», сами записи удалятся.`)) return
+      `Их юрлица и сделки перейдут на «${keepName}», сами записи удалятся.`))) return
     setError('')
     try {
       for (const dropId of dropIds) {   // бэкенд сливает по одному источнику
@@ -81,7 +83,7 @@ export default function Agencies() {
 
   const deleteSelectedAgencies = async () => {
     if (!selAgIds.length) return
-    if (!window.confirm(`Скрыть из справочника выбранные агентства (${selAgIds.length})?\nСделки не удаляются, записи деактивируются.`)) return
+    if (!(await confirm(`Скрыть из справочника выбранные агентства (${selAgIds.length})?\nСделки не удаляются, записи деактивируются.`))) return
     setError('')
     try {
       for (const id of selAgIds) await api.delete(`/sales/directories/agencies/${id}`, auth())
