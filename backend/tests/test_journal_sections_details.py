@@ -46,9 +46,13 @@ def test_cabinet_actions_login_apart_from_the_rest():
     ("create_targeting_item", "interests: детские противовирусные", "интересы: детские противовирусные"),
     ("create_targeting_item", "buys: средства от герпеса", "покупки: средства от герпеса"),
     ("master_deal_settings",
-     "M-0043: раскладка сохранена — addons_separate=True, bonus_addons=hide, ds_by_brand=True, ds_by_service=True, "
+     "M-0043: раскладка сохранена — addons_mode=separate, bonus_addons=hide, ds_by_brand=True, ds_by_service=True, "
      "upd_by_brand=True, upd_by_service=False, moved=[]",
      "M-0043: раскладка сохранена — допы отдельным ДС, бонусные допы скрыты, ДС по брендам и услугам, УПД по брендам"),
+    ("master_deal_settings",
+     "M-0044: раскладка сохранена — addons_mode=fold, bonus_addons=hide, ds_by_brand=True, ds_by_service=True, "
+     "upd_by_brand=True, upd_by_service=False, moved=[]",
+     "M-0044: раскладка сохранена — допы в стоимости базовой услуги, бонусные допы скрыты, ДС по брендам и услугам, УПД по брендам"),
     ("bulk_update_operation", "ids=[2691]; status=ОПЛАЧЕНО, date=2026-11-12, bank=Наличные",
      "записей: 1; статус ОПЛАЧЕНО, дата 12.11.2026, банк Наличные"),
     ("bulk_delete_operation", "ids=[2721, 2854]; удалено 2", "записей: 2; удалено 2"),

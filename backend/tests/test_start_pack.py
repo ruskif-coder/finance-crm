@@ -252,4 +252,4 @@ def test_start_is_one_ds_even_when_addons_go_separately(env, monkeypatch):
     common = {"deal_id": deals[0].id, "deal": deals[0].code, "brand": "Б", "service": "С", "sk_pct": 0.0}
     monkeypatch.setattr(LY, "lines", lambda db_, m_: [{**common, "id": "b:1:0", "kind": "base", "net": 100.0},
                                                       {**common, "id": "e:1:0", "kind": "extra", "net": 50.0}])
-    assert len(LY.layout(db, m, {"addons_separate": True})["ds"]) == 1
+    assert len(LY.layout(db, m, {"addons_mode": "separate"})["ds"]) == 1

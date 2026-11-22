@@ -44,8 +44,8 @@ def _package(db, deals, u, settings):
 
 
 @pytest.mark.parametrize("settings", [
-    {"addons_separate": True, "bonus_addons": "zero", "ds_by_brand": True, "ds_by_service": True},
-    {"addons_separate": False, "bonus_addons": "hide", "ds_by_brand": False, "ds_by_service": False, "upd_by_brand": False},
+    {"addons_mode": "separate", "bonus_addons": "zero", "ds_by_brand": True, "ds_by_service": True},
+    {"addons_mode": "together", "bonus_addons": "hide", "ds_by_brand": False, "ds_by_service": False, "upd_by_brand": False},
 ])
 def test_to_annex_creates_ds_matching_layout(env, settings):
     db, deals, u = env
@@ -86,7 +86,7 @@ def test_start_no_defaults_to_the_contract_last_number(env):
     уже занятых другими пакетами; при создании ДС он закрепляется в пакете. Поломка: «не задан номер ДС» при известной нумерации."""
     from sqlalchemy import text
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False, "bonus_addons": "hide"})
+    m = _package(db, deals, u, {"addons_mode": "together", "bonus_addons": "hide"})
     m.start_no = None
     db.execute(text("UPDATE contracts SET annex_start_no = 50 WHERE id = :c"), {"c": m.contract_id})
     db.flush()
@@ -108,7 +108,7 @@ def test_creating_and_reverting_ds_moves_package_deals(env):
     «Вернуть в раскладку» → «Подготовка ДС». Поломка: create/revert меняют статус пакета, не трогая сделки."""
     from sqlalchemy import text
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False, "bonus_addons": "hide"})
+    m = _package(db, deals, u, {"addons_mode": "together", "bonus_addons": "hide"})
     db.execute(text("""UPDATE sales_deals SET our_stage_id = (SELECT id FROM sales_stages WHERE name = 'Подготовка ДС')
                         WHERE id IN (SELECT deal_id FROM master_deal_items WHERE master_deal_id = :m)"""), {"m": m.id})
     db.flush()
@@ -146,7 +146,7 @@ def test_master_ds_file_prints_snapshot_groups_ds_words_and_upd_basis(env):
     from app.sales.annex_docx import build_docx
     from app.sales.models import SalesAnnex
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False, "ds_by_brand": True, "ds_by_service": True})
+    m = _package(db, deals, u, {"addons_mode": "together", "ds_by_brand": True, "ds_by_service": True})
     made = TA.create(db, m, u)
     a = db.get(SalesAnnex, made[0]["id"])
     d = _doc(db, a)
@@ -187,7 +187,7 @@ def test_unsigned_primary_is_rebuilt_by_fact_keeping_its_number(env):
     """Владелец 16.10: первичный ДС не подписан — важен только номер; этот же ДС пересобирается по факту."""
     from app.sales.models import SalesAnnex
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False})
+    m = _package(db, deals, u, {"addons_mode": "together"})
     m.start_no = None
     p = _primary(db, m, deals, u)
     assert TA.ready(db, m) == [], "с первичным ДС номер раскладки не нужен"
@@ -205,7 +205,7 @@ def test_signed_primary_stays_and_upds_close_by_fact(env):
     from app.master_deal.models import MasterDealUpd
     from app.sales import annex_signed
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False})
+    m = _package(db, deals, u, {"addons_mode": "together"})
     p = _primary(db, m, deals, u, confirmed_no=None)
     total_before = float(p.total_amount)
     p.sign_state = "подписан"                                # отметка подписи на ДС (02.11.2026; прежде — файл ДС у сделки)
@@ -233,7 +233,7 @@ def _fill_signer(db, cp, fio, position):
 def test_confirmed_unsigned_primary_keeps_number_and_is_refrozen_by_fact(env):
     from app.sales.models import SalesAnnex
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False})
+    m = _package(db, deals, u, {"addons_mode": "together"})
     free = (db.execute(__import__("sqlalchemy").text("SELECT coalesce(max(no), 0) + 50 FROM sales_annexes WHERE contract_id = :c"),
                        {"c": m.contract_id}).scalar())
     from app.models import Contract
@@ -261,7 +261,7 @@ def test_confirm_all_ds_of_package_in_one_action(env, monkeypatch):
     monkeypatch.setattr(R, "log_action", lambda *a, **k: None)
     monkeypatch.setattr(db, "rollback", lambda: None)
     from app.models import Contract
-    m = _package(db, deals, u, {"addons_separate": True})
+    m = _package(db, deals, u, {"addons_mode": "separate"})
     cp = db.get(Contract, m.contract_id).counterparty
     cp.inn = cp.inn or "7700000000"
     _fill_signer(db, cp, "Иванов И.И.", "Директор")
@@ -281,7 +281,7 @@ def test_upd_basis_is_the_constructor_closing_basis(env):
     from app.routers.annexes import _doc
     from app.sales.models import SalesAnnex
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": False, "upd_by_brand": True})
+    m = _package(db, deals, u, {"addons_mode": "together", "upd_by_brand": True})
     TA.create(db, m, u)
     ups = TA.upds_of(db, m)
     assert ups and all("согласно Дополнительному соглашению" in x["basis"] and not x["basis_custom"] for x in ups), ups[0]["basis"]
@@ -329,3 +329,20 @@ def test_upd_basis_takes_ds_level_edit_or_inherited():
              "closing_basis": {"template": "По {номер_дс} для {бренд_название}", "edited": True, "inherited_from": None}}
     out = D.upd_closing(model, SimpleNamespace(brand="Кудесан", basis_text=None), rows=[{"kind": "base"}])
     assert out["text"] == "По 5 для Кудесан" and not out["edited"]
+
+
+def test_save_settings_rejects_bad_addons_mode(env):
+    db, deals, u = env
+    m = _package(db, deals, u, {"addons_mode": "separate"})
+    with pytest.raises(MS.MasterError) as e:
+        PK.save_settings(db, m, {"addons_mode": "bogus"}, u)
+    assert e.value.status == 400 and "Режим допов" in e.value.message
+
+
+def test_save_settings_rejects_fold_when_not_allowed(env, monkeypatch):
+    db, deals, u = env
+    m = _package(db, deals, u, {"addons_mode": "separate"})
+    monkeypatch.setattr(LY, "fold_allowed", lambda db_, m_: (False, "базовая услуга с фиксированной ценой (Fix) — объём не завысить"))
+    with pytest.raises(MS.MasterError) as e:
+        PK.save_settings(db, m, {"addons_mode": "fold"}, u)
+    assert e.value.status == 400 and "Fix" in e.value.message

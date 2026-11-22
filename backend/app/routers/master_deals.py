@@ -199,7 +199,7 @@ def master_status(code: str, payload: StatusIn, db: Session = Depends(get_db), u
 # ── раскладка и ДС ────────────────────────────────────────────────────────────────────────────────
 
 class SettingsIn(BaseModel):
-    addons_separate: Optional[bool] = None
+    addons_mode: Optional[str] = None            # separate | together | fold
     bonus_addons: Optional[str] = None          # zero | hide
     ds_by_brand: Optional[bool] = None
     ds_by_service: Optional[bool] = None

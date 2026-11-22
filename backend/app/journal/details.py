@@ -18,13 +18,16 @@ _FIELD_RX = re.compile(r"\b(status|date|bank)=([^,;]+)")
 _DATE_RX = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _MASTER = {"ours": "основная — наша запись", "bx": "основная — из Битрикса"}
 _URL_RX = re.compile(r"https?://\S+")
-_LAYOUT_RX = re.compile(r"((?:\w+=(?:True|False|hide|show|\[[^\]]*\])(?:, )?){3,})")
+_LAYOUT_RX = re.compile(r"((?:\w+=(?:True|False|hide|show|zero|separate|together|fold|\[[^\]]*\])(?:, )?){3,})")
 
 
 def _layout(m) -> str:
     kv = dict(p.split("=", 1) for p in m.group(1).split(", ") if "=" in p)
     out = []
-    if "addons_separate" in kv:
+    if "addons_mode" in kv:
+        out.append({"separate": "допы отдельным ДС", "together": "допы в общем ДС",
+                    "fold": "допы в стоимости базовой услуги"}.get(kv["addons_mode"], kv["addons_mode"]))
+    elif "addons_separate" in kv:
         out.append("допы отдельным ДС" if kv["addons_separate"] == "True" else "допы в общем ДС")
     if "bonus_addons" in kv:
         out.append("бонусные допы скрыты" if kv["bonus_addons"] == "hide" else "бонусные допы показаны")

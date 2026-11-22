@@ -186,7 +186,7 @@ def test_layout_all_settings_combinations(env):
     seen_addons = False
     for sep, bonus, a, b, c, e in itertools.product((True, False), ("zero", "hide"), *[(True, False)] * 4):
         for moved in ([], paid[:1], paid):
-            lay = LY.layout(db, m, {"addons_separate": sep, "bonus_addons": bonus, "ds_by_brand": a, "ds_by_service": b,
+            lay = LY.layout(db, m, {"addons_mode": "separate" if sep else "together", "bonus_addons": bonus, "ds_by_brand": a, "ds_by_service": b,
                                     "upd_by_brand": c, "upd_by_service": e, "moved": moved})
             _check(lay, deals_total)
             seen_addons |= any(ds["kind"] == "addons" for ds in lay["ds"])
@@ -194,7 +194,7 @@ def test_layout_all_settings_combinations(env):
             assert deals[1].code in [x["deal"] for x in lay["sk_in_invoice"]], "пакет помечен: скидка в счёт"
     assert seen_addons, "ДС допов ни разу не построен"
     # сохранение и перечитывание — то же самое
-    PK.save_settings(db, m, {"addons_separate": True, "bonus_addons": "hide", "moved": paid[:1]}, u)
+    PK.save_settings(db, m, {"addons_mode": "separate", "bonus_addons": "hide", "moved": paid[:1]}, u)
     _check(LY.layout(db, m), deals_total)
 
 

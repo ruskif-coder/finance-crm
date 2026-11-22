@@ -24,7 +24,7 @@ env = _cs.env
 
 def test_kit_remembers_which_deals_it_is_made_of(env):
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": True, "bonus_addons": "zero", "upd_by_brand": False, "upd_by_service": False})
+    m = _package(db, deals, u, {"addons_mode": "separate", "bonus_addons": "zero", "upd_by_brand": False, "upd_by_service": False})
     TA.create(db, m, u)
     kits = db.query(MasterDealUpd).filter_by(master_deal_id=m.id).all()
     assert kits
@@ -37,7 +37,7 @@ def test_kit_remembers_which_deals_it_is_made_of(env):
 
 def test_each_deal_sees_only_its_kits_with_its_share(env):
     db, deals, u = env
-    m = _package(db, deals, u, {"addons_separate": True, "bonus_addons": "zero", "upd_by_brand": False, "upd_by_service": False})
+    m = _package(db, deals, u, {"addons_mode": "separate", "bonus_addons": "zero", "upd_by_brand": False, "upd_by_service": False})
     TA.create(db, m, u)
     kits = db.query(MasterDealUpd).filter_by(master_deal_id=m.id).all()
     for d in deals:
@@ -84,7 +84,7 @@ def test_two_ds_of_one_deal_are_both_listed(env):
         db.add(SalesMediaPlanExtra(plan_id=plans[deal.id][0], sort_order=99, name="[тест] Комплект рекламных материалов",
                                    period="разово", mode="Полная цена", price=30000.0, total=30000.0))
         db.flush()
-    m = _package(db, [deal], u, {"addons_separate": True, "bonus_addons": "zero"})
+    m = _package(db, [deal], u, {"addons_mode": "separate", "bonus_addons": "zero"})
     lay = LY.layout(db, m)
     assert len(lay["ds"]) >= 2, "платный доп при «допы отдельным ДС» не дал второго ДС"
     TA.create(db, m, u)

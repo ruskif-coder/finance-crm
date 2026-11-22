@@ -25,6 +25,7 @@ import ChangesModal from '@/components/annex/ChangesModal'
 import { CARD, Note, plural } from '@/components/master/kit'
 import { createdAnnexes } from '@/lib/masterSteps'
 import { detailText } from '@/lib/loadError'
+import { useDialogs } from '@/components/dialogs'
 
 /** ДС раскладки ↔ выпущенный ДС пакета: основной (или «всё в одном») — первый основной, допы — ДС допов. */
 function docOf(m, ds) {
@@ -50,6 +51,7 @@ export default function MasterDealPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
+  const { confirm } = useDialogs()
   const [refreshing, setRefreshing] = useState(false)  // окно «Обновить из сделки» с «было → станет»
   const [picked, setPicked] = useState(null)          // скан какого документа грузим: a<annex_id> | u<upd_no>
   const pickScan = (k) => { setPicked(k); document.querySelector('[data-scans]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }     // право «Мастер-сделки · редактирование»; без него — только смотреть
@@ -105,20 +107,20 @@ export default function MasterDealPage() {
                   {/* Подтвердить основной ДС и ДС допов одним действием: сначала проверка всех, потом номера по очереди. */}
                   {made.some(a => !a.confirmed) && (
                     <button type="button" data-step-target="confirm" disabled={busy} style={{ ...primaryBtn, marginLeft: 'auto' }}
-                      onClick={() => { if (window.confirm('Подтвердить все ДС пакета? Номера будут заняты.')) call(() => api.post(`/master-deals/${m.code}/confirm-ds`, {}, auth())) }}>
+                      onClick={async () => { if (await confirm('Подтвердить все ДС пакета? Номера будут заняты.')) call(() => api.post(`/master-deals/${m.code}/confirm-ds`, {}, auth())) }}>
                       Подтвердить ДС пакета</button>
                   )}
                   {/* после возврата на «согласование» ДС уже с номерами (12.11.2026); «Обновить» — в шапке карточки ДС (17.11.2026) */}
                   {mayEdit && m.status === 'согласование' && m.unconfirmed === 0 && (
                     <>
                       <button type="button" data-step-target="confirm" disabled={busy} style={{ ...primaryBtn, marginLeft: 'auto' }}
-                        onClick={() => { if (window.confirm('ДС проверены — отправить пакет бухгалтеру в 1С?')) call(() => api.post(`/master-deals/${m.code}/agreed`, {}, auth())) }}>
+                        onClick={async () => { if (await confirm('ДС проверены — отправить пакет бухгалтеру в 1С?')) call(() => api.post(`/master-deals/${m.code}/agreed`, {}, auth())) }}>
                         ДС проверены → в 1С</button>
                     </>
                   )}
                   {!m.issued_ds && (
                     <button type="button" disabled={busy} style={{ ...primaryBtn, background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-card)' }}
-                      onClick={() => { if (window.confirm('Удалить черновики ДС пакета и вернуться к правке раскладки?')) call(() => api.post(`/master-deals/${m.code}/revert`, {}, auth())) }}>
+                      onClick={async () => { if (await confirm('Удалить черновики ДС пакета и вернуться к правке раскладки?', { danger: true })) call(() => api.post(`/master-deals/${m.code}/revert`, {}, auth())) }}>
                       Вернуть в раскладку</button>
                   )}
                 </>
@@ -156,7 +158,7 @@ export default function MasterDealPage() {
           canEdit={mayEdit} onApply={apply}
           onScans={() => document.querySelector('[data-scans]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           onAdd={(c) => call(() => api.post(`/master-deals/${m.code}/deals`, { deal_id: c.id }, auth()))}
-          onRemove={(d) => { if (window.confirm(`Убрать ${d.code} из пакета ${m.code}?`)) call(() => api.delete(`/master-deals/${m.code}/deals/${d.id}`, auth())) }} />
+          onRemove={async (d) => { if (await confirm(`Убрать ${d.code} из пакета ${m.code}?`, { danger: true })) call(() => api.delete(`/master-deals/${m.code}/deals/${d.id}`, auth())) }} />
         {!!err && <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--danger-fg)' }}>{err}</div>}
         <div style={{ display: 'grid', gridTemplateColumns: '330px minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
           <LayoutPanel m={m} draft={draft} preview={preview} locked={locked} busy={busy}
@@ -178,7 +180,7 @@ export default function MasterDealPage() {
                 <div style={{ marginBottom: 14 }}><ScansPanel m={m} picked={picked} setPicked={setPicked} canEdit={mayEdit} onChanged={apply} /></div>
                 {lay.ds.map(ds => (
                   <DsCard key={ds.kind} ds={ds} vat={lay.vat_rate} locked={locked} moved={draft.moved || []}
-                    separate={!!draft.addons_separate && lay.has_paid_extras} flash={flash} onMove={toggleMove}
+                    separate={draft.addons_mode === 'separate' && lay.has_paid_extras} flash={flash} onMove={toggleMove}
                     doc={docOf(m, ds)} code={m.code} onPick={pickScan} canEdit={mayEdit} onDone={apply} onRefresh={() => setRefreshing(true)} mayRefresh={!!m.may_refresh} atStart={!!m.issue?.start?.phase}
                     basis={(m.upds || []).filter(u => u.annex_id === docOf(m, ds)?.annex_id)} busy={busy} onBasis={apply} />
                 ))}

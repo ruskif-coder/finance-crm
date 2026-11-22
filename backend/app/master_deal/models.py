@@ -19,8 +19,9 @@ class MasterDeal(Base):
     period = Column(String(7), nullable=False)                     # YYYY-MM
     payer_counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
     status = Column(String(20), nullable=False, default="черновик", server_default="черновик")
-    addons_separate = Column(Boolean, nullable=False, default=True, server_default="true")
+    addons_separate = Column(Boolean, nullable=False, default=True, server_default="true")   # заморожено 22.11.2026 — заменено addons_mode
     bonus_addons = Column(String(8), nullable=False, default="zero", server_default="zero")
+    addons_mode = Column(String(8), nullable=False, default="separate", server_default="separate")
     ds_by_brand = Column(Boolean, nullable=False, default=True, server_default="true")
     ds_by_service = Column(Boolean, nullable=False, default=True, server_default="true")
     upd_by_brand = Column(Boolean, nullable=False, default=True, server_default="true")

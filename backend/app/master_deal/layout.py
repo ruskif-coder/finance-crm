@@ -19,7 +19,7 @@ from app.final_recon import closing as CL
 from app.final_recon import money as M
 from app.master_deal.models import MasterDeal, MasterDealItem
 
-KEYS = ("addons_separate", "bonus_addons", "ds_by_brand", "ds_by_service", "upd_by_brand", "upd_by_service", "moved")
+KEYS = ("addons_mode", "bonus_addons", "ds_by_brand", "ds_by_service", "upd_by_brand", "upd_by_service", "moved")
 
 
 _r2 = M.r2      # одно округление на сверку, раскладку и ДС (аудит 2.7.0, п. 2.5)
@@ -92,6 +92,55 @@ def _fold_discounts(rows: list) -> list:
     return out
 
 
+def fold_allowed(db: Session, m, ls=None) -> tuple:
+    """Доступен ли режим «включить допы в стоимость базовой услуги» (владелец 22.11.2026).
+    (False, причина) — нет платных допов, либо базовая услуга с фиксированной ценой (Fix), где объём не завысить.
+    `ls` — уже вычисленные строки (layout передаёт их, чтобы не считать дважды); без него — lines(db, m)."""
+    if ls is None:
+        ls = lines(db, m)
+    if not any(x["kind"] == "extra" for x in ls):
+        return False, "нет платных допов"
+    from app.sales import mp_row
+    if any(x["kind"] == "base" and not (mp_row.is_cpm(x.get("model")) or mp_row.is_cpc(x.get("model"))) for x in ls):
+        return False, "базовая услуга с фиксированной ценой (Fix) — объём не завысить"
+    return True, ""
+
+
+def _fold_addons(rows: list) -> list:
+    """Допы в стоимости базовой услуги: цена по договору не меняется, объём завышается расчётно (владелец 22.11.2026).
+    Сумма платных допов сделки распределяется по её базовым строкам пропорционально net (остаток копеек — последней,
+    M.scale_to). unit_price не меняется. volume = round(net_new * div / unit_price), div = 1000.0 у CPM иначе 1.0;
+    цены нет — volume прежний. Строки kind=="extra" выбрасываются, "bonus" остаются; порядок сохраняется."""
+    from app.sales import mp_row
+    by_deal: dict = {}
+    for r in rows:
+        by_deal.setdefault(r["deal_id"], []).append(r)
+    folded: dict = {}
+    for deal_id, rs in by_deal.items():
+        idx = [i for i, r in enumerate(rs) if r["kind"] == "base"]
+        extras = [r for r in rs if r["kind"] == "extra"]
+        addon = _r2(sum(r["net"] for r in extras))
+        if not idx or addon <= 0:
+            continue
+        base_total = sum(rs[i]["net"] for i in idx)
+        new_nets = M.scale_to([rs[i]["net"] for i in idx], _r2(base_total + addon))
+        for i, net in zip(idx, new_nets):
+            price = rs[i].get("unit_price")
+            div = 1000.0 if mp_row.is_cpm(rs[i].get("model")) else 1.0
+            vol = round(net * div / float(price)) if price else rs[i].get("volume")
+            folded[(deal_id, rs[i]["id"])] = (net, vol)
+    out = []
+    for r in rows:
+        if r["kind"] == "extra":
+            continue
+        if r["kind"] == "base" and (r["deal_id"], r["id"]) in folded:
+            net, vol = folded[(r["deal_id"], r["id"])]
+            out.append({**r, "net": net, "volume": vol})
+        else:
+            out.append(r)
+    return out
+
+
 def sk_in_invoice(rows: list) -> list:
     """Сделки пакета со скидкой в счёт — для плашки «документы со скидкой в счёт» (только для сведения, 11.11.2026)."""
     seen: dict = {}
@@ -133,14 +182,17 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     paid_extras = [x for x in ls if x["kind"] == "extra"]
     # На старте одна сделка — один ДС (владелец 02.11.2026): два первичных уронили бы закрытие на «разные первичные ДС».
     from app.master_deal import start as SP
-    sep = bool(st["addons_separate"]) and bool(paid_extras) and not SP.in_start_phase(db, m)
+    mode = st.get("addons_mode") or "separate"
+    fold_ok, fold_reason = fold_allowed(db, m, ls)
+    fold = mode == "fold" and bool(paid_extras) and fold_ok
+    sep = (not fold) and mode == "separate" and bool(paid_extras) and not SP.in_start_phase(db, m)
     addons_paid = [x for x in paid_extras if x["id"] not in moved] if sep else []
     if sep and addons_paid:
         main = [x for x in ls if x["kind"] == "base" or x["id"] in moved]
         addons = addons_paid + [x for x in ls if x["kind"] == "bonus"]
         parts = [("main", "основные услуги", main), ("addons", "доп. услуги", addons)]
     else:                                    # ДС допов без платных строк не создаётся — всё в основной
-        parts = [("all" if paid_extras else "main", "основные и допы" if paid_extras else "основные услуги", ls)]
+        parts = [("all" if (paid_extras and not fold) else "main", "основные и допы" if (paid_extras and not fold) else "основные услуги", ls)]
 
     vat = _vat(db, m, ls)
     from app.master_deal import package as PK
@@ -151,6 +203,8 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
         if not rows:
             continue
         rows = _fold_discounts(rows)
+        if fold:
+            rows = _fold_addons(rows)
         no = (f"{base_no}-01" if kind == "addons" else str(base_no)) if base_no else ("n-01" if kind == "addons" else "n")
         groups: dict = {}
         for r in rows:
@@ -186,6 +240,7 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     total = _r2(sum(ds["net"] for ds in ds_list))
     return {"vat_rate": vat, "ds": ds_list, "total_net": total, "total_gross": _r2(sum(ds["gross"] for ds in ds_list)),
             "upd_count": upd_no, "lines": len(ls), "has_paid_extras": bool(paid_extras), "settings": st,
+            "addons_fold": {"ok": fold_ok, "reason": fold_reason},
             "sk_in_invoice": sk_in_invoice(ls)}
 
 

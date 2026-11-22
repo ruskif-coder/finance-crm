@@ -94,7 +94,7 @@ def test_layout_sum_equals_deals_and_upd_numbers_run_through(env):
     assert lay["total_net"] == pytest.approx(deals_sum, abs=0.05)
     nos = [x["upd_no"] for ds in lay["ds"] for x in ds["upds"]]
     assert nos == list(range(1, len(nos) + 1)), "№ УПД — сквозной в рамках пакета"
-    m.addons_separate = False
+    m.addons_mode = "together"
     kinds = [ds["kind"] for ds in LY.layout(db, m)["ds"]]
     assert len(kinds) == 1 and kinds[0] in ("all", "main"), "допы строками — один ДС"
 
@@ -196,7 +196,7 @@ def test_sk_discount_shown_in_layout_and_sum_matches(env):
     m_id = MS.send(db, d1, u, target="new")["master"]["id"]
     MS.send(db, d2, u, target="join", master_id=m_id)
     m = db.get(MasterDeal, m_id)
-    for st in ({}, {"addons_separate": False}, {"upd_by_service": True, "ds_by_service": True}):
+    for st in ({}, {"addons_mode": "together"}, {"upd_by_service": True, "ds_by_service": True}):
         lay = LY.layout(db, m, st)
         rows = [r for ds in lay["ds"] for g in ds["groups"] for r in g["rows"]]
         assert not any(r["kind"] == "discount" for r in rows), "строки «Скидка СК» в ДС нет"

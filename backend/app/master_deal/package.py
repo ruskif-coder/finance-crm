@@ -123,6 +123,12 @@ def save_settings(db: Session, m: MasterDeal, st: dict, user) -> None:
     _draft_only(m)
     if st.get("bonus_addons") not in (None, "zero", "hide"):
         raise MS.MasterError(400, "Бонусные допы: строкой с нулём или не включать")
+    if st.get("addons_mode") not in (None, "separate", "together", "fold"):
+        raise MS.MasterError(400, "Режим допов: отдельным ДС, в общем ДС или в стоимости базовой услуги")
+    if st.get("addons_mode") == "fold":
+        ok, reason = LY.fold_allowed(db, m)
+        if not ok:
+            raise MS.MasterError(400, reason)
     for k in LY.KEYS:
         if k in st and st[k] is not None:
             setattr(m, k, list(st[k]) if k == "moved" else st[k])

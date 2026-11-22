@@ -32,7 +32,7 @@ export const plural = (n, [one, few, many]) => {
 export const groupLabel = (g) => [g.brand, g.service].filter(Boolean).join(' · ') || 'весь пакет'
 
 export const SETTING_LABEL = {
-  addons_separate: ['допы отдельным ДС', (v) => (v ? 'да' : 'нет')],
+  addons_mode: ['допы', (v) => ({ separate: 'отдельным ДС', together: 'в общем ДС', fold: 'в стоимости базовой услуги' })[v]],
   bonus_addons: ['бонусные допы', (v) => (v === 'zero' ? 'строкой с нулём' : 'не включать')],
   ds_by_brand: ['строки ДС по бренду', (v) => (v ? 'да' : 'нет')],
   ds_by_service: ['строки ДС по услуге', (v) => (v ? 'да' : 'нет')],

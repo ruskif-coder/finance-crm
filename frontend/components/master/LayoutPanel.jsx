@@ -15,17 +15,8 @@ import { CAP, CARD, Note, SETTING_LABEL, num, plural, sameSettings } from '@/com
 // Кнопки внутри узкой панели (330px) — компактные, в одну строку.
 const SMALL = { padding: '6px 12px', fontSize: 12.5, whiteSpace: 'nowrap', height: 32 }
 
-const Switch = ({ on, label, disabled, onClick }) => (
-  <button type="button" disabled={disabled} onClick={onClick}
-    style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 0, padding: '4px 0', cursor: disabled ? 'default' : 'pointer', fontFamily: UI, opacity: disabled ? 0.5 : 1 }}>
-    <span style={{ width: 34, height: 20, flex: '0 0 34px', borderRadius: 10, background: on ? 'var(--md-on, var(--income))' : 'var(--border-hover)', position: 'relative' }}>
-      <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left var(--dur-fast)' }} /></span>
-    <b style={{ fontSize: 13, color: 'var(--text-primary)' }}>{label}</b>
-  </button>
-)
-
-const Chip = ({ on, label, disabled, onClick }) => (
-  <button type="button" disabled={disabled} onClick={onClick}
+const Chip = ({ on, label, disabled, onClick, title }) => (
+  <button type="button" disabled={disabled} onClick={onClick} title={title}
     style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 12px', borderRadius: 10, fontFamily: UI, fontWeight: 700, fontSize: 13,
       cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
       background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>
@@ -130,8 +121,18 @@ export default function LayoutPanel({ m, draft, preview, locked, busy, onDraft, 
         </div>
       )}
       <div style={{ pointerEvents: locked ? 'none' : 'auto', opacity: locked ? 0.5 : 1, marginTop: 6 }}>
-        <Step n={1} title="Допы отдельным ДС" hint={lay.has_paid_extras ? 'Платные допы — своё ДС № n-01. Выключено — строками в ДС основных услуг.' : 'Платных допов нет'}>
-          <Switch on={!!draft.addons_separate && lay.has_paid_extras} disabled={!lay.has_paid_extras} label={draft.addons_separate ? 'Допы — ДС № n-01' : 'Всё одним ДС'} onClick={() => toggle('addons_separate')} />
+        <Step n={1} title="Допы" hint={lay.has_paid_extras ? 'Как платные допы попадают в документы.' : 'Платных допов нет'}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+            <Chip on={draft.addons_mode === 'separate'} label="Допы отдельным ДС" disabled={!lay.has_paid_extras} onClick={() => set({ addons_mode: 'separate' })} />
+            <Chip on={draft.addons_mode === 'together'} label="Всё одним ДС" disabled={!lay.has_paid_extras} onClick={() => set({ addons_mode: 'together' })} />
+            <Chip on={draft.addons_mode === 'fold'} label="Включить в стоимость"
+              disabled={!lay.has_paid_extras || !lay.addons_fold?.ok}
+              title={!lay.has_paid_extras ? 'Платных допов нет' : (lay.addons_fold?.reason || '')}
+              onClick={() => set({ addons_mode: 'fold' })} />
+          </div>
+          {draft.addons_mode === 'fold' && (
+            <Note tone="info" style={{ marginTop: 8 }}>Допы включены в стоимость базовой услуги: цена по договору не меняется, объём завышен расчётно; доп-услуга в документе и основании не видна.</Note>
+          )}
         </Step>
         <Step n={2} title="Бонусные допы" hint="Допы со стоимостью 0.">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
