@@ -111,8 +111,14 @@ def surfaces_by_deal(db: Session, deal_ids) -> dict:
     return {d: sorted(v) for d, v in out.items()}
 
 
+def unit_for(calc_form) -> str:
+    """Единица объёма РК из формы расчёта услуги: CPC → click, иначе show (22.11.2026)."""
+    from app.sales import mp_row
+    return "click" if mp_row.is_cpc(calc_form) else "show"
+
+
 def deal_plan(db: Session, deal_id: int) -> dict:
-    """Услуги, поверхности и план показов сделки — из строк последнего медиаплана."""
+    """Услуги, поверхности и план показов/кликов сделки — из строк последнего медиаплана."""
     rows = db.execute(text(f"""
         SELECT r.position, r.inventory, r.volume, r.unit_price, r.model,
                r.discount, r.forecast
@@ -122,6 +128,7 @@ def deal_plan(db: Session, deal_id: int) -> dict:
     """), {"d": deal_id}).mappings().all()
 
     services, surfaces, shows, budget, freq = set(), set(), 0.0, 0.0, 0.0
+    clicks = 0.0
     for r in rows:
         freq = max(freq, mp_row.num((r["forecast"] or {}).get("freq")))
         if (r["position"] or "").strip():
@@ -132,11 +139,20 @@ def deal_plan(db: Session, deal_id: int) -> dict:
         # стояло безусловное «объём = показы» и «/1000», то есть строка Фикса давала
         # РК лимит в 1 показ и бюджет 80 ₽ вместо 80 000.
         shows += mp_row.row_imp(r["model"], r["volume"], r["forecast"])
+        # Клики — тоже по общей арифметике: у CPC объём И ЕСТЬ клики, у остальных они
+        # выводятся из показов и CTR. CPC-РК получает лимит кликов, а не показов
+        # (22.11.2026, единица объёма в `ad_campaign.unit`).
+        clicks += mp_row.row_clicks(r["model"], r["volume"], r["forecast"])
         budget += mp_row.row_net(r["model"], r["volume"], r["unit_price"], r["discount"])
+    calc = db.execute(text(
+        "SELECT s.calc_form FROM sales_deals d JOIN sales_services s ON s.id = d.service_id "
+        "WHERE d.id = :d"), {"d": deal_id}).scalar()
     return {"services": sorted(services), "surfaces": sorted(surfaces),
-            "plan_show": shows or None, "plan_budget": budget or None,
+            "plan_show": shows or None, "plan_click": clicks or None,
+            "plan_budget": budget or None,
             # частота флайта — наибольшая по строкам, как «Итого по МП» в карточке (17.11.2026: потолок частоты в отчёте клиенту)
             "freq": freq or None,
+            "unit": unit_for(calc),
             "has_plan": bool(rows)}
 
 
@@ -231,6 +247,8 @@ def _fill_campaign(camp: AdCampaign, d, plan: dict) -> None:
     camp.date_start = d["period_from"]
     camp.date_end = d["period_to"]
     camp.plan_show = plan["plan_show"]
+    camp.plan_click = plan["plan_click"]
+    camp.unit = plan["unit"]
     camp.plan_budget = plan["plan_budget"]
 
 
@@ -257,9 +275,11 @@ def replan_deal(db: Session, deal_id: int, commit: bool = True) -> Optional[dict
     deals = _campaign_deals(db, assembly_stage_ids(db), deal_id) if camp is not None else []
     if not deals:
         return None
-    before = (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end)
+    before = (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
+              camp.plan_click, camp.unit)
     _fill_campaign(camp, deals[0], deal_plan(db, deal_id))
-    if (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end) == before:
+    if (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
+            camp.plan_click, camp.unit) == before:
         return {"campaign_id": camp.id, "changed": False}
     db.flush()
     from app.ad.realloc import alert_plan_cut

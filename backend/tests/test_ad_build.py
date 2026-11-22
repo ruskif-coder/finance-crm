@@ -291,3 +291,24 @@ def test_goals_are_returned_as_written_and_empties_dropped():
         assert set(got) <= {'freq', 'ctr', 'cr', 'volume', 'weborama'}, got
     finally:
         db.close()
+
+
+# ── единица объёма РК (22.11.2026, кликовые объёмы в биддере) ──────────────────
+#
+# Страница «Биддер» и DSP делят план РК между площадками, и у CPC-сделки объём — КЛИКИ.
+# Единицу РК берём из формы расчёта услуги сделки: справочник услуг заполняется руками,
+# поэтому сравнение обязано быть регистронезависимым («CPC», «cpc», « CPC »). База этим
+# тестам не нужна вовсе — правило чистое.
+
+def test_unit_for_cpc():
+    from app.ad.build import unit_for
+    assert unit_for("CPC") == "click"
+    assert unit_for("cpc") == "click"          # регистронезависимо
+    assert unit_for(" CPC ") == "click"        # справочник заполняется руками — с пробелами тоже
+
+
+def test_unit_for_show():
+    from app.ad.build import unit_for
+    assert unit_for("CPM") == "show"
+    assert unit_for("Фикс") == "show"
+    assert unit_for(None) == "show"
