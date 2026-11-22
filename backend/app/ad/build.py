@@ -298,7 +298,7 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
 
     deals = _campaign_deals(db, stage_ids)
     existing = {c.deal_id: c for c in db.query(AdCampaign).all()}
-    plan_before = {c.id: c.plan_show for c in existing.values()}
+    plan_before = {c.id: plan_of(c) for c in existing.values()}
 
     created = updated = no_mp = 0
     for d in deals:
