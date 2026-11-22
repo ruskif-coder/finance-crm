@@ -70,6 +70,10 @@ function Left({ r }) {
  */
 export default function RkRow({ r, open, mayEdit, mayReport, onToggle, onStart, onPause, onStop }) {
   const tone = rkTone(r)
+  // Строка реестра — в ЕДИНИЦЕ РК (22.11.2026): у CPC обещали клики → «План/Факт» в кликах,
+  // раскладка площадок и кабинет паблишеров — по-прежнему в показах.
+  const plan = r.unit === 'click' ? r.plan_click : r.plan_show
+  const fact = r.unit === 'click' ? r.fact_clicks : r.fact_shows
   const ticks = ticksOf(r)
   const running = r.status === 'запущена'
   const startable = r.status !== 'окончена' && r.status !== 'архив'
@@ -117,8 +121,8 @@ export default function RkRow({ r, open, mayEdit, mayReport, onToggle, onStart, 
         <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{dm(r.date_start)} … {dm(r.date_end)}</span>
         <Left r={r} />
       </span>
-      <span style={{ ...mono, fontWeight: 700 }}>{r.plan_show ? num(r.plan_show) : <span style={{ color: 'var(--warning-fg)' }}>нет МП</span>}</span>
-      <span style={{ ...mono, fontWeight: 700, color: r.fact_shows == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>{num(r.fact_shows)}</span>
+      <span style={{ ...mono, fontWeight: 700 }}>{plan ? num(plan) : <span style={{ color: 'var(--warning-fg)' }}>нет МП</span>}</span>
+      <span style={{ ...mono, fontWeight: 700, color: fact == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>{num(fact)}</span>
       <Bar r={r} tone={tone} />
       <span style={{ ...mono, color: r.forecast == null ? 'var(--text-faint)' : 'var(--text-secondary)' }}>{num(r.forecast)}</span>
       <span style={{ ...mono, fontWeight: 700, color: r.under ? TONE_FG[tone === 'ok' ? 'warn' : tone] : 'var(--text-faint)' }}>
