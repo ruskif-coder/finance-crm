@@ -150,6 +150,20 @@ def test_pace_levels_and_too_early():
     assert R.check_pace(camp(own_total=1, date_start=date(2026, 10, 9))).level == R.SKIP   # меньше трёх дней
 
 
+def test_pace_and_shares_use_clicks_for_a_click_campaign():
+    """click-РК (22.11.2026): темп и «доли складываются» читают plan_click и факт-клики, а не plan_show/показы."""
+    c = camp(unit="click", plan_show=1_000_000, plan_click=10_000, own_unit=3_300)
+    r = R.check_pace(c)
+    assert r.level == R.GREEN and r.value["plan"] == 10_000 and r.value["fact"] == 3_300
+    s = camp(unit="click", plan_show=1_000_000, plan_click=10_000,
+             placements=[pl(1, share=0.5, plan=5_000), pl(2, share=0.5, plan=5_000)])
+    assert R.check_shares(s).level == R.GREEN
+    # план РК в кликах: сумма планов площадок в кликах же и сходится
+    bad = camp(unit="click", plan_show=1_000_000, plan_click=10_000,
+               placements=[pl(1, share=0.5, plan=5_000), pl(2, share=0.3, plan=3_000)])
+    assert R.check_shares(bad).level == R.YELLOW
+
+
 # ── прогон целиком ──
 def test_a_crashing_check_is_red_not_fatal(monkeypatch):
     def boom(_c):

@@ -60,6 +60,15 @@ def test_week_bucket_sums_daily_goals():
     assert first["plan"] == round(3000 + 28500 / 9 + 3375 + 25500 / 7 + 4000 + 4500 * 2)
 
 
+def test_chart_buckets_in_a_click_unit_plan_in_clicks():
+    """click-РК (22.11.2026): цель дня и «нужно в день» — в кликах; факт для цели — клики, а не показы."""
+    clicks = {D1 + timedelta(days=i): (1500, 100) for i in range(5)}   # 100 кликов в день при нужных 300
+    out = daily_buckets(3000, 500, FL, clicks, "day", today=date(2026, 10, 5), unit="click")
+    plans = [b["plan"] for b in out["buckets"]]
+    assert plans[:5] == [300, round(2900 / 9), round(2800 / 8), round(2700 / 7), round(2600 / 6)]
+    assert plans[5:] == [500] * 5      # (3000 − 500) ÷ 5 — «нужно кликов в день»
+
+
 def test_chart_boost_days_in_the_past_raise_the_bar():
     base = daily_buckets(PLAN, 7500, FL, FACTS, "day", today=date(2026, 10, 5))
     boosted = daily_buckets(PLAN, 7500, FL, FACTS, "day", today=date(2026, 10, 5),

@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
+from app.ad.flight import fact_col, plan_of
+
 DONOR_PACE = ("мало трафика", "нет трафика")
 TAKER_PACE = ("в темпе", "перебор")
 SPARE_USE = 1.0
@@ -103,7 +105,7 @@ def rows_of(db, camp, as_of=None) -> tuple:
     fixed = dict(db.execute(text(f"SELECT p.id, {PLACEMENT_FIXED_SQL} FROM ad_campaign_placement p WHERE p.campaign_id = :c"),
                             {"c": camp.id}).all())
     # Последний известный факт, даже если среза за вчера нет: иначе остаток считался бы от нуля (как у буста)
-    facts = any_facts(db, camp.id)
+    facts = any_facts(db, camp.id, camp.unit)
     base = [{"id": p.id, "plan_show": p.plan_show} for p in pls]
     pc = _pace_of(db, camp, base, as_of)
     rows = []
@@ -336,7 +338,8 @@ def manual_sums(db, campaign_ids) -> dict:
 def over_plan_of(db, camp) -> Optional[dict]:
     """{manual, plan} — если ручные планы РК в сумме больше её плана, иначе None (плашка окна)."""
     s = manual_sums(db, [camp.id]).get(camp.id, 0.0)
-    return {"manual": round(s), "plan": round(camp.plan_show or 0)} if _over(s, camp.plan_show) else None
+    plan = plan_of(camp)
+    return {"manual": round(s), "plan": round(plan or 0)} if _over(s, plan) else None
 
 
 def alert_plan_cut(db, before: dict) -> list:
@@ -350,11 +353,12 @@ def alert_plan_cut(db, before: dict) -> list:
     sent = []
     for cid, s in manual_sums(db, before).items():
         camp = db.get(AdCampaign, cid)
-        if camp is None or not newly_over(s, before.get(cid), camp.plan_show):
+        plan = plan_of(camp) if camp is not None else None
+        if camp is None or not newly_over(s, before.get(cid), plan):
             continue
         try:
             bus.emit(db, "traffic_manual_over_plan", title=f"Ручные планы больше плана РК: {rk_label(db, cid)}",
-                     body=(f"План РК в медиаплане уменьшили до {round(camp.plan_show or 0):,}, а ручные планы площадок "
+                     body=(f"План РК в медиаплане уменьшили до {round(plan or 0):,}, а ручные планы площадок "
                            f"(«Перераспределить») в сумме {round(s):,}. РК перекрутит план — снимите ручные планы в окне "
                            f"«Темп размещения → Перераспределить» или перенесите заново.").replace(",", " "),
                      link=f"/traffic/dashboard?rk={cid}", entity_type="ad_campaign", entity_id=cid)
@@ -378,7 +382,8 @@ def daily_of(db, camp, as_of=None) -> dict:
         dates.append(d.isoformat())
         d += timedelta(days=1)
     facts: dict = {}
-    for r in db.execute(text("""SELECT placement_id, date, sum(shows) AS s FROM ad_campaign_stat
+    col = fact_col(camp.unit)
+    for r in db.execute(text(f"""SELECT placement_id, date, sum({col}) AS s FROM ad_campaign_stat
                                  WHERE campaign_id = :c AND placement_id IS NOT NULL AND date <= :u AND source = ANY(:src)
                                  GROUP BY placement_id, date"""),
                         {"c": camp.id, "u": as_of, "src": list(fact_sources())}).all():

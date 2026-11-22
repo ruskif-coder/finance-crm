@@ -582,7 +582,8 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
                   date_to: Optional[date] = None,
                   today: Optional[date] = None,
                   boost: Optional[tuple] = None,
-                  boost_days: Optional[dict] = None) -> Optional[dict]:
+                  boost_days: Optional[dict] = None,
+                  unit: str = "show") -> Optional[dict]:
     """Столбцы графика «план против факта» с пересчётом плана на остаток.
 
     `boost` = (первый день, последний день, pct) — «темп размещения» (`app/ad/boost`): будущие дни окна
@@ -608,7 +609,11 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
 
     per_day = plan / fl.length
     from app.ad.day_plan import past_goals
-    goals = past_goals(plan, fl, facts_by_day, today, boost_days)
+    # `past_goals` читает факт из [0] кортежа (для show-РК это показы). У click-РК план в кликах,
+    # поэтому [0] должно быть кликами: перекладываем кортеж (shows, clicks) → (clicks, shows) (22.11.2026).
+    # В столбцы «показы»/«клики» ниже идёт ИСХОДНЫЙ `facts_by_day` — они показывают настоящие показы и клики.
+    goal_facts = {d: (v[1], v[0]) for d, v in facts_by_day.items()} if unit == "click" else facts_by_day
+    goals = past_goals(plan, fl, goal_facts, today, boost_days)
     # Факта ещё нет («нет данных», а не ноль) — для плана на остаток это ноль показов:
     # иначе `need` пустой, и в первый день запуска все будущие столбцы рисовались с
     # планом 0 — «план не рисуется до конца размещения» (владелец 01.10.2026, 54ZYCH).

@@ -37,7 +37,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY, PLACEMENT_RETURN,
                            as_placement_scale, best_chain_status, can_start_placement, holds,
                            creative_counts, daily_buckets,
-                           distribute, effective_status, flight_of, progress, split_evenly)
+                           distribute, effective_status, fact_col, flight_of, plan_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp.client import MsClient
 from app.ad.stat_sources import (VERIFIER, manual_superseded_sql, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
@@ -563,27 +563,33 @@ def _day_wall(rows: List[dict], stat: dict, today: date, windows: Optional[dict]
     out = []
     for r in rows:
         fl = flight_of(r["date_start"], r["date_end"], today)
-        if not fl or not r["plan_show"]:
+        unit = r.get("unit") or "show"
+        plan = r.get("plan_click") if unit == "click" else r.get("plan_show")
+        if not fl or not plan:
             continue
         by_day = stat.get(r["id"], {})
         # План ДНЯ — с учётом недокрута прошлых дней (владелец 13.10.2026, `app/ad/day_plan`), как в графике и в
         # «Отчёте по РК»; будущие дни — «нужно в день». Окна буста — из единого определения (`app/ad/boost`).
+        # У click-РК план в кликах: `past_goals` читает факт из [0], поэтому кортеж (shows, clicks) перекладывается
+        # в (clicks, shows); в подсказку клетки идут настоящие показы и клики (22.11.2026).
         from app.ad import boost as boost_mod
         from app.ad.day_plan import past_goals
-        goals = past_goals(r["plan_show"], fl, by_day, today, boost_mod.days_pct((windows or {}).get(r["id"])))
-        fact_all = sum((v[0] or 0) for k, v in by_day.items() if k <= today)
-        need = max(0.0, r["plan_show"] - fact_all) / fl.left if fl.left else 0.0
+        goal_facts = {d: (v[1], v[0]) for d, v in by_day.items()} if unit == "click" else by_day
+        goals = past_goals(plan, fl, goal_facts, today, boost_mod.days_pct((windows or {}).get(r["id"])))
+        fact_all = sum((goal_facts[d][0] or 0) for d in goal_facts if d <= today)
+        need = max(0.0, plan - fact_all) / fl.left if fl.left else 0.0
         cells = []
         for i in range(fl.length):
             d = fl.date_from + timedelta(days=i)
             shows, clicks = by_day.get(d, (None, None))
+            fact = clicks if unit == "click" else shows
             day_plan = goals.get(d, need)
             cells.append({
                 "date": d,
                 "plan": round(day_plan),
                 "shows": shows,
                 "clicks": clicks,
-                "ratio": round(shows / day_plan, 3) if (shows is not None and day_plan) else None,
+                "ratio": round(fact / day_plan, 3) if (fact is not None and day_plan) else None,
                 "ahead": d > today,
             })
         out.append({"id": r["id"], "deal_code": r["deal_code"], "cells": cells,
@@ -716,7 +722,7 @@ def _distribution(db: Session, pairs, facts: dict, today: date, places: dict, cr
         # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
         # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
         balance.mark_capless(db, pls, surf_of.get(c.deal_id, []), manual)
-        dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
+        dist_by_camp[c.id] = distribute(plan_of(c), facts.get(c.id, {}).get(fact_col(c.unit)),
                                         fl, pls, cap=cap,
                                         # план — записанный ночью, ровно лимиты DSP (05.10.2026)
                                         use_stored=True,
@@ -748,18 +754,29 @@ def _visible(db: Session, user: User, scope: Optional[str], archive: bool):
 
 
 def _day_facts(db: Session, campaign_ids: List[int], day: date) -> dict:
-    """Факт площадок за сутки среза и ДО них — {(РК, площадка): (до дня, за день)}, одним запросом на все РК.
-    Для плана дня площадки (`platform_report.day_goal`), источники — те же, что у факта (`fact_sources`)."""
+    """Факт площадок за сутки среза и ДО них — {(РК, площадка): (до дня, за день)} в единице РК, одним запросом на все РК.
+    Для плана дня площадки (`platform_report.day_goal`), источники — те же, что у факта (`fact_sources`).
+    У click-РК факт — клики, у остальных показы (22.11.2026)."""
     if not campaign_ids or day is None:
         return {}
+    units = {cid: u for cid, u in db.execute(text(
+        "SELECT id, unit FROM ad_campaign WHERE id = ANY(:i)"), {"i": list(campaign_ids)}).all()}
     rows = db.execute(text(
         "SELECT campaign_id, placement_id, "
-        "       coalesce(sum(shows) FILTER (WHERE date < :d), 0) AS before, "
-        "       coalesce(sum(shows) FILTER (WHERE date = :d), 0) AS on_day "
+        "       coalesce(sum(shows) FILTER (WHERE date < :d), 0) AS before_shows, "
+        "       coalesce(sum(shows) FILTER (WHERE date = :d), 0) AS on_day_shows, "
+        "       coalesce(sum(clicks) FILTER (WHERE date < :d), 0) AS before_clicks, "
+        "       coalesce(sum(clicks) FILTER (WHERE date = :d), 0) AS on_day_clicks "
         "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) AND placement_id IS NOT NULL "
         "AND date <= :d GROUP BY campaign_id, placement_id"),
         {"i": campaign_ids, "src": fact_sources(), "d": day}).mappings().all()
-    return {(r["campaign_id"], r["placement_id"]): (r["before"], r["on_day"]) for r in rows}
+    out = {}
+    for r in rows:
+        click = units.get(r["campaign_id"]) == "click"
+        out[(r["campaign_id"], r["placement_id"])] = (
+            r["before_clicks"] if click else r["before_shows"],
+            r["on_day_clicks"] if click else r["on_day_shows"])
+    return out
 
 
 def _platform_cells(pairs, dist_by_camp: dict, uploaded: set, ver_all: dict, goals_by_deal: dict, traf_name: dict,
@@ -840,7 +857,7 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
     for c, d in pairs:
         f = facts.get(c.id, {})
         pls = places.get(c.id, [])
-        fc = progress(c.plan_show, f.get("shows"), c.date_start, c.date_end, today, now=date.today())
+        fc = progress(plan_of(c), f.get(fact_col(c.unit)), c.date_start, c.date_end, today, now=date.today())
         by_pl = cr_all.get(c.id, {})
         chain_st = campaign_chain_status(
             has_plan=bool(c.plan_show), placements=len(pls),
@@ -871,6 +888,8 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
             "status": effective_campaign_status(c.status, chain_st),
             "date_start": c.date_start, "date_end": c.date_end,
             "plan_show": c.plan_show, "plan_budget": c.plan_budget,
+            # Единица объёма РК (22.11.2026): click-РК считает темп/план дня в кликах; стена дней читает `plan_click`.
+            "unit": c.unit, "plan_click": c.plan_click,
             "fact_shows": f.get("shows"), "fact_clicks": f.get("clicks"),
             "ms_campaign_xxhash": c.ms_campaign_xxhash,
             # Кнопки запуска/остановки заперты до выкладки в DSP — причина словами.
@@ -1004,7 +1023,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
 
     as_of = fact_as_of(db)
     fl = flight_of(c.date_start, c.date_end, as_of)
-    fact_total = _facts(db, [c.id]).get(c.id, {}).get("shows")
+    fact_total = _facts(db, [c.id]).get(c.id, {}).get(fact_col(c.unit))
     creatives = _creatives_of(db, c.id)
 
     # Режим площадки: наша DSP / внешняя / смешанная — по поверхностям в сделке (30.09.2026).
@@ -1032,7 +1051,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         d["start_why"] = start_block(db, c, None, mine, d["ext_mode"] or "dsp")
         prepared.append(d)
     balance.mark_capless(db, prepared, build.deal_plan(db, c.deal_id)["surfaces"])
-    out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db),
+    out = distribute(plan_of(c), fact_total, fl, prepared, cap=balance.share_cap(db),
                      use_stored=True,
                      hold_fl=flight_of(c.date_start, c.date_end, date.today()))
 
@@ -1066,6 +1085,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "id": c.id, "status": effective_campaign_status(c.status, chain_st),
         "buttons": button_states(out["rows"], creatives, pixels, build.pixel_setup(db, c.deal_id)),
         "status_chain": chain_st, "plan_show": c.plan_show,
+        # Единица объёма РК (22.11.2026): фронт по ней выбирает подписи; click-РК — план и темп в кликах.
+        "unit": c.unit, "plan_click": c.plan_click,
         "external_totals": ext_mod.totals(ext),
         "date_start": c.date_start, "date_end": c.date_end,
         "placements": out["rows"], "share_sum": out["share_sum"],
@@ -1073,7 +1094,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "boost": _boost_view(db, c.id),
         "creative_manual": list(CREATIVE_MANUAL),
         "creative_statuses": list(CREATIVE_STATUSES),
-        **progress(c.plan_show, fact_total, c.date_start, c.date_end, as_of, now=date.today()),
+        **progress(plan_of(c), fact_total, c.date_start, c.date_end, as_of, now=date.today()),
         # Словарь целиком + какие значения можно ВЫБРАТЬ: экран не должен предлагать
         # в поповере то, что ставит конвейер.
         "placement_statuses": list(PLACEMENT_STATUSES),
@@ -1259,7 +1280,7 @@ def campaign_stat(campaign_id: int, grain: str = "day",
         raise HTTPException(400, f"Гранулярность бывает {tuple(GRAIN_DAYS)}")
     c, _deal = _campaign_in_scope(db, campaign_id, user)
     by_day = _stat_by_day(db, [c.id]).get(c.id, {})
-    fact = _facts(db, [c.id]).get(c.id, {}).get("shows")
+    fact = _facts(db, [c.id]).get(c.id, {}).get(fact_col(c.unit))
     today = fact_as_of(db)    # дата среза: «день» сводки — последний отчитанный
     # Наш факт режется тем же срезом, что WR: ручная правка или демо позже среза сделали
     # бы сверку несимметричной с другой стороны (ревью 02.10.2026).
@@ -1272,9 +1293,10 @@ def campaign_stat(campaign_id: int, grain: str = "day",
         # норма РК целиком, а поднимается лишь остаток тех, кого буст касается: pct пересчитан на весь остаток
         first, last, pct = boost_mod.boosted_days(live)
         window = (first, last, boost_mod.rk_pct(db, c, pct, live.placement_ids))
-    out = daily_buckets(c.plan_show, fact, fl, by_day, grain=grain,
+    out = daily_buckets(plan_of(c), fact, fl, by_day, grain=grain,
                         date_from=date_from, date_to=date_to, today=today, boost=window,
-                        boost_days=boost_mod.days_pct(boost_mod.windows_of(db, [c.id]).get(c.id)))
+                        boost_days=boost_mod.days_pct(boost_mod.windows_of(db, [c.id]).get(c.id)),
+                        unit=c.unit)
     if out is None:
         # Ни плана, ни дат — рисовать нечего, и это не ошибка, а состояние экрана.
         return {"buckets": [], "grain": grain, "need_per_day": None,
@@ -1800,7 +1822,7 @@ def boost_state(campaign_id: int, db: Session = Depends(get_db), user: User = De
             "can_start": bool(fl and fl.done > 0 and fl.left > 0 and c.status not in build.CAMPAIGN_CLOSED),
             "deal_code": deal.code, "advertiser": head[0] if head else None,
             "brand": head[1] if head else None, "service": deal.product,
-            "plan": c.plan_show, "fact": fact_total,
+            "plan": plan_of(c), "fact": fact_total,
             "sites_free": free, "sites_fixed": fixed, "rest_free": round(rest_free)}
 
 
@@ -1851,7 +1873,7 @@ def _realloc_view(db: Session, c: AdCampaign) -> dict:
     from app.ad import realloc
     rows, days_left = realloc.rows_of(db, c)
     out = realloc.propose(rows, days_left)
-    out["plan"] = c.plan_show
+    out["plan"] = plan_of(c)
     out["has_manual"] = any(r.get("fixed_plan") is not None for r in rows)
     from app.ad import boost as boost_mod
     out["boost_live"] = boost_mod.is_live(boost_mod.active(db, c.id))
@@ -1900,7 +1922,7 @@ def realloc_apply(campaign_id: int, payload: ReallocIn, db: Session = Depends(ge
     if not plans:
         raise HTTPException(400, "Нечего применять — планы не изменились")
     rows, _left = realloc.rows_of(db, c)
-    why = realloc.check_reason(payload.reason) or realloc.check_plans(rows, plans, c.plan_show)
+    why = realloc.check_reason(payload.reason) or realloc.check_plans(rows, plans, plan_of(c))
     if why:
         db.rollback()
         raise HTTPException(400, why)
