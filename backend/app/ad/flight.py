@@ -151,6 +151,25 @@ CREATIVE_IN_WORK = CREATIVE_CHAIN + CREATIVE_IN_PLAN
 CREATIVE_SHARES = ("согласован",) + CREATIVE_IN_PLAN
 
 
+# ── единица объёма РК: показы или клики (22.11.2026) ─────────────────────────
+#
+# У CPC-сделки объём РК — КЛИКИ, и раскладка по площадкам делит именно их. Сам `distribute`
+# юнит-агностичен: он делит одно число `plan` и читает факт из переданного словаря. Единица
+# прошивается ЗДЕСЬ — выбором плана и выбором колонки факта, — чтобы в каждом вызывающем не
+# появилось своё «если click, то plan_click». Второе такое выражение разошлось бы с первым
+# молча: цифрами, которые выглядят правдоподобно.
+
+
+def plan_of(camp) -> Optional[float]:
+    """Объём РК в его единице: клики у click-РК, иначе показы (22.11.2026)."""
+    return camp.plan_click if getattr(camp, "unit", None) == "click" else camp.plan_show
+
+
+def fact_col(unit: Optional[str]) -> str:
+    """Колонка факта `ad_campaign_stat` для единицы: 'clicks' | 'shows' (22.11.2026)."""
+    return "clicks" if unit == "click" else "shows"
+
+
 @dataclass(frozen=True)
 class Flight:
     """Окно РК в днях. `done` — сколько дней уже отчитано, `left` — сколько осталось."""

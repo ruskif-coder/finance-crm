@@ -4,7 +4,7 @@
 данные. Живой DSP не трогаем — этот слой вообще не ходит наружу.
 """
 import pytest
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import text
 
@@ -312,3 +312,139 @@ def test_unit_for_show():
     assert unit_for("CPM") == "show"
     assert unit_for("Фикс") == "show"
     assert unit_for(None) == "show"
+
+
+# ── раскладка в единице РК: клики у click-РК, показы у остальных (22.11.2026) ──
+#
+# `distribute` единицу не знает — он делит одно число. Знание единицы живёт в вызывающем
+# (`build.campaign_layout`) и в чтении факта (`bidder/facts`), поэтому проверяется именно
+# сквозной результат раскладки: сумма планов площадок и то, из какой колонки взят факт.
+#
+# Числа подобраны так, чтобы перепутанная единица была ВИДНА в сумме, а не в подписи:
+# факт одной площадки больше её доли по весам, поэтому раскладка поднимает её план до
+# факта, и «не та» колонка даёт вместо плана РК её величину.
+
+def _layout_env(db):
+    """РК и ровно ДВЕ площадки в раскладке — чтобы сумма планов не ловила округление.
+
+    Остальные площадки РК выводятся из раскладки (вес снят): на трёх и более площадках
+    деление даёт 333/333/333 и `sum(планы) == план` проверялось бы с оговоркой на
+    округление, то есть перестало бы быть проверкой единицы.
+    """
+    cid = db.execute(text(
+        "SELECT campaign_id FROM ad_campaign_placement "
+        "GROUP BY campaign_id HAVING count(*) >= 2 ORDER BY campaign_id LIMIT 1")).scalar()
+    if not cid:
+        pytest.skip("на стенде нет РК с двумя и более площадками")
+    camp = db.query(AdCampaign).get(cid)
+    pls = (db.query(AdCampaignPlacement)
+           .filter(AdCampaignPlacement.campaign_id == cid)
+           .order_by(AdCampaignPlacement.id).all())
+    keep = pls[:2]
+    for p in keep:
+        p.weight = 1.0            # равные веса: делим ровно пополам
+        p.status = "запущен"
+        p.fixed_plan = 0          # ручной план главнее объёма по креативам — иначе план не по весам
+        p.share = None
+        p.plan_show = None
+    for p in pls[2:]:
+        p.weight = None           # вне раскладки — иначе деление не на две доли
+        p.status = "ждёт сборки"
+        p.fixed_plan = 0
+    # Флайт за пределами удержания (первые 5 дней): только с 6-го дня факт участвует в раскладке.
+    camp.date_start = date.today() - timedelta(days=10)
+    camp.date_end = date.today() + timedelta(days=20)
+    db.flush()
+    return camp, keep
+
+
+def _stat_rows(db, campaign_id, values):
+    """Свои строки факта РК: values = [(площадка, показы, клики), …].
+
+    Дата — сегодня и источник `ms` (боевой, `stat_sources.COMBAT`): со старым срезом
+    `fact_as_of` отдал бы устаревшую дату, `is_stale` погасил факт, и тест молча проверял
+    бы раскладку без факта. Всё это откатывается транзакцией теста.
+    """
+    db.execute(text("DELETE FROM ad_campaign_stat WHERE campaign_id = :c"), {"c": campaign_id})
+    for p, shows, clicks in values:
+        db.execute(text(
+            "INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks, source) "
+            "VALUES (:c, :p, :d, :s, :k, 'ms')"),
+            {"c": campaign_id, "p": p.id, "d": date.today(), "s": shows, "k": clicks})
+    db.flush()
+
+
+def test_layout_show_unit_unchanged():
+    """Регрессия CPM: у РК с `unit="show"` раскладка делит `plan_show`, факт — из `shows`.
+
+    Клики в тех же строках нарочно огромные: если бы факт читался из `clicks`, площадка
+    была бы поднята до них (правило «план не ниже факта») и сумма планов ушла бы с 1000
+    на 5000. Именно это и ловит сумма, а не отдельная проверка колонки.
+    """
+    from app.bidder.facts import placement_facts
+    db = SessionLocal()
+    try:
+        camp, keep = _layout_env(db)
+        camp.unit = "show"
+        camp.plan_show = 1000
+        camp.plan_click = 9000          # впятеро больше: перепутанная единица видна сразу
+        db.flush()
+        _stat_rows(db, camp.id, [(keep[0], 5, 5000), (keep[1], 3, 4000)])
+
+        # факт по умолчанию — показы; клики лежат отдельной колонкой той же строки
+        shows = placement_facts(db, [camp.id])
+        clicks = placement_facts(db, [camp.id], "click")
+        assert shows[camp.id][keep[0].id] == 5
+        assert clicks[camp.id][keep[0].id] == 5000
+
+        _, out = build.campaign_layout(db, camp.id, cap_ctx=(None, {}), with_boost=False)
+        rows = [r for r in out["rows"] if r.get("in_plan")]
+        total = sum(r["plan_show"] or 0 for r in rows)
+        assert len(rows) == 2
+        assert total == 1000, f"сумма планов площадок {total}, ожидали plan_show=1000"
+        assert out["facts_used"] is True, "факт не попал в раскладку — тест проверял бы не то"
+        assert all(r["plan_show"] == 500 for r in rows), [r["plan_show"] for r in rows]
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_layout_click_unit_distributes_clicks():
+    """У РК с `unit="click"` раскладка делит `plan_click`, а факт читается из `clicks`.
+
+    Числа: план 1000, доли по весам 500/500, клики 900 и 3 — площадка с 900 поднимается
+    до факта, второй уходит остаток 100. Сумма остаётся 1000, то есть делится план в
+    КЛИКАХ. Прочитай вызывающий `shows` (5000/4000) — сумма стала бы 9000, а план
+    площадки — 5000; прочитай `plan_show` вместо `plan_click` — сумма стала бы 5000.
+    """
+    from app.bidder.facts import placement_facts
+    db = SessionLocal()
+    try:
+        camp, keep = _layout_env(db)
+        camp.unit = "click"
+        camp.plan_click = 1000
+        camp.plan_show = 5000           # показов впятеро больше — единицу видно по сумме
+        db.flush()
+        _stat_rows(db, camp.id, [(keep[0], 5000, 900), (keep[1], 4000, 3)])
+
+        shows = placement_facts(db, [camp.id])
+        clicks = placement_facts(db, [camp.id], "click")
+        assert clicks[camp.id][keep[0].id] == 900
+        assert shows[camp.id][keep[0].id] == 5000
+
+        _, out = build.campaign_layout(db, camp.id, cap_ctx=(None, {}), with_boost=False)
+        by_id = {r["id"]: r for r in out["rows"]}
+        rows = [r for r in out["rows"] if r.get("in_plan")]
+        total = sum(r["plan_show"] or 0 for r in rows)
+        assert len(rows) == 2
+        assert total == 1000, f"сумма планов площадок {total}, ожидали plan_click=1000"
+        assert out["facts_used"] is True, "факт не попал в раскладку — тест проверял бы не то"
+        # факт площадки = её клики, и план поднят до факта (правило 05.10.2026)
+        assert by_id[keep[0].id]["plan_show"] == 900
+        assert by_id[keep[1].id]["plan_show"] == 100
+        assert all(r["plan_show"] < shows[camp.id][r["id"]] for r in rows), (
+            "план площадки оказался в показах — единица РК не прошита"
+        )
+    finally:
+        db.rollback()
+        db.close()

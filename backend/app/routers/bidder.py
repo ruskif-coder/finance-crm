@@ -100,10 +100,10 @@ def layout(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
     camp = db.query(AdCampaign).filter(AdCampaign.id == campaign_id).first()
     if camp is None:
         raise HTTPException(404, "РК не найдена")
-    got = placement_facts(db, [campaign_id])
+    got = placement_facts(db, [campaign_id], camp.unit)
     facts = got.get(campaign_id) if got is not None else None
     # Факт для показа — всегда, даже когда раскладка его не учла (срез устарел).
-    shown = facts if facts is not None else _facts_any(db, campaign_id)
+    shown = facts if facts is not None else _facts_any(db, campaign_id, camp.unit)
     pls, out = build.campaign_layout(db, campaign_id, facts=facts, facts_given=True)
     # Записанный ночью план — то, что стоит лимитами в DSP (владелец 05.10.2026: экраны
     # показывают записанный). Расчёт по правилам сейчас — рядом, если разошёлся.

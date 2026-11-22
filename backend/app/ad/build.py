@@ -37,7 +37,7 @@ from app.ord import readiness
 from app.ad.balance import SCOPES, SCOPE_SURFACE
 from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
                            best_chain_status, chain_status, distribute, effective_status,
-                           effective_status_creative, flight_of)
+                           effective_status_creative, flight_of, plan_of)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.bidder.facts import any_facts
 from app.launch_prep import pub_rules
@@ -397,7 +397,11 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     буст поднимет.
 
     `assume_running` — id площадок, которые считаем ЗАПУЩЕННЫМИ: «что получит согласованная площадка, если
-    стартует сейчас» (`app/ad/volumes_now`). Ничего не записывает: статусы в базе не трогаются."""
+    стартует сейчас» (`app/ad/volumes_now`). Ничего не записывает: статусы в базе не трогаются.
+
+    ЕДИНИЦА ОБЪЁМА — единица РК (22.11.2026): у click-РК (CPC) делится `plan_click`, факт читается из
+    `clicks`; у остальных — `plan_show` и `shows`. Выбирается `flight.plan_of` / `flight.fact_col`,
+    сам `distribute` единицы не знает."""
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == campaign_id).all())
     camp = db.query(AdCampaign).get(campaign_id)
@@ -414,10 +418,11 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     cap, manual = cap_ctx
     if not facts_given:
         from app.bidder.facts import placement_facts
-        got = placement_facts(db, [campaign_id])
+        # Факт — в единице РК: у click-РК это клики (`flight.fact_col`), иначе показы.
+        got = placement_facts(db, [campaign_id], camp.unit if camp else None)
         facts = got.get(campaign_id) if got is not None else None
     surfaces = deal_plan(db, camp.deal_id)["surfaces"] if camp else []
-    plan = camp.plan_show if camp else None
+    plan = plan_of(camp) if camp else None
     out = distribute(plan, None, fl,
                      [{"id": p.id, "status": "запущен" if p.id in (assume_running or ()) else p.status,
                        "weight": p.weight, "fixed": fixed.get(p.id),
@@ -433,7 +438,8 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     live = boost.active(db, campaign_id) if (camp and with_boost) else None
     extra = 0
     if plan and boost.is_live(live):
-        known = facts if facts is not None else any_facts(db, campaign_id)
+        # Остаток «теста размещения» — тоже в единице РК (22.11.2026): у click-РК он в кликах.
+        known = facts if facts is not None else any_facts(db, campaign_id, camp.unit)
         out["rows"], extra = boost.boost_rows(out["rows"], known, live.pct, live.placement_ids)
     out["plan_eff"] = (plan + extra) if plan else plan
     out["boost_extra"] = extra
@@ -463,8 +469,13 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     # вызванный из нового места, не должен молча считать по неподтверждённым статусам соседей.
     lock_campaign_shares(db, campaign_id)
     pls, out = campaign_layout(db, campaign_id, cap_ctx, facts, facts_given)
-    camp_plan = out.get("plan_eff") or db.query(AdCampaign.plan_show).filter(
-        AdCampaign.id == campaign_id).scalar()
+    camp_plan = out.get("plan_eff")
+    if not camp_plan:
+        # Fallback: план РК в ЕЁ единице — через `plan_of`, а не чтением `plan_show` напрямую.
+        # У click-РК (CPC) план лежит в `plan_click`, и остаток, посчитанный по `plan_show`,
+        # был бы в чужих единицах — правдоподобное число не про то (22.11.2026).
+        _camp = db.query(AdCampaign).filter(AdCampaign.id == campaign_id).first()
+        camp_plan = plan_of(_camp) if _camp else None
     cap = out.get("cap")
     cap_abs = cap * camp_plan if (cap and camp_plan) else None
     by_id = {r["id"]: r for r in out["rows"]}
@@ -561,13 +572,15 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     from app.ad.balance import manual_scopes, share_cap
     cap_ctx = (share_cap(db), manual_scopes(db))
     from app.bidder.facts import placement_facts
-    all_facts = placement_facts(db, [c.id for c in camps])
     from app.ext_lock import lock_campaign_shares
     for camp in camps:
         # Замок РК — ДО правки весов: пока ночной проход держит строки площадок, запрос трафика не
         # должен стоять в очереди с ними на руках (07.10.2026).
         lock_campaign_shares(db, camp.id)
-        f = all_facts.get(camp.id) if all_facts is not None else None
+        # Факт — в единице РК (22.11.2026): у click-РК клики, иначе показы. По одной РК —
+        # в пакете единицы разные, одним `unit` на все не отделаться.
+        got = placement_facts(db, [camp.id], camp.unit)
+        f = got.get(camp.id) if got is not None else None
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
             # У сделки нет годного медиаплана (отклонён, без строк) — поверхностей не знаем,
