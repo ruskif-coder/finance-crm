@@ -151,6 +151,19 @@ CREATIVE_IN_WORK = CREATIVE_CHAIN + CREATIVE_IN_PLAN
 CREATIVE_SHARES = ("согласован",) + CREATIVE_IN_PLAN
 
 
+def plan_of(camp) -> Optional[float]:
+    """Объём РК в её единице: клики у click-РК (CPC), иначе показы (22.11.2026).
+
+    Только для ЭКРАНА/лимитов РК, не для раскладки площадок: площадки делятся показами
+    (CPM), а «сколько обещали» считаем в кликах."""
+    return camp.plan_click if getattr(camp, "unit", None) == "click" else camp.plan_show
+
+
+def fact_col(unit: Optional[str]) -> str:
+    """Колонка факта `ad_campaign_stat` для единицы РК: 'clicks' | 'shows' (22.11.2026)."""
+    return "clicks" if unit == "click" else "shows"
+
+
 @dataclass(frozen=True)
 class Flight:
     """Окно РК в днях. `done` — сколько дней уже отчитано, `left` — сколько осталось."""

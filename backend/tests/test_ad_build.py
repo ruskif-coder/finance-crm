@@ -312,3 +312,15 @@ def test_unit_for_show():
     assert unit_for("CPM") == "show"
     assert unit_for("Фикс") == "show"
     assert unit_for(None) == "show"
+
+
+def test_plan_of_and_fact_col_click_unit():
+    """Дашборд показывает РК в ЕЁ единице (клики у CPC), а площадки/кабинет — показы (22.11.2026)."""
+    from types import SimpleNamespace
+    from app.ad.flight import plan_of, fact_col
+    click = SimpleNamespace(unit="click", plan_click=3000, plan_show=500000)
+    assert plan_of(click) == 3000
+    assert fact_col("click") == "clicks"
+    show = SimpleNamespace(unit="show", plan_click=3000, plan_show=500000)
+    assert plan_of(show) == 500000
+    assert fact_col("show") == "shows"

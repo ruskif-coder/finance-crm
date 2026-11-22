@@ -37,7 +37,8 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY, PLACEMENT_RETURN,
                            as_placement_scale, best_chain_status, can_start_placement, holds,
                            creative_counts, daily_buckets,
-                           distribute, effective_status, flight_of, progress, split_evenly)
+                           distribute, effective_status, flight_of, progress, split_evenly,
+                            plan_of, fact_col)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp.client import MsClient
 from app.ad.stat_sources import (VERIFIER, manual_superseded_sql, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
@@ -840,7 +841,9 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
     for c, d in pairs:
         f = facts.get(c.id, {})
         pls = places.get(c.id, [])
-        fc = progress(c.plan_show, f.get("shows"), c.date_start, c.date_end, today, now=date.today())
+        # Прогноз/темп/недокрут — В ЕДИНИЦЕ РК (клики у CPC, показы у CPM): строка дашборда
+        # отвечает «сколько обещали и сколько открутили». Раскладка площадок ниже — в показах.
+        fc = progress(plan_of(c), f.get(fact_col(c.unit)), c.date_start, c.date_end, today, now=date.today())
         by_pl = cr_all.get(c.id, {})
         chain_st = campaign_chain_status(
             has_plan=bool(c.plan_show), placements=len(pls),
@@ -871,6 +874,8 @@ def dashboard(scope: Optional[str] = None, archive: bool = False,
             "status": effective_campaign_status(c.status, chain_st),
             "date_start": c.date_start, "date_end": c.date_end,
             "plan_show": c.plan_show, "plan_budget": c.plan_budget,
+            # Единица РК и её план (клики у CPC) — для строки дашборда «в кликах» (22.11.2026).
+            "unit": c.unit, "plan_click": c.plan_click,
             "fact_shows": f.get("shows"), "fact_clicks": f.get("clicks"),
             "ms_campaign_xxhash": c.ms_campaign_xxhash,
             # Кнопки запуска/остановки заперты до выкладки в DSP — причина словами.
