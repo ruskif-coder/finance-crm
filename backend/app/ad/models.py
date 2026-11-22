@@ -30,6 +30,7 @@ class AdCampaign(Base):
     plan_show = Column(Float)        # = лимиты кампании в МС
     plan_click = Column(Float)
     plan_budget = Column(Float)
+    unit = Column(String(8), nullable=False, default="show", server_default="show")   # единица объёма РК: show | click (22.11.2026)
     ms_campaign_xxhash = Column(String(64))    # id кампании в DSP
     ms_synced_at = Column(DateTime)
     # Ссылка на отчёт Weborama у внешнего пикселя (05.11.2026, миграция 2026-11-05_ad_campaign_wr_report_url):
