@@ -55,14 +55,12 @@ def build_campaign_params(camp: AdCampaign, deal: SalesDeal) -> dict:
         raise MsError(f"РК #{camp.id}: нет date_start/date_end — МС их требует")
     if camp.date_end < camp.date_start:
         raise MsError(f"РК #{camp.id}: date_end раньше date_start")
-    # Тип оплаты (optimization.type) здесь НЕ выставляется (22.11.2026): в доке `Campaign.add`/`edit`
-    # поля `optimization` нет, а `Campaign.getInfo` его только возвращает ({type:"cpm", value:0,
-    # statistic_field:""} у всех, включая кликовые РК). Для CPC-РК лимит КЛИКОВ едет (`click` ниже),
-    # а сам тип оплаты ставится ВРУЧНУЮ в кабинете DSP — как лимит кликов у RCM5TT был выставлен
-    # руками. Если DSP примет `optimization` в `add`/`edit` — добавить сюда
-    # `"optimization": {"type": "cpc", "value": <цена клика>, "statistic_field": "click"}` и
-    # подтвердить демо-вызовом `Campaign.edit`; вслепую слать нельзя — отказ на неизвестном поле
-    # уронит всё создание/правку РК.
+    # Тип оплаты РК (22.11.2026): прямого поля `optimization` в `Campaign.add`/`edit` НЕТ — оно только
+    # отдаётся в `getInfo` ({type:"cpm", value:0, statistic_field:""} у всех, включая кликовые РК).
+    # В доке `Campaign.add` есть `cpa_optimizations` (bool) и `advanced_optimizations` (массив id) — судя по
+    # всему, ими и включается не-CPM оплата, но как именно встают type/value/statistic_field — в доке не
+    # расписано. Лимит КЛИКОВ у click-РК едет (`click` ниже); точную связку флагов подтверждаем живым
+    # `Campaign.add`/`edit` на тестовой РК, после чего сюда добавляются `cpa_optimizations`/`advanced_optimizations`.
     return {
         "title": campaign_title(camp, deal),
         "status": ds.STOPPED,
