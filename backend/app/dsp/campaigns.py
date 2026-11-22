@@ -55,12 +55,12 @@ def build_campaign_params(camp: AdCampaign, deal: SalesDeal) -> dict:
         raise MsError(f"РК #{camp.id}: нет date_start/date_end — МС их требует")
     if camp.date_end < camp.date_start:
         raise MsError(f"РК #{camp.id}: date_end раньше date_start")
-    # Тип оплаты РК (22.11.2026): прямого поля `optimization` в `Campaign.add`/`edit` НЕТ — оно только
-    # отдаётся в `getInfo` ({type:"cpm", value:0, statistic_field:""} у всех, включая кликовые РК).
-    # В доке `Campaign.add` есть `cpa_optimizations` (bool) и `advanced_optimizations` (массив id) — судя по
-    # всему, ими и включается не-CPM оплата, но как именно встают type/value/statistic_field — в доке не
-    # расписано. Лимит КЛИКОВ у click-РК едет (`click` ниже); точную связку флагов подтверждаем живым
-    # `Campaign.add`/`edit` на тестовой РК, после чего сюда добавляются `cpa_optimizations`/`advanced_optimizations`.
+    # Модель оплаты (optimization.type) НЕ ставится через наш API (22.11.2026, проверено живьём на проде):
+    # ни `cpa_optimizations`, ни `advanced_optimizations`, ни прямой `optimization` в `Campaign.add`/`edit`
+    # не меняют `optimization` — оно у всех РК `{type:"cpm", value:0, statistic_field:""}`, и DSP считает
+    # по CPM (spent = показы/1000 × cpm; у BINNO cpm=100). Лимит КЛИКОВ у click-РК едет (`click` ниже) —
+    # это лимит доставки (стоп по кликам), а не модель оплаты. Смену CPM→CPC решает менеджер DSP на
+    # уровне договора/кабинета, не мы.
     return {
         "title": campaign_title(camp, deal),
         "status": ds.STOPPED,
