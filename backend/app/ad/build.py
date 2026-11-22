@@ -569,6 +569,7 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     camps = q.all()
     changed = 0
     changes: list = []
+    by_fact = False
     from app.ad.balance import manual_scopes, share_cap
     cap_ctx = (share_cap(db), manual_scopes(db))
     from app.bidder.facts import placement_facts
@@ -580,6 +581,7 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
         # Факт — в единице РК (22.11.2026): у click-РК клики, иначе показы. По одной РК —
         # в пакете единицы разные, одним `unit` на все не отделаться.
         got = placement_facts(db, [camp.id], camp.unit)
+        by_fact = by_fact or got is not None
         f = got.get(camp.id) if got is not None else None
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
@@ -600,7 +602,7 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     if commit:
         db.commit()
     return {"campaigns": len(camps), "weights_changed": changed,
-            "by_fact": all_facts is not None, "changes": changes}
+            "by_fact": by_fact, "changes": changes}
 
 
 def deal_publishers(db: Session, deal_id: int) -> set:
