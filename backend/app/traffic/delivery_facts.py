@@ -55,6 +55,8 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
                pub.code, pub.domain, pub.name AS publisher,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
                  WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
+               (SELECT sum(s.clicks) FROM ad_campaign_stat s
+                 WHERE s.campaign_id = p.campaign_id AND s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks,
                """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
           FROM ad_campaign_placement p
           JOIN sales_publishers pub ON pub.id = p.publisher_id

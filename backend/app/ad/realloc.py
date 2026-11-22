@@ -97,6 +97,11 @@ def rows_of(db, camp, as_of=None) -> tuple:
     from datetime import date
     as_of = as_of or fact_as_of(db, date.today())
     fl = flight_of(camp.date_start, camp.date_end, as_of)
+    if camp.unit == "click":
+        # CPC: темп сети (доноры/«возможность в день») считается по показам, а объём — в кликах.
+        # «Предложено» в кликах нет (bid_statistic мерит показы) — перенос по темпу не поддерживаем
+        # до решения владельца; ручной «заданный объём» (`apply`) остаётся доступным (22.11.2026).
+        return [], (fl.left if fl else 0)
     pls = (db.query(AdCampaignPlacement).filter(AdCampaignPlacement.campaign_id == camp.id)
            .order_by(AdCampaignPlacement.id).all())
     names = _names(db, [p.publisher_id for p in pls])
@@ -417,7 +422,7 @@ def newly_unplaced(before_total, after_total, plan, running: bool = True) -> boo
     return (before_total or 0) >= plan - tol and (after_total or 0) < plan - tol
 
 
-def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, running: bool = True) -> bool:
+def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, running: bool = True, unit: str = "show") -> bool:
     """После пересчёта долей (`build.recompute_shares`): уведомление трафику, если объём впервые не разложен. Планы не
     трогаем — решает человек. Сбой уведомления пересчёт не роняет. → ушло ли."""
     import logging
@@ -428,9 +433,9 @@ def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, runnin
     try:
         gap = round(plan - after_total)
         bus.emit(db, "traffic_volume_unplaced", title=f"Объём РК не разложен: {rk_label(db, campaign_id)}",
-                 body=(f"Планы площадок в сумме {round(after_total):,} при плане РК {round(plan):,} — {gap:,} показов не "
-                       f"достаются никому: крутящие площадки на ручных планах. Отдайте остаток площадкам в окне «Темп "
-                       f"размещения → Перераспределить» или сбросьте ручные планы.").replace(",", " "),
+                 body=(f"Планы площадок в сумме {round(after_total):,} при плане РК {round(plan):,} — {gap:,} "
+                       f"{'кликов' if unit == 'click' else 'показов'} не достаются никому: крутящие площадки на ручных планах. "
+                       f"Отдайте остаток площадкам в окне «Темп размещения → Перераспределить» или сбросьте ручные планы.").replace(",", " "),
                  link=f"/traffic/dashboard?rk={campaign_id}", entity_type="ad_campaign", entity_id=campaign_id)
         return True
     except Exception:  # noqa: BLE001 — уведомление справка, пересчёт долей важнее

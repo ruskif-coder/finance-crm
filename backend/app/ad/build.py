@@ -275,18 +275,16 @@ def replan_deal(db: Session, deal_id: int, commit: bool = True) -> Optional[dict
     deals = _campaign_deals(db, assembly_stage_ids(db), deal_id) if camp is not None else []
     if not deals:
         return None
-    before = (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
-              camp.plan_click, camp.unit)
+    before = (plan_of(camp), camp.plan_budget, camp.date_start, camp.date_end, camp.unit)
     _fill_campaign(camp, deals[0], deal_plan(db, deal_id))
-    if (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
-            camp.plan_click, camp.unit) == before:
+    if (plan_of(camp), camp.plan_budget, camp.date_start, camp.date_end, camp.unit) == before:
         return {"campaign_id": camp.id, "changed": False}
     db.flush()
     from app.ad.realloc import alert_plan_cut
     alert_plan_cut(db, {camp.id: before[0]})
     if commit:
         db.commit()
-    return {"campaign_id": camp.id, "changed": True, "plan_before": before[0], "plan_after": camp.plan_show}
+    return {"campaign_id": camp.id, "changed": True, "plan_before": before[0], "plan_after": plan_of(camp)}
 
 
 def sync_campaigns(db: Session, commit: bool = True) -> dict:
@@ -493,8 +491,9 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
                                               out["facts_used"], cap_abs)["code"]})
     # Остаток некуда положить — все крутящие на ручных планах (владелец 27.10.2026): уведомление, планы не трогаем
     from app.ad.realloc import alert_unplaced
+    _unit = db.query(AdCampaign.unit).filter(AdCampaign.id == campaign_id).scalar()
     alert_unplaced(db, campaign_id, before_total, sum(p.plan_show or 0 for p in pls), camp_plan,
-                   any(r.get("running") for r in out["rows"]))
+                   any(r.get("running") for r in out["rows"]), _unit or "show")
     return changes
 
 

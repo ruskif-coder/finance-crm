@@ -718,6 +718,8 @@ def _distribution(db: Session, pairs, facts: dict, today: date, places: dict, cr
             # источником для самих креативов (`build.sync_creatives`), но не для площадки.
             p["status"] = effective_status(p["status"], best_chain_status(
                 _as_placement_scale(x) for x in by_pl.get(p["id"], [])))
+            if c.unit == "click":
+                p["fact"] = p.get("fact_clicks")
         fl = flight_of(c.date_start, c.date_end, today)
         # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
         # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
@@ -1032,6 +1034,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     prepared = []
     for p in pls:
         d = dict(p)
+        if c.unit == "click":
+            d["fact"] = d.get("fact_clicks")
         m = modes.get((c.deal_id, p["publisher_id"])) or {}
         d["ext_mode"], d["ext_surfaces"] = m.get("mode"), m.get("external", [])
         mine = creatives.get(p["id"], [])
