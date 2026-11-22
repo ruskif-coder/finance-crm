@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ad import balance, build
-from app.ad.flight import HOLD_DAYS, PLACEMENT_RUNNING
+from app.ad.flight import HOLD_DAYS, PLACEMENT_RUNNING, plan_of
 from app.ad.models import AdCampaign
 from app.ad.stat_sources import fact_as_of, is_stale
 from app.bidder.facts import placement_facts
@@ -80,13 +80,19 @@ def run_changes(run_id: int, db: Session = Depends(get_db), user: User = Depends
 def campaigns(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Незавершённые РК с планом — для выбора на странице. `running` — сколько площадок
     крутит прямо сейчас (`flight.PLACEMENT_RUNNING`): «запущена» на странице = крутится
-    хотя бы одна, а не сохранённый статус РК, который бывает расчётным."""
+    хотя бы одна, а не сохранённый статус РК, который бывает расчётным.
+
+    «С планом» — в ЕДИНИЦЕ РК (22.11.2026): у click-РК план живёт в `plan_click`, поэтому
+    условие по одному `plan_show` теряло кликовые РК."""
+
     rows = db.execute(text(
-        "SELECT c.id, d.code, d.title, c.plan_show, c.date_start, c.date_end, c.status, "
+        "SELECT c.id, d.code, d.title, c.plan_show, c.unit, c.date_start, c.date_end, c.status, "
         "(SELECT count(*) FROM ad_campaign_placement p WHERE p.campaign_id = c.id "
         " AND p.status = ANY(:run)) AS running "
         "FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id "
-        "WHERE c.plan_show > 0 AND (c.status IS NULL OR c.status <> ALL(:closed)) "
+        # Объём кликовой РК — клики (22.11.2026): у неё `plan_show` производный (клики ÷ CTR)
+        # и может быть нулём при живом плане, поэтому одного `plan_show > 0` мало.
+        "WHERE (c.plan_show > 0 OR c.plan_click > 0) AND (c.status IS NULL OR c.status <> ALL(:closed)) "
         "ORDER BY c.date_start DESC NULLS LAST, c.id DESC"),
         {"closed": list(build.CAMPAIGN_CLOSED),
          "run": list(PLACEMENT_RUNNING)}).mappings().all()
@@ -115,7 +121,7 @@ def layout(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
         {"c": campaign_id}).all())
     cap = out.get("cap")
     # Буст («тест размещения») поднимает план раскладки, а не план РК: сверка идёт с поднятым.
-    plan_eff = out.get("plan_eff") or camp.plan_show
+    plan_eff = out.get("plan_eff") or plan_of(camp)
     cap_abs = cap * plan_eff if (cap and plan_eff) else None
     rows, totals = [], {"fixed": 0, "settled": 0, "by_weight": 0}
     for r in out["rows"]:
@@ -132,7 +138,9 @@ def layout(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
                      "changes_tonight": (round(st) if st else None) != r["plan_show"],
                      "fact": fact, "reason": why["code"], "reason_label": why["label"]})
     rows.sort(key=lambda x: -(x["plan_stored"] or x["plan_show"] or 0))
-    return {"campaign_id": campaign_id, "plan_show": camp.plan_show,
+    return {"campaign_id": campaign_id, "plan_show": plan_of(camp),
+            # Единица объёма РК (22.11.2026): у click-РК `plan_show` и все планы площадок — клики.
+            "unit": camp.unit,
             "date_start": camp.date_start and camp.date_start.isoformat(),
             "date_end": camp.date_end and camp.date_end.isoformat(),
             "facts_used": out["facts_used"], "cap_pct": round(cap * 100, 1) if cap else None,

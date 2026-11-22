@@ -369,11 +369,13 @@ const CARD_SKIN = {
 // Уровень считает сервер (`stat_sources.mismatch_level`), экран только красит.
 export const MISMATCH_FG = { ok: 'var(--ok-fg)', warn: 'var(--warning-fg)', bad: 'var(--danger-fg)' }
 
-const DayCardBody = ({ b, label }) => {
+const DayCardBody = ({ b, label, unit }) => {
   const past = !!b.days_past
   const ctr = past && b.shows ? (b.clicks / b.shows * 100) : null
+  // План дня — в единице РК (22.11.2026): у click-РК это КЛИКИ. Показы и клики факта — настоящие.
+  const planCap = unit === 'click' ? 'Клики план' : 'Показы план'
   const rows = [
-    ['Показы план', num(b.plan), 'var(--text-primary)'],
+    [planCap, num(b.plan), 'var(--text-primary)'],
     ...(b.boost_extra ? [['В т. ч. темп размещения', `+${num(b.boost_extra)}`, 'var(--warning-text)']] : []),
     ['Показы факт', past ? num(b.shows) : DASH, past ? 'var(--blue)' : 'var(--text-faint)'],
     ['Клики', past ? num(b.clicks) : DASH, past ? 'var(--text-primary)' : 'var(--text-faint)'],
@@ -426,13 +428,13 @@ const DayCardBody = ({ b, label }) => {
 
    `pointerEvents: none` обязателен: иначе карточка попадает под курсор, столбец теряет
    наведение, и она начинает мигать. */
-const DayCard = ({ b, label, at }) => {
+const DayCard = ({ b, label, at, unit }) => {
   const half = CARD_W / 2
   const left = Math.min(Math.max(at.dx - half, 0), Math.max(0, at.w - CARD_W))
   return (
     <div style={{ position: 'absolute', top: '100%', marginTop: 8, left,
       zIndex: Z.dropdown, pointerEvents: 'none', ...CARD_SKIN }}>
-      <DayCardBody b={b} label={label} />
+      <DayCardBody b={b} label={label} unit={unit} />
     </div>
   )
 }
@@ -450,7 +452,7 @@ const DayCard = ({ b, label, at }) => {
    фиксирован. */
 const CARD_H = 208
 
-export const DayTip = ({ b, label, x, y, bottom }) => {
+export const DayTip = ({ b, label, x, y, bottom, unit }) => {
   if (typeof document === 'undefined') return null
   const vw = window.innerWidth
   const vh = window.innerHeight
@@ -460,14 +462,14 @@ export const DayTip = ({ b, label, x, y, bottom }) => {
   return createPortal(
     <div style={{ position: 'fixed', left, top, zIndex: Z.dropdown, pointerEvents: 'none',
       ...CARD_SKIN }}>
-      <DayCardBody b={b} label={label} />
+      <DayCardBody b={b} label={label} unit={unit} />
     </div>, document.body)
 }
 
 /* Правило долек — `columnOf`/`cellKind` из lib/dynamicsModel, одно с графиком расхлопа v2; здесь только вид. */
 const DYN_BG = { fact: 'var(--blue)', plan: 'var(--blue-soft)', boost: 'var(--warning)', empty: 'var(--bg-subtle)' }
 
-export const Dynamics = ({ data, label }) => {
+export const Dynamics = ({ data, label, unit }) => {
   // { i, dx, w } — столбец, положение курсора ВНУТРИ графика и его ширина. Именно в
   // локальных координатах, а не в оконных: карточка дня живёт внутри графика, и все
   // её пределы должны считаться там же.
@@ -480,7 +482,9 @@ export const Dynamics = ({ data, label }) => {
       </span>
     )
   }
-  const max = Math.max(...data.buckets.map(b => Math.max(b.plan || 0, b.shows || 0))) * 1.15 || 1
+  // Шкала — по плану и факту В ОДНОЙ ЕДИНИЦЕ: у click-РК факт-слой — клики, иначе столбик
+  // показов на фоне плана в кликах упирался бы в потолок (22.11.2026).
+  const max = Math.max(...data.buckets.map(b => Math.max(b.plan || 0, (unit === 'click' ? b.clicks : b.shows) || 0))) * 1.15 || 1
   // Подпись оси — ДАТА, а не номер дня: флайт живёт не внутри месяца, и «15» на
   // границе августа и сентября не отвечает на вопрос «какое это число».
   // Подписывать каждый столбец нельзя — сольются; шаг зависит от длины окна.
@@ -490,7 +494,7 @@ export const Dynamics = ({ data, label }) => {
       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end' }}>
         {data.buckets.map((b, i) => {
           // «Темп размещения»: добавка буста — верхняя часть плана другим цветом, пропорционально.
-          const cells = columnOf(b, max, { future: !b.days_past, rows: BAR_ROWS })
+          const cells = columnOf(b, max, { future: !b.days_past, rows: BAR_ROWS, unit })
           const on = tip && tip.i === i
           const track = (e) => {
             const r = box.current && box.current.getBoundingClientRect()
@@ -520,7 +524,7 @@ export const Dynamics = ({ data, label }) => {
           </span>
         ))}
       </div>
-      {tip && <DayCard b={data.buckets[tip.i]} label={label} at={tip} />}
+      {tip && <DayCard b={data.buckets[tip.i]} label={label} at={tip} unit={unit} />}
     </div>
   )
 }

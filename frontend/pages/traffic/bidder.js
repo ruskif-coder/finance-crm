@@ -17,6 +17,12 @@ import { useDialogs } from '@/components/dialogs'
 
 const ru = (d) => (d ? String(d).split('-').reverse().join('.') : '—')
 
+// Единица объёма РК (22.11.2026): у click-РК план, план площадок и факт — КЛИКИ, у остальных
+// показы. Числа приходят с сервера уже в единице РК (`/bidder/layout` → `unit`); здесь только слово,
+// чтобы «план РК» не читался как показы у кликовой РК.
+const UNIT_WORD = { click: 'клики', show: 'показы' }
+const unitWord = (u) => UNIT_WORD[u] || UNIT_WORD.show
+
 // Цвет пометки «откуда план» — переменные темы, не хексы.
 const REASON_TONE = {
   settled: 'var(--warning-text)',
@@ -187,6 +193,9 @@ export default function BidderPage() {
     }
   }
 
+  // Единица выбранной РК — для подписей раскладки: кликовая РК считает объём в кликах.
+  const layUnit = lay ? unitWord(lay.unit) : ''
+
   return (
     <>
       <Head><title>Биддер · Трафики | SIMB-AD ERP</title></Head>
@@ -248,7 +257,7 @@ export default function BidderPage() {
           {!!lay && (
             <>
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 6 }}>
-                <Part label="План РК" value={grp(lay.plan_show)} hint="разложение по правилам сейчас" />
+                <Part label={`План РК, ${layUnit}`} value={grp(lay.plan_show)} hint="разложение по правилам сейчас" />
                 <Op c="=" />
                 <Part label="Заданные объёмы" value={grp(lay.totals.fixed)} />
                 <Op c="+" />
@@ -271,9 +280,9 @@ export default function BidderPage() {
                     <th style={th}>Статус</th>
                     <th style={{ ...th, textAlign: 'right' }}>Вес</th>
                     <th style={{ ...th, textAlign: 'right' }}>Доля</th>
-                    <th style={{ ...th, textAlign: 'right' }}>План в DSP</th>
-                    <th style={{ ...th, textAlign: 'right' }} title="расчёт по правилам на текущих данных; ночью факт будет на день новее">По правилам сейчас</th>
-                    <th style={{ ...th, textAlign: 'right' }}>Факт</th>
+                    <th style={{ ...th, textAlign: 'right' }}>План в DSP, {layUnit}</th>
+                    <th style={{ ...th, textAlign: 'right' }} title={`расчёт по правилам на текущих данных; ночью факт будет на день новее. Объём — ${layUnit}`}>По правилам сейчас</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Факт, {layUnit}</th>
                     <th style={th}>Откуда план</th>
                   </tr>
                 </thead>

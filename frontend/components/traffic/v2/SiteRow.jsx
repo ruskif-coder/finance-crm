@@ -38,10 +38,14 @@ export const COLS = [
 
 const HEAD = Object.fromEntries(COLS.map(c => [c[0], c]))
 
-const HeadCell = ({ col, sort, onSort, goal, first }) => {
+const HeadCell = ({ col, sort, onSort, goal, first, unit }) => {
   const [key, label, hint, right] = col
   const on = sort.key === key
-  const title = (key === 'ctr' && goal ? `${hint}; цель РК — ${pct2(goal)}` : hint)
+  // Единица объёма РК (22.11.2026): у click-РК план, факт и недокрут площадки — клики.
+  // Подпись остаётся короткой, единица — в подсказке: ширины колонок в макете фиксированы.
+  const us = unit === 'click' ? 'клики' : 'показы'
+  const withUnit = ['plan', 'fact', 'under'].includes(key) ? `${hint ? `${hint}; ` : ''}объём — ${us}` : hint
+  const title = key === 'ctr' && goal ? `${withUnit}; цель РК — ${pct2(goal)}` : withUnit
   return (
     <span onClick={() => onSort(key)} title={`${title ? `${title}. ` : ''}Клик — сортировать`}
       style={{ whiteSpace: 'nowrap', cursor: 'pointer', color: on ? 'var(--accent-fg)' : 'var(--text-cap)',
@@ -51,11 +55,11 @@ const HeadCell = ({ col, sort, onSort, goal, first }) => {
   )
 }
 
-export const SitesHead = ({ sort, onSort, goal, cols }) => (
+export const SitesHead = ({ sort, onSort, goal, cols, unit }) => (
   <div style={{ ...rowOf(cols), ...CAP_V2, minHeight: 28, background: 'var(--bg-card)', borderTop: '1px solid var(--border-card)',
     borderBottom: '1px solid var(--border-card)' }}>
     {['name', ...cols, 'status', 'sys'].map((k, i) => (
-      <HeadCell key={k} col={HEAD[k]} sort={sort} onSort={onSort} goal={goal} first={i === 0} />
+      <HeadCell key={k} col={HEAD[k]} sort={sort} onSort={onSort} goal={goal} first={i === 0} unit={unit} />
     ))}
     <span />
   </div>
@@ -147,10 +151,10 @@ const PlanCell = ({ p }) => (
 
 const BAR_BG = { act: 'var(--ok)', ok: 'var(--ok)', lag: 'var(--warning)', over: 'var(--accent)' }
 
-const ExecCell = ({ p, grp, flight }) => {
+const ExecCell = ({ p, grp, flight, unit }) => {
   const has = p.plan_show && p.fact_shows != null
   const pct = has ? p.fact_shows / p.plan_show * 100 : null
-  const title = has ? `факт ${num(p.fact_shows)} из ${num(p.plan_show)}`
+  const title = has ? `факт ${num(p.fact_shows)} из ${num(p.plan_show)}${unit === 'click' ? ' (клики)' : ''}`
     + (flight != null ? ` · прошло ${Math.round(flight * 100)} % флайта` : '') : 'плана или факта нет'
   return (
     <span title={title} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -207,6 +211,7 @@ const Actions = ({ p, h }) => (
 export const SiteRow = ({ p, open, onToggle, d, goal, mayEdit, h, cols }) => {
   const grp = groupOf(p)
   const tone = ctrTone(p.ctr, goal)
+  const us = d.unit === 'click' ? 'клики' : 'показы'
   const bg = open ? 'var(--bg-tint)' : volTint(d.volumes, p.publisher_id) || 'var(--bg-card)'
   const under = p.under == null ? DASH : p.under > 0 ? `−${num(p.under)}` : '0'
   const cells = {
@@ -219,16 +224,16 @@ export const SiteRow = ({ p, open, onToggle, d, goal, mayEdit, h, cols }) => {
     share: <span key="share" style={{ ...NUM, color: 'var(--text-secondary)' }}>{p.share ? pct1(p.share * 100) : DASH}</span>,
     plan: <PlanCell key="plan" p={p} />,
     fact: (
-      <span key="fact" style={{ ...NUM, fontWeight: 700, color: p.fact_shows == null ? 'var(--text-faint)' : undefined }}>
+      <span key="fact" title={`факт площадки, ${us}`} style={{ ...NUM, fontWeight: 700, color: p.fact_shows == null ? 'var(--text-faint)' : undefined }}>
         {num(p.fact_shows)}</span>
     ),
     clk: <span key="clk" style={{ ...NUM, color: 'var(--text-secondary)' }}>{num(p.fact_clicks)}</span>,
     ctr: <span key="ctr" title={ctrTitle(p.ctr, goal)} style={{ ...NUM, ...CTR_STYLE[tone] }}>{pct2(p.ctr)}</span>,
-    exec: <ExecCell key="exec" p={p} grp={grp} flight={d.pace} />,
+    exec: <ExecCell key="exec" p={p} grp={grp} flight={d.pace} unit={d.unit} />,
     under: (
       <span key="under" style={{ ...NUM, fontWeight: 700, color: p.under == null ? 'var(--text-disabled)'
         : grp === 'lag' ? 'var(--warning-fg)' : 'var(--text-secondary)' }}
-        title="Недокрут к прогнозу: план площадки − прогноз на конец флайта">{under}</span>
+        title={`Недокрут к прогнозу: план площадки − прогноз на конец флайта, ${us}`}>{under}</span>
     ),
     wr: <WrCell key="wr" p={p} />,
     pace: <span key="pace" style={{ display: 'flex', minWidth: 0, overflow: 'hidden' }}><PaceCell pace={p.pace} /></span>,

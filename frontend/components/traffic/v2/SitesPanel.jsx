@@ -29,7 +29,7 @@ const SitesTable = ({ rk, d, rows, sort, onSort, goal, mayEdit, h, cols }) => {
   return (
     <div style={{ overflowX: 'auto', containerType: 'inline-size' }}>
       <div style={{ minWidth: 1150 }}>
-        <SitesHead sort={sort} onSort={onSort} goal={goal} cols={cols} />
+        <SitesHead sort={sort} onSort={onSort} goal={goal} cols={cols} unit={d?.unit} />
         {groups.map(g => (
           <Fragment key={g.key}>
             {g.key !== 'flat' && <GroupRow g={g} cols={cols} />}
@@ -100,6 +100,14 @@ export default function SitesPanel({ rk, d, mayEdit, tgt, handlers, filterNoShow
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', flexWrap: 'wrap', whiteSpace: 'nowrap' }}>
         <span title={`${rk.placements_on ?? 0} из ${rk.placements ?? 0} крутят · доля по весам`}
           style={{ fontSize: 14, fontWeight: 800 }}>Площадки</span>
+        {/* Единица объёма кликовой РК (22.11.2026): у click-РК план площадки, факт и недокрут —
+            КЛИКИ, а не показы. Сказано словами у заголовка таблицы: колонки «План»/«Факт» без
+            единицы читались бы как показы. */}
+        {d?.unit === 'click' && (
+          <span title="РК кликовая (CPC): план площадки, её факт и недокрут — в кликах"
+            style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--accent-fg)', whiteSpace: 'nowrap' }}>
+            объём и факт — в кликах</span>
+        )}
         <Seg items={VIEWS} value={view} onPick={setView} />
         {sitesView && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
