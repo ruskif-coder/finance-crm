@@ -151,25 +151,6 @@ CREATIVE_IN_WORK = CREATIVE_CHAIN + CREATIVE_IN_PLAN
 CREATIVE_SHARES = ("согласован",) + CREATIVE_IN_PLAN
 
 
-# ── единица объёма РК: показы или клики (22.11.2026) ─────────────────────────
-#
-# У CPC-сделки объём РК — КЛИКИ, и раскладка по площадкам делит именно их. Сам `distribute`
-# юнит-агностичен: он делит одно число `plan` и читает факт из переданного словаря. Единица
-# прошивается ЗДЕСЬ — выбором плана и выбором колонки факта, — чтобы в каждом вызывающем не
-# появилось своё «если click, то plan_click». Второе такое выражение разошлось бы с первым
-# молча: цифрами, которые выглядят правдоподобно.
-
-
-def plan_of(camp) -> Optional[float]:
-    """Объём РК в его единице: клики у click-РК, иначе показы (22.11.2026)."""
-    return camp.plan_click if getattr(camp, "unit", None) == "click" else camp.plan_show
-
-
-def fact_col(unit: Optional[str]) -> str:
-    """Колонка факта `ad_campaign_stat` для единицы: 'clicks' | 'shows' (22.11.2026)."""
-    return "clicks" if unit == "click" else "shows"
-
-
 @dataclass(frozen=True)
 class Flight:
     """Окно РК в днях. `done` — сколько дней уже отчитано, `left` — сколько осталось."""
@@ -582,8 +563,7 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
                   date_to: Optional[date] = None,
                   today: Optional[date] = None,
                   boost: Optional[tuple] = None,
-                  boost_days: Optional[dict] = None,
-                  unit: str = "show") -> Optional[dict]:
+                  boost_days: Optional[dict] = None) -> Optional[dict]:
     """Столбцы графика «план против факта» с пересчётом плана на остаток.
 
     `boost` = (первый день, последний день, pct) — «темп размещения» (`app/ad/boost`): будущие дни окна
@@ -609,11 +589,7 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
 
     per_day = plan / fl.length
     from app.ad.day_plan import past_goals
-    # `past_goals` читает факт из [0] кортежа (для show-РК это показы). У click-РК план в кликах,
-    # поэтому [0] должно быть кликами: перекладываем кортеж (shows, clicks) → (clicks, shows) (22.11.2026).
-    # В столбцы «показы»/«клики» ниже идёт ИСХОДНЫЙ `facts_by_day` — они показывают настоящие показы и клики.
-    goal_facts = {d: (v[1], v[0]) for d, v in facts_by_day.items()} if unit == "click" else facts_by_day
-    goals = past_goals(plan, fl, goal_facts, today, boost_days)
+    goals = past_goals(plan, fl, facts_by_day, today, boost_days)
     # Факта ещё нет («нет данных», а не ноль) — для плана на остаток это ноль показов:
     # иначе `need` пустой, и в первый день запуска все будущие столбцы рисовались с
     # планом 0 — «план не рисуется до конца размещения» (владелец 01.10.2026, 54ZYCH).

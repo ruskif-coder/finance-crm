@@ -168,17 +168,6 @@ def test_second_boost_replaces_the_first(camp):
     assert boost.active(db, c.id).id == second.id
 
 
-def test_boost_rest_for_a_click_campaign_is_in_clicks(camp):
-    """click-РК (22.11.2026): остаток буста — от plan_click (клики), а не от производного plan_show (показы)."""
-    db, c, pls = camp
-    c.unit = "click"
-    c.plan_click = 1_000
-    c.plan_show = 100_000      # производные показы (клики ÷ CTR) — в остаток буста не входят
-    b = boost.start(db, c, 50, 3, user_id=None, facts={pls[0].id: 100, pls[1].id: 100}, today=date.today())
-    assert b.rest_at_start == 800      # 1 000 кликов − 200 кликов факта
-    db.rollback()
-
-
 def test_expired_boost_is_ended_by_the_nightly_pass_and_not_applied_after_until(camp):
     db, c, pls = camp
     b = boost.start(db, c, 40, 2, user_id=None, facts=None, today=date.today())

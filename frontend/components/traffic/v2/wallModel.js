@@ -68,8 +68,6 @@ export function buildWall(wall, rows) {
     const lag = lagOf(w.done_pct, row?.pace)
     return {
       id: w.id, code: w.deal_code, product: w.product, name: nameOf(row, w),
-      // Единица РК (22.11.2026): в карточке дня план у click-РК — клики, не показы.
-      unit: row?.unit || 'show',
       fact: w.done_pct, pace: row?.pace ?? null, lag, slots, recent: recentBad(w.cells),
       counts: { bad: n('bad'), warn: n('warn'), ok: n('ok') },
     }

@@ -54,14 +54,13 @@ def sync_limits(db: Session, camp: AdCampaign, client) -> dict:
             continue
         want = int(want)
         ref = f"cr{cr.id}"
-        key = "click" if camp.unit == "click" else "show"
-        last = (client.last_sent_click_limit if key == "click" else client.last_sent_show_limit)(ref)
+        last = client.last_sent_show_limit(ref)
         # Лимит по факту (24.10.2026) дрожит каждый день; правка сбивает самонастройку DSP — мелочь не шлём.
         if last is not None and abs(last - want) < max(DRIFT_MIN, want * DRIFT_PCT):
             continue
         try:
             client.creative_edit(cr.ms_creative_xxhash,
-                                 {"limits": {key: {"total": want}}}, local_ref=ref)
+                                 {"limits": {"show": {"total": want}}}, local_ref=ref)
             updated += 1
         except MsError as e:
             log.warning("лимит креатива %s не обновлён: %s", cr.id, e)

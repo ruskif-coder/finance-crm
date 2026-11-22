@@ -14,17 +14,11 @@ from typing import Iterable, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.ad.flight import fact_col
 from app.ad.stat_sources import fact_as_of, fact_sources, is_stale
 
 
-def placement_facts(db: Session, campaign_ids: Iterable[int],
-                    unit: Optional[str] = "show") -> Optional[dict]:
-    """{campaign_id: {placement_id: объёма в единице РК (показов/кликов)}} или None, если факта за вчера нет.
-
-    `unit` — единица объёма РК (`ad_campaign.unit`, 22.11.2026): у click-РК факт — клики,
-    у остальных показы. Колонка выбирается `flight.fact_col`, из закрытого множества
-    'shows'/'clicks', поэтому подстановка её в SQL безопасна."""
+def placement_facts(db: Session, campaign_ids: Iterable[int]) -> Optional[dict]:
+    """{campaign_id: {placement_id: показов}} или None, если факта за вчера нет."""
     ids = sorted({int(i) for i in campaign_ids if i is not None})
     # Пустая база: `fact_as_of` отдаёт «вчера» заглушкой — это не пришедшая статистика.
     if not _has_any_fact(db):
@@ -35,9 +29,8 @@ def placement_facts(db: Session, campaign_ids: Iterable[int],
     out: dict = {i: {} for i in ids}
     if not ids:
         return out
-    col = fact_col(unit)
     for cid, pid, n in db.execute(text(
-            f"SELECT campaign_id, placement_id, sum({col}) FROM ad_campaign_stat "
+            "SELECT campaign_id, placement_id, sum(shows) FROM ad_campaign_stat "
             "WHERE campaign_id = ANY(:i) AND placement_id IS NOT NULL "
             "AND source = ANY(:src) AND date <= :d GROUP BY campaign_id, placement_id"),
             {"i": ids, "src": fact_sources(), "d": as_of}).all():
@@ -50,16 +43,13 @@ def _has_any_fact(db: Session) -> bool:
                            "WHERE source = ANY(:src))"), {"src": fact_sources()}).scalar()
 
 
-def any_facts(db: Session, campaign_id: int, unit: Optional[str] = "show") -> dict:
-    """Факт площадок РК по последнему известному срезу, даже устаревшему: {id площадки: объёма в единице РК
-    (показов/кликов) с начала РК}.
+def any_facts(db: Session, campaign_id: int) -> dict:
+    """Факт площадок РК по последнему известному срезу, даже устаревшему: {id площадки: показов с начала РК}.
 
-    `unit` — единица объёма РК (`ad_campaign.unit`, 22.11.2026): у click-РК факт — клики.
     Для показа на экране и для размера буста: свежего среза нет → раскладка идёт по весам, но остаток площадки
     всё равно считается от того, что известно, а не от нуля."""
     from app.ad.stat_sources import fact_sources
-    col = fact_col(unit)
     return {pid: int(n or 0) for pid, n in db.execute(text(
-        f"SELECT placement_id, sum({col}) FROM ad_campaign_stat WHERE campaign_id = :c "
+        "SELECT placement_id, sum(shows) FROM ad_campaign_stat WHERE campaign_id = :c "
         "AND placement_id IS NOT NULL AND source = ANY(:s) GROUP BY placement_id"),
         {"c": campaign_id, "s": fact_sources()}).all()}

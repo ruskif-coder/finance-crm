@@ -74,9 +74,6 @@ class FakeMs:
     def last_sent_show_limit(self, local_ref):
         return self.sent.get(local_ref)
 
-    def last_sent_click_limit(self, local_ref):
-        return self.sent.get(local_ref)
-
     def creative_edit(self, xxhash, params, local_ref=None):
         self.edits.append((xxhash, params, local_ref))
         return True
@@ -94,19 +91,6 @@ def test_limits_catch_up_only_where_they_changed(camp):
     ms2 = FakeMs({f"cr{crs[0].id}": 450})
     sync_limits(db, c, ms2)
     assert ms2.edits == [], "повторный прогон шлёт то, что уже стоит"
-
-
-def test_limits_click_unit_sends_click_limit(camp):
-    """Click-РК шлёт креативу лимит КЛИКОВ, а не показов (22.11.2026)."""
-    from app.dsp.limits import sync_limits
-    db, c, pl, crs = camp
-    c.unit = "click"
-    db.flush()
-    ms = FakeMs({f"cr{crs[0].id}": 900})
-    out = sync_limits(db, c, ms)
-    assert ms.edits == [("TESTCR0000000001", {"limits": {"click": {"total": 450}}},
-                         f"cr{crs[0].id}")]
-    assert out["updated"] == 1
 
 
 def test_one_failed_creative_does_not_stop_the_rest(camp):

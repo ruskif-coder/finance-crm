@@ -37,7 +37,7 @@ from app.ord import readiness
 from app.ad.balance import SCOPES, SCOPE_SURFACE
 from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
                            best_chain_status, chain_status, distribute, effective_status,
-                           effective_status_creative, flight_of, plan_of)
+                           effective_status_creative, flight_of)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.bidder.facts import any_facts
 from app.launch_prep import pub_rules
@@ -275,16 +275,18 @@ def replan_deal(db: Session, deal_id: int, commit: bool = True) -> Optional[dict
     deals = _campaign_deals(db, assembly_stage_ids(db), deal_id) if camp is not None else []
     if not deals:
         return None
-    before = (plan_of(camp), camp.plan_budget, camp.date_start, camp.date_end, camp.unit)
+    before = (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
+              camp.plan_click, camp.unit)
     _fill_campaign(camp, deals[0], deal_plan(db, deal_id))
-    if (plan_of(camp), camp.plan_budget, camp.date_start, camp.date_end, camp.unit) == before:
+    if (camp.plan_show, camp.plan_budget, camp.date_start, camp.date_end,
+            camp.plan_click, camp.unit) == before:
         return {"campaign_id": camp.id, "changed": False}
     db.flush()
     from app.ad.realloc import alert_plan_cut
     alert_plan_cut(db, {camp.id: before[0]})
     if commit:
         db.commit()
-    return {"campaign_id": camp.id, "changed": True, "plan_before": before[0], "plan_after": plan_of(camp)}
+    return {"campaign_id": camp.id, "changed": True, "plan_before": before[0], "plan_after": camp.plan_show}
 
 
 def sync_campaigns(db: Session, commit: bool = True) -> dict:
@@ -298,7 +300,7 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
 
     deals = _campaign_deals(db, stage_ids)
     existing = {c.deal_id: c for c in db.query(AdCampaign).all()}
-    plan_before = {c.id: plan_of(c) for c in existing.values()}
+    plan_before = {c.id: c.plan_show for c in existing.values()}
 
     created = updated = no_mp = 0
     for d in deals:
@@ -395,11 +397,7 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     буст поднимет.
 
     `assume_running` — id площадок, которые считаем ЗАПУЩЕННЫМИ: «что получит согласованная площадка, если
-    стартует сейчас» (`app/ad/volumes_now`). Ничего не записывает: статусы в базе не трогаются.
-
-    ЕДИНИЦА ОБЪЁМА — единица РК (22.11.2026): у click-РК (CPC) делится `plan_click`, факт читается из
-    `clicks`; у остальных — `plan_show` и `shows`. Выбирается `flight.plan_of` / `flight.fact_col`,
-    сам `distribute` единицы не знает."""
+    стартует сейчас» (`app/ad/volumes_now`). Ничего не записывает: статусы в базе не трогаются."""
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == campaign_id).all())
     camp = db.query(AdCampaign).get(campaign_id)
@@ -416,11 +414,10 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     cap, manual = cap_ctx
     if not facts_given:
         from app.bidder.facts import placement_facts
-        # Факт — в единице РК: у click-РК это клики (`flight.fact_col`), иначе показы.
-        got = placement_facts(db, [campaign_id], camp.unit if camp else None)
+        got = placement_facts(db, [campaign_id])
         facts = got.get(campaign_id) if got is not None else None
     surfaces = deal_plan(db, camp.deal_id)["surfaces"] if camp else []
-    plan = plan_of(camp) if camp else None
+    plan = camp.plan_show if camp else None
     out = distribute(plan, None, fl,
                      [{"id": p.id, "status": "запущен" if p.id in (assume_running or ()) else p.status,
                        "weight": p.weight, "fixed": fixed.get(p.id),
@@ -436,8 +433,7 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     live = boost.active(db, campaign_id) if (camp and with_boost) else None
     extra = 0
     if plan and boost.is_live(live):
-        # Остаток «теста размещения» — тоже в единице РК (22.11.2026): у click-РК он в кликах.
-        known = facts if facts is not None else any_facts(db, campaign_id, camp.unit)
+        known = facts if facts is not None else any_facts(db, campaign_id)
         out["rows"], extra = boost.boost_rows(out["rows"], known, live.pct, live.placement_ids)
     out["plan_eff"] = (plan + extra) if plan else plan
     out["boost_extra"] = extra
@@ -467,13 +463,8 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     # вызванный из нового места, не должен молча считать по неподтверждённым статусам соседей.
     lock_campaign_shares(db, campaign_id)
     pls, out = campaign_layout(db, campaign_id, cap_ctx, facts, facts_given)
-    camp_plan = out.get("plan_eff")
-    if not camp_plan:
-        # Fallback: план РК в ЕЁ единице — через `plan_of`, а не чтением `plan_show` напрямую.
-        # У click-РК (CPC) план лежит в `plan_click`, и остаток, посчитанный по `plan_show`,
-        # был бы в чужих единицах — правдоподобное число не про то (22.11.2026).
-        _camp = db.query(AdCampaign).filter(AdCampaign.id == campaign_id).first()
-        camp_plan = plan_of(_camp) if _camp else None
+    camp_plan = out.get("plan_eff") or db.query(AdCampaign.plan_show).filter(
+        AdCampaign.id == campaign_id).scalar()
     cap = out.get("cap")
     cap_abs = cap * camp_plan if (cap and camp_plan) else None
     by_id = {r["id"]: r for r in out["rows"]}
@@ -491,9 +482,8 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
                                               out["facts_used"], cap_abs)["code"]})
     # Остаток некуда положить — все крутящие на ручных планах (владелец 27.10.2026): уведомление, планы не трогаем
     from app.ad.realloc import alert_unplaced
-    _unit = db.query(AdCampaign.unit).filter(AdCampaign.id == campaign_id).scalar()
     alert_unplaced(db, campaign_id, before_total, sum(p.plan_show or 0 for p in pls), camp_plan,
-                   any(r.get("running") for r in out["rows"]), _unit or "show")
+                   any(r.get("running") for r in out["rows"]))
     return changes
 
 
@@ -568,20 +558,16 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     camps = q.all()
     changed = 0
     changes: list = []
-    by_fact = False
     from app.ad.balance import manual_scopes, share_cap
     cap_ctx = (share_cap(db), manual_scopes(db))
     from app.bidder.facts import placement_facts
+    all_facts = placement_facts(db, [c.id for c in camps])
     from app.ext_lock import lock_campaign_shares
     for camp in camps:
         # Замок РК — ДО правки весов: пока ночной проход держит строки площадок, запрос трафика не
         # должен стоять в очереди с ними на руках (07.10.2026).
         lock_campaign_shares(db, camp.id)
-        # Факт — в единице РК (22.11.2026): у click-РК клики, иначе показы. По одной РК —
-        # в пакете единицы разные, одним `unit` на все не отделаться.
-        got = placement_facts(db, [camp.id], camp.unit)
-        by_fact = by_fact or got is not None
-        f = got.get(camp.id) if got is not None else None
+        f = all_facts.get(camp.id) if all_facts is not None else None
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
             # У сделки нет годного медиаплана (отклонён, без строк) — поверхностей не знаем,
@@ -601,7 +587,7 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     if commit:
         db.commit()
     return {"campaigns": len(camps), "weights_changed": changed,
-            "by_fact": by_fact, "changes": changes}
+            "by_fact": all_facts is not None, "changes": changes}
 
 
 def deal_publishers(db: Session, deal_id: int) -> set:

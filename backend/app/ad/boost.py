@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.ad.flight import PLACEMENT_RUNNING, Flight, plan_of
+from app.ad.flight import PLACEMENT_RUNNING, Flight
 from app.ad.models import AdCampaign, AdCampaignBoost
 
 MAX_PCT = 100
@@ -120,13 +120,8 @@ def start(db: Session, camp: AdCampaign, pct, days, *, user_id: Optional[int],
     if prev:
         end(db, prev, "заменён")
         db.flush()   # уникальный индекс «один активный на РК» — старый закрыт до вставки нового
-    # Факт РК для остатка — в её единице (клики у click-РК). Переданный `facts` (свежий срез)
-    # уже в единице РК; если его нет — берём последний известный (`any_facts` с `unit`), а не ноль,
-    # чтобы остаток не считался от нуля при отсутствии вчерашней статистики (22.11.2026).
-    from app.bidder.facts import any_facts
-    known = facts if facts is not None else any_facts(db, camp.id, camp.unit)
-    fact_total = sum((known or {}).values())
-    rest = max(0, round((plan_of(camp) or 0) - fact_total))
+    fact_total = sum((facts or {}).values())
+    rest = max(0, round((camp.plan_show or 0) - fact_total))
     if placement_ids is not None and not placement_ids:
         raise BoostError("Не выбрано ни одной площадки")
     b = AdCampaignBoost(campaign_id=camp.id, pct=pct, days=days, starts_on=starts_on, until=until,

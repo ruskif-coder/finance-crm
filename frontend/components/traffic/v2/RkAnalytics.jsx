@@ -122,14 +122,11 @@ const TipRow = ({ cap, val, fg }) => (
 )
 
 /** Карточка дня. Будущий день — только план и «нужно в день»; факт прочерком, а не нулём. */
-const DayTip = ({ b, i, n, label, needPerDay, future, speed, unit }) => {
+const DayTip = ({ b, i, n, label, needPerDay, future, speed }) => {
   const past = !future
   const ctr = past && b.shows ? b.clicks / b.shows * 100 : null
-  // План дня приходит в единице РК (22.11.2026): у кликовой РК это КЛИКИ, а не показы.
-  // Показы и клики факта — настоящие, как их отдал сервер.
-  const planCap = unit === 'click' ? 'Клики план' : 'Показы план'
   const rows = past ? [
-    [planCap, num(b.plan)],
+    ['Показы план', num(b.plan)],
     ...(b.boost_extra ? [['В т. ч. темп размещения', `+${num(b.boost_extra)}`, 'var(--warning-fg)']] : []),
     ['Показы факт', num(b.shows), 'var(--accent-fg)'],
     ['Клики', num(b.clicks)],
@@ -139,7 +136,7 @@ const DayTip = ({ b, i, n, label, needPerDay, future, speed, unit }) => {
       ['Расхождение с WR', b.mismatch ? signedPct(b.mismatch.pct) : DASH, MISMATCH_FG[b.mismatch?.level] || 'var(--text-faint)'],
     ] : []),
   ] : [
-    [planCap, num(b.plan)],
+    ['Показы план', num(b.plan)],
     ...(b.boost_extra ? [['В т. ч. темп размещения', `+${num(b.boost_extra)}`, 'var(--warning-fg)']] : []),
     // Будущий день: прогноз по темпу и недокрут дня = план − прогноз, не меньше нуля (хендофф 17.11.2026).
     ...(speed != null && b.days === 1 ? [
@@ -171,14 +168,14 @@ const DayTip = ({ b, i, n, label, needPerDay, future, speed, unit }) => {
 const Swatch = ({ style }) => <span style={{ width: 9, height: 9, borderRadius: 2, boxSizing: 'border-box', ...style }} />
 
 /** Линия «нужно в день»: от колонки первого будущего дня до правого края, в зазоре над долькой своего уровня. */
-const NeedLine = ({ need, level, from, n, unit }) => {
+const NeedLine = ({ need, level, from, n }) => {
   const cell = (CHART_H - COL_PAD - (SEGS - 1) * CELL_GAP) / SEGS
   const bottom = level * (cell + CELL_GAP) - 1
   const left = `calc((100% - ${(n - 1) * COL_GAP}px) * ${from} / ${n} + ${from * COL_GAP}px)`
   return (
     <>
       <span style={{ position: 'absolute', left, right: 0, bottom, borderTop: '1.5px dashed var(--warning-fg)', pointerEvents: 'none' }} />
-      <span title={`Сколько нужно крутить в день до конца периода, чтобы выполнить план${unit === 'click' ? ' — в кликах' : ''}`}
+      <span title="Сколько нужно крутить в день до конца периода, чтобы выполнить план"
         style={{ position: 'absolute', right: 0, bottom: bottom + 5, padding: '1px 8px', borderRadius: 9, background: 'var(--bg-card)',
           border: '1px solid var(--warning-border)', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--warning-fg)',
           whiteSpace: 'nowrap' }}>нужно {num(need)} / дн</span>
@@ -186,7 +183,7 @@ const NeedLine = ({ need, level, from, n, unit }) => {
   )
 }
 
-const DynChart = ({ st, label, unit }) => {
+const DynChart = ({ st, label }) => {
   const [hov, setHov] = useState(-1)
   const bs = st.buckets
   const n = bs.length
@@ -195,7 +192,7 @@ const DynChart = ({ st, label, unit }) => {
   const daily = bs.every(b => b.days === 1)
   const speed = daily ? st.speed : null
   const need = daily ? st.need_per_day : null
-  const max = scaleMax(bs, { need, speed, unit })
+  const max = scaleMax(bs, { need, speed })
   const ti = todayIndex(bs, today)
   const ticks = axisTicks(bs, ti)
   const future = bs.map(b => daily && isFutureDay(b, today))
@@ -225,9 +222,9 @@ const DynChart = ({ st, label, unit }) => {
             </span>
           )
         })}
-        {showNeed && <NeedLine need={need} level={lvl} from={firstFuture} n={n} unit={unit} />}
+        {showNeed && <NeedLine need={need} level={lvl} from={firstFuture} n={n} />}
         {hov >= 0 && hov < n && <DayTip b={bs[hov]} i={hov} n={n} label={label} needPerDay={st.need_per_day}
-          future={future[hov] || !bs[hov].days_past} speed={future[hov] ? speed : null} unit={unit} />}
+          future={future[hov] || !bs[hov].days_past} speed={future[hov] ? speed : null} />}
       </span>
       {/* Точки расхождения с WR — под колонкой дня, цвет по уровню с сервера (боевые пороги) */}
       {anyDot && (
@@ -270,19 +267,14 @@ const Nums = ({ rk, st, week }) => {
   const k = week ? 7 : 1
   const need = st.need_per_day
   const behind = need != null && st.speed != null && need > st.speed
-  // План РК в ЕЁ единице (22.11.2026): у click-РК прогноз и темп посчитаны в кликах, а `plan_show`
-  // у неё производный (клики ÷ CTR) — процент от него был бы про другое число.
-  const planUnit = rk.unit === 'click' ? (rk.plan_click || 0) : rk.plan_show
-  // Подпись единицы — только у кликовой РК: у показных она и так по умолчанию.
-  const uS = rk.unit === 'click' ? ', клики' : ''
-  const fcPct = rk.forecast != null && planUnit ? Math.round(rk.forecast / planUnit * 100) : null
+  const fcPct = rk.forecast != null && rk.plan_show ? Math.round(rk.forecast / rk.plan_show * 100) : null
   const items = [
-    { cap: `Средний темп${uS}`, val: st.speed == null ? DASH : num(st.speed * k), unit: st.speed == null ? '' : per },
-    { cap: `${week ? 'Нужно в неделю' : 'Нужно в день'}${uS}`, val: need == null ? (rk.flight_over ? 'флайт закончен' : DASH) : num(need * k),
+    { cap: 'Средний темп', val: st.speed == null ? DASH : num(st.speed * k), unit: st.speed == null ? '' : per },
+    { cap: week ? 'Нужно в неделю' : 'Нужно в день', val: need == null ? (rk.flight_over ? 'флайт закончен' : DASH) : num(need * k),
       unit: need == null ? '' : per, fg: behind ? 'var(--warning-fg)' : undefined },
     { cap: 'Дней осталось', val: st.days_left == null ? DASH : String(st.days_left), unit: '' },
     { cap: 'Прогноз', val: fcPct == null ? DASH : String(fcPct), unit: fcPct == null ? '' : ' % плана',
-      title: rk.forecast != null ? `прогноз ${num(rk.forecast)} из ${num(planUnit)}` : '' },
+      title: rk.forecast != null ? `прогноз ${num(rk.forecast)} из ${num(rk.plan_show)}` : '' },
   ]
   return (
     <span style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
@@ -449,14 +441,12 @@ export function RkAnalytics({ rk, d, st, grain = 'day', range = null, onGrain, o
   const week = grain === 'week'
   const over = d?.days_left === 0
   const boost = d?.boost
-  // Единица объёма РК (22.11.2026): у click-РК план дня, «нужно в день» и темп — КЛИКИ.
-  const unit = rk.unit === 'click' ? 'click' : 'show'
   const label = `${rk.deal_code || ''} · ${rk.product || ''}`.replace(/ · $/, '')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '10px 18px 16px', boxSizing: 'border-box', width: '100%',
       minWidth: 0, fontFamily: UI, color: 'var(--text-primary)' }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>Динамика {unit === 'click' ? 'кликов' : 'показов'}</span>
+        <span style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>Динамика показов</span>
         <GrainSwitch rk={rk} grain={grain} range={range} onGrain={onGrain} onRange={onRange} />
         {/* Видна всем с доступом к дашборду: аккаунт открывает окно в режиме чтения. Флайт кончился — неактивна. */}
         <button type="button" disabled={over} onClick={onTempo} aria-label="Темп размещения" style={accentBtn(over)}
@@ -473,7 +463,7 @@ export function RkAnalytics({ rk, d, st, grain = 'day', range = null, onGrain, o
         <span style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.45 }}>Графика нет: у РК не заведён план или не указан флайт.</span>
       ) : (
         <>
-          <DynChart st={st} label={label} unit={unit} />
+          <DynChart st={st} label={label} />
           <Nums rk={rk} st={st} week={week} />
           <Stats st={st} week={week} />
         </>

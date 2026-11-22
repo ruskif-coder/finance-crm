@@ -229,13 +229,12 @@ class MsClient:
             log.warning("dsp_send_log: чтение не удалось (%s)", e)
             return None
 
-    def _last_sent_limit(self, local_ref, key: str) -> Optional[int]:
-        """Последний лимит (`show`/`click`), удачно отправленный креативу (`Creative.add` / `edit`).
+    def last_sent_show_limit(self, local_ref) -> Optional[int]:
+        """Последний лимит показов, удачно отправленный креативу (`Creative.add` / `edit`).
 
         Нужен ночному подтягиванию лимитов (`app/dsp/limits`): слать правку только туда,
         где план разошёлся с тем, что уже стоит в DSP. Журнал — единственное место, где
-        это записано: `Creative.getInfo` на каждый креатив каждую ночь был бы лишним обходом.
-        `key` — 'show' | 'click' (единица объёма РК, 22.11.2026)."""
+        это записано: `Creative.getInfo` на каждый креатив каждую ночь был бы лишним обходом."""
         if not self._journal_on:
             return None
         try:
@@ -244,26 +243,20 @@ class MsClient:
                 # Н-6): у `edit` клиента в теле нет, а после смены клиента та же ссылка
                 # `cr<id>` несла бы лимит старого кабинета, и правка в новый не ушла бы.
                 v = c.execute(text(
-                    "SELECT request->'params'->'limits'->:key->>'total' FROM dsp_send_log "
+                    "SELECT request->'params'->'limits'->'show'->>'total' FROM dsp_send_log "
                     "WHERE contour=:ct AND method IN ('Creative.add','Creative.edit') "
                     "AND local_ref=:lr AND ok "
-                    "AND request->'params'->'limits'->:key ? 'total' "
+                    "AND request->'params'->'limits'->'show' ? 'total' "
                     "AND ts >= (SELECT max(a.ts) FROM dsp_send_log a "
                     "            WHERE a.method = 'Creative.add' AND a.local_ref = :lr AND a.ok "
                     "              AND a.contour = :ct "
                     "              AND a.request->'params'->>'partner_xxhash' IS NOT DISTINCT FROM :px) "
                     "ORDER BY ts DESC LIMIT 1"),
-                    dict(ct=self.contour, lr=str(local_ref), px=self.partner_xxhash, key=key)).scalar()
+                    dict(ct=self.contour, lr=str(local_ref), px=self.partner_xxhash)).scalar()
             return int(float(v)) if v not in (None, "") else None
         except Exception as e:  # noqa: BLE001
             log.warning("dsp_send_log: чтение лимита не удалось (%s)", e)
             return None
-
-    def last_sent_show_limit(self, local_ref) -> Optional[int]:
-        return self._last_sent_limit(local_ref, "show")
-
-    def last_sent_click_limit(self, local_ref) -> Optional[int]:
-        return self._last_sent_limit(local_ref, "click")
 
     # Строка «ушло, исход неизвестен»: без хеша и либо без ответа (таймаут, обрыв), либо
     # с «успехом», в котором хеша не нашлось. Отказ с телом ответа сюда не попадает —

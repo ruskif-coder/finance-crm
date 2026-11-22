@@ -118,7 +118,7 @@ const WallRow = ({ r, hov, tipKey, active, onPick, onTip }) => (
           <Cell key={i} c={c} dim={hov >= 0 && hov !== i} active={tipKey === key}
             onEnter={(e) => {
               const box = e.currentTarget.getBoundingClientRect()
-              onTip({ key, b: cellBucket(c), label: `${r.code}${r.product ? ` · ${r.product}` : ''}`, unit: r.unit,
+              onTip({ key, b: cellBucket(c), label: `${r.code}${r.product ? ` · ${r.product}` : ''}`,
                 x: box.left + box.width / 2, y: box.top, bottom: box.bottom })
             }}
             onLeave={() => onTip(t => (t && t.key === key ? null : t))} />

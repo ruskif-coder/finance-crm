@@ -10,13 +10,9 @@ export const SEGS = 15
 
 const lv = (v, max, rows = SEGS) => Math.min(rows, Math.round((v || 0) / max * rows))
 
-/** Факт дня в ЕДИНИЦЕ РК (22.11.2026): у click-РК план дня — клики, значит и факт-слой — клики.
- *  Показы остаются в подсказке дня; здесь важно, чтобы столбик факта и план были в одном числе. */
-const factOf = (b, unit) => (unit === 'click' ? b.clicks : b.shows)
-
 /** Максимум шкалы: факт прошедших, план, темп и «нужно в день» — с запасом 8 %, округлено до тысяч. */
-export const scaleMax = (buckets, { need, speed, unit } = {}) => {
-  const vals = [...buckets.map(b => b.plan || 0), ...buckets.filter(b => b.days_past).map(b => factOf(b, unit) || 0), need || 0, speed || 0]
+export const scaleMax = (buckets, { need, speed } = {}) => {
+  const vals = [...buckets.map(b => b.plan || 0), ...buckets.filter(b => b.days_past).map(b => b.shows || 0), need || 0, speed || 0]
   const m = Math.max(0, ...vals)
   return m ? Math.ceil(m * 1.08 / 1000) * 1000 : 1
 }
@@ -27,11 +23,11 @@ export const isFutureDay = (b, today) => !b.days_past
 
 /** Сколько долек на каждый слой колонки. Без темпа (факта ещё нет) будущий день рисуется как раньше — планом.
  *  Правило одно на оба графика динамики: расхлоп v2 (15 долек) и сводка РК `Dynamics` в ките (`rows` = 18). */
-export const columnOf = (b, max, { speed = null, future, rows = SEGS, unit } = {}) => {
+export const columnOf = (b, max, { speed = null, future, rows = SEGS }) => {
   const plan = lv(b.plan, max, rows)
   const boost = Math.min(plan, lv(b.boost_extra, max, rows))
   if (future && speed != null) return { future: true, forecast: lv(speed, max, rows), plan, boost }
-  return { future: false, fact: future ? 0 : lv(factOf(b, unit), max, rows), plan, boost }
+  return { future: false, fact: future ? 0 : lv(b.shows, max, rows), plan, boost }
 }
 
 /** Слой дольки на высоте `rank` (1 — нижняя). */

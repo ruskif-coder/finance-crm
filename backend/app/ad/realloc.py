@@ -22,8 +22,6 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
-from app.ad.flight import fact_col, plan_of
-
 DONOR_PACE = ("мало трафика", "нет трафика")
 TAKER_PACE = ("в темпе", "перебор")
 SPARE_USE = 1.0
@@ -97,11 +95,6 @@ def rows_of(db, camp, as_of=None) -> tuple:
     from datetime import date
     as_of = as_of or fact_as_of(db, date.today())
     fl = flight_of(camp.date_start, camp.date_end, as_of)
-    if camp.unit == "click":
-        # CPC: темп сети (доноры/«возможность в день») считается по показам, а объём — в кликах.
-        # «Предложено» в кликах нет (bid_statistic мерит показы) — перенос по темпу не поддерживаем
-        # до решения владельца; ручной «заданный объём» (`apply`) остаётся доступным (22.11.2026).
-        return [], (fl.left if fl else 0)
     pls = (db.query(AdCampaignPlacement).filter(AdCampaignPlacement.campaign_id == camp.id)
            .order_by(AdCampaignPlacement.id).all())
     names = _names(db, [p.publisher_id for p in pls])
@@ -110,7 +103,7 @@ def rows_of(db, camp, as_of=None) -> tuple:
     fixed = dict(db.execute(text(f"SELECT p.id, {PLACEMENT_FIXED_SQL} FROM ad_campaign_placement p WHERE p.campaign_id = :c"),
                             {"c": camp.id}).all())
     # Последний известный факт, даже если среза за вчера нет: иначе остаток считался бы от нуля (как у буста)
-    facts = any_facts(db, camp.id, camp.unit)
+    facts = any_facts(db, camp.id)
     base = [{"id": p.id, "plan_show": p.plan_show} for p in pls]
     pc = _pace_of(db, camp, base, as_of)
     rows = []
@@ -343,8 +336,7 @@ def manual_sums(db, campaign_ids) -> dict:
 def over_plan_of(db, camp) -> Optional[dict]:
     """{manual, plan} — если ручные планы РК в сумме больше её плана, иначе None (плашка окна)."""
     s = manual_sums(db, [camp.id]).get(camp.id, 0.0)
-    plan = plan_of(camp)
-    return {"manual": round(s), "plan": round(plan or 0)} if _over(s, plan) else None
+    return {"manual": round(s), "plan": round(camp.plan_show or 0)} if _over(s, camp.plan_show) else None
 
 
 def alert_plan_cut(db, before: dict) -> list:
@@ -358,12 +350,11 @@ def alert_plan_cut(db, before: dict) -> list:
     sent = []
     for cid, s in manual_sums(db, before).items():
         camp = db.get(AdCampaign, cid)
-        plan = plan_of(camp) if camp is not None else None
-        if camp is None or not newly_over(s, before.get(cid), plan):
+        if camp is None or not newly_over(s, before.get(cid), camp.plan_show):
             continue
         try:
             bus.emit(db, "traffic_manual_over_plan", title=f"Ручные планы больше плана РК: {rk_label(db, cid)}",
-                     body=(f"План РК в медиаплане уменьшили до {round(plan or 0):,}, а ручные планы площадок "
+                     body=(f"План РК в медиаплане уменьшили до {round(camp.plan_show or 0):,}, а ручные планы площадок "
                            f"(«Перераспределить») в сумме {round(s):,}. РК перекрутит план — снимите ручные планы в окне "
                            f"«Темп размещения → Перераспределить» или перенесите заново.").replace(",", " "),
                      link=f"/traffic/dashboard?rk={cid}", entity_type="ad_campaign", entity_id=cid)
@@ -387,8 +378,7 @@ def daily_of(db, camp, as_of=None) -> dict:
         dates.append(d.isoformat())
         d += timedelta(days=1)
     facts: dict = {}
-    col = fact_col(camp.unit)
-    for r in db.execute(text(f"""SELECT placement_id, date, sum({col}) AS s FROM ad_campaign_stat
+    for r in db.execute(text("""SELECT placement_id, date, sum(shows) AS s FROM ad_campaign_stat
                                  WHERE campaign_id = :c AND placement_id IS NOT NULL AND date <= :u AND source = ANY(:src)
                                  GROUP BY placement_id, date"""),
                         {"c": camp.id, "u": as_of, "src": list(fact_sources())}).all():
@@ -422,7 +412,7 @@ def newly_unplaced(before_total, after_total, plan, running: bool = True) -> boo
     return (before_total or 0) >= plan - tol and (after_total or 0) < plan - tol
 
 
-def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, running: bool = True, unit: str = "show") -> bool:
+def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, running: bool = True) -> bool:
     """После пересчёта долей (`build.recompute_shares`): уведомление трафику, если объём впервые не разложен. Планы не
     трогаем — решает человек. Сбой уведомления пересчёт не роняет. → ушло ли."""
     import logging
@@ -433,9 +423,9 @@ def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, runnin
     try:
         gap = round(plan - after_total)
         bus.emit(db, "traffic_volume_unplaced", title=f"Объём РК не разложен: {rk_label(db, campaign_id)}",
-                 body=(f"Планы площадок в сумме {round(after_total):,} при плане РК {round(plan):,} — {gap:,} "
-                       f"{'кликов' if unit == 'click' else 'показов'} не достаются никому: крутящие площадки на ручных планах. "
-                       f"Отдайте остаток площадкам в окне «Темп размещения → Перераспределить» или сбросьте ручные планы.").replace(",", " "),
+                 body=(f"Планы площадок в сумме {round(after_total):,} при плане РК {round(plan):,} — {gap:,} показов не "
+                       f"достаются никому: крутящие площадки на ручных планах. Отдайте остаток площадкам в окне «Темп "
+                       f"размещения → Перераспределить» или сбросьте ручные планы.").replace(",", " "),
                  link=f"/traffic/dashboard?rk={campaign_id}", entity_type="ad_campaign", entity_id=campaign_id)
         return True
     except Exception:  # noqa: BLE001 — уведомление справка, пересчёт долей важнее

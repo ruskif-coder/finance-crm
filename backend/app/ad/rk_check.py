@@ -26,7 +26,6 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from app.ad.flight import plan_of
 from app.sales import stage_slots as SS
 import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей (аудит 21.10.2026)
 
@@ -136,11 +135,8 @@ class Camp:
     stale: bool
     placements: List[dict] = field(default_factory=list)   # id, name, status, pixel, plan_show, share, creatives[{hash, erid}]
     dsp_days: Dict[int, Dict[date, int]] = field(default_factory=dict)   # площадка → день → показы DSP
-    own_by_pl: Dict[int, int] = field(default_factory=dict)              # факт OWN ПОКАЗОВ по площадкам до среза (сверка с Weborama)
-    own_total: int = 0                                                   # факт OWN ПОКАЗОВ по РК до среза (сверка с Weborama)
-    plan_click: Optional[float] = None      # план РК в кликах (click-РК, 22.11.2026)
-    unit: str = "show"                      # единица объёма РК: show | click (22.11.2026)
-    own_unit: int = 0                       # факт в единице РК (клики у click-РК) до среза — темп
+    own_by_pl: Dict[int, int] = field(default_factory=dict)              # факт OWN по площадкам до среза
+    own_total: int = 0
     ver: dict = field(default_factory=dict)                              # {shows, by_placement}
     adfox_last: Optional[date] = None
     stage_name: str = ""                  # стадия сделки сейчас
@@ -368,37 +364,34 @@ def check_adfox_fresh(c: Camp) -> Result:
 
 
 def check_shares(c: Camp) -> Result:
-    plan = plan_of(c)
     inplan = [p for p in c.placements if p["status"] in ("запущен", "пауза") and p.get("share")]
-    if not plan:
+    if not c.plan_show:
         return Result(SKIP, "Нет плана — раскладывать нечего", {})
     if not inplan:
         return Result(SKIP, "Раскладывать нечего", {})
     sh = sum(p["share"] or 0 for p in inplan)
     pl = sum(p["plan_show"] or 0 for p in inplan)
-    val = {"share_sum": round(sh, 4), "plan_sum": round(pl), "plan": round(plan)}
+    val = {"share_sum": round(sh, 4), "plan_sum": round(pl), "plan": round(c.plan_show)}
     if abs(sh - 1) > SHARE_TOLERANCE:
         return Result(YELLOW, f"Сумма долей площадок {sh:.0%}, а должна быть 100 %", val)
-    if abs(pl - plan) / plan > SHARE_TOLERANCE:
-        return Result(YELLOW, f"Сумма планов площадок {_fmt(pl)} не равна плану РК {_fmt(plan)}", val)
+    if abs(pl - c.plan_show) / c.plan_show > SHARE_TOLERANCE:
+        return Result(YELLOW, f"Сумма планов площадок {_fmt(pl)} не равна плану РК {_fmt(c.plan_show)}", val)
     return Result(GREEN, "Доли и планы площадок складываются в план РК", val)
 
 
 def check_pace(c: Camp) -> Result:
     from app.ad import flight
-    plan = plan_of(c)
-    fact = c.own_unit if c.unit == "click" else c.own_total
     fl = flight.flight_of(c.date_start, c.date_end, c.as_of)
-    if not plan:
+    if not c.plan_show:
         return Result(SKIP, "Нет плана — темп не считается", {})
     if fl is None or fl.done < 3:
         return Result(SKIP, "Мало данных для темпа (меньше трёх дней)", {})
-    fc = flight.forecast_of(plan, fact, fl)
-    ratio = fc / plan if fc is not None else None
+    fc = flight.forecast_of(c.plan_show, c.own_total, fl)
+    ratio = fc / c.plan_show if fc is not None else None
     if ratio is None:
         return Result(SKIP, "Прогноза нет", {})
-    val = {"fact": fact, "forecast": round(fc), "plan": round(plan), "ratio": round(ratio, 3)}
-    text_ = f"Прогноз {_fmt(fc)} из {_fmt(plan)} ({ratio:.0%})"
+    val = {"fact": c.own_total, "forecast": round(fc), "plan": round(c.plan_show), "ratio": round(ratio, 3)}
+    text_ = f"Прогноз {_fmt(fc)} из {_fmt(c.plan_show)} ({ratio:.0%})"
     if ratio < PACE_RED:
         return Result(RED, text_ + " — недокрут", val)
     if ratio < PACE_YELLOW:
@@ -445,8 +438,7 @@ def load(db, today: Optional[date] = None, campaign_id: Optional[int] = None) ->
     today = today or today_msk()
     as_of = S.fact_as_of(db, today)
     stale = S.is_stale(as_of, today)
-    q = """SELECT c.id, d.code, d.title, c.status, c.date_start, c.date_end, c.plan_show, c.plan_click, c.unit,
-                  c.ms_campaign_xxhash,
+    q = """SELECT c.id, d.code, d.title, c.status, c.date_start, c.date_end, c.plan_show, c.ms_campaign_xxhash,
                   d.id AS deal_id, d.weborama_pixel, coalesce(d.weborama_pixel_mode, 'own') AS px_mode,
                   (d.weborama_pixel_tag IS NOT NULL AND d.weborama_pixel_tag <> '') AS px_tag
              FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id
@@ -464,7 +456,6 @@ def load(db, today: Optional[date] = None, campaign_id: Optional[int] = None) ->
     goals = build.deal_goals_many(db, {r["deal_id"] for r in rows})
     camps = {r["id"]: Camp(id=r["id"], code=r["code"] or str(r["id"]), title=r["title"] or "", status=r["status"] or "",
                            date_start=r["date_start"], date_end=r["date_end"], plan_show=r["plan_show"],
-                           plan_click=r["plan_click"], unit=r["unit"] or "show",
                            ms_hash=r["ms_campaign_xxhash"], goals=goals.get(r["deal_id"]) or {}, px_on=bool(r["weborama_pixel"]),
                            px_mode=r["px_mode"], px_tag=bool(r["px_tag"]), as_of=as_of, stale=stale, today=today) for r in rows}
     from app.sales import catalog as catalog_mod
@@ -489,7 +480,7 @@ def load(db, today: Optional[date] = None, campaign_id: Optional[int] = None) ->
                                  WHERE campaign_id = ANY(:i)"""), {"i": ids}).mappings().all():
         if r["placement_id"] in pls:
             pls[r["placement_id"]]["creatives"].append({"hash": r["hash"], "erid": r["erid"]})
-    for r in db.execute(text("""SELECT campaign_id, placement_id, date, source, shows, clicks FROM ad_campaign_stat
+    for r in db.execute(text("""SELECT campaign_id, placement_id, date, source, shows FROM ad_campaign_stat
                                  WHERE campaign_id = ANY(:i) AND date <= :a"""), {"i": ids, "a": as_of}).mappings().all():
         c, src, n = camps[r["campaign_id"]], r["source"], r["shows"] or 0
         pid = r["placement_id"]
@@ -499,8 +490,6 @@ def load(db, today: Optional[date] = None, campaign_id: Optional[int] = None) ->
             if n > 0 and (c.last_stat is None or r["date"] > c.last_stat):
                 c.last_stat = r["date"]
             c.own_total += n
-            # Факт в ЕДИНИЦЕ РК (22.11.2026): у click-РК темп и «проверка раскладки» читают клики.
-            c.own_unit += (r["clicks"] or 0) if c.unit == "click" else n
             if pid is not None:
                 c.own_by_pl[pid] = c.own_by_pl.get(pid, 0) + n
         if S.is_verifier(src):

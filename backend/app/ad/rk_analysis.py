@@ -40,7 +40,7 @@ def _iso(v) -> Optional[str]:
 
 def head_of(db: Session, code: str) -> Optional[dict]:
     r = db.execute(text("""
-        SELECT c.id, c.date_start, c.date_end, c.plan_show, c.plan_click, c.unit, c.plan_budget, c.status, c.ms_campaign_xxhash,
+        SELECT c.id, c.date_start, c.date_end, c.plan_show, c.plan_budget, c.status, c.ms_campaign_xxhash,
                d.id AS deal_id, d.code, d.title, d.advertiser_id, d.brand_id,
                coalesce(a.short_name, a.name) AS adv, b.name AS brand, st.name AS stage
           FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id
@@ -256,7 +256,7 @@ def prev_options(db: Session, head: dict) -> List[dict]:
 
 def prev_flight(db: Session, campaign_id: int) -> Optional[dict]:
     """Прошлый флайт для сравнения ПО НОМЕРУ ДНЯ флайта (не по дате): факт и WR по домену и дню."""
-    h = db.execute(text("SELECT date_start, date_end, plan_show, plan_click, unit FROM ad_campaign WHERE id = :c"),
+    h = db.execute(text("SELECT date_start, date_end, plan_show FROM ad_campaign WHERE id = :c"),
                    {"c": campaign_id}).mappings().first()
     if not h or not h["date_start"]:
         return None
@@ -267,8 +267,7 @@ def prev_flight(db: Session, campaign_id: int) -> Optional[dict]:
          WHERE s.campaign_id = :c AND s.source = ANY(:s) GROUP BY 1, 2, 3"""),
         {"c": campaign_id, "s": list(COMBAT) + list(VERIFIER)}).mappings().all()
     length = (h["date_end"] - h["date_start"]).days + 1 if h["date_end"] else None
-    return {"campaign_id": campaign_id, "plan_show": float(h["plan_show"] or 0),
-            "plan_click": float(h["plan_click"] or 0), "unit": h["unit"] or "show", "length": length,
+    return {"campaign_id": campaign_id, "plan_show": float(h["plan_show"] or 0), "length": length,
             "stat": [{"domain": r["domain"], "day_no": (r["date"] - h["date_start"]).days + 1,
                       "source": "weborama" if r["source"] in VERIFIER else "own",
                       "shows": int(r["shows"] or 0), "clicks": int(r["clicks"] or 0)} for r in rows]}
@@ -287,8 +286,7 @@ def build(db: Session, head: dict, dsp_db=None, prev_id: Optional[int] = None,
     model = model_report(db, dsp_db, head, as_of)
     return {
         "head": {**{k: _iso(v) for k, v in head.items() if k not in ("advertiser_id", "brand_id")},
-                 "plan_show": float(head["plan_show"] or 0), "plan_click": float(head["plan_click"] or 0),
-                 "unit": head["unit"] or "show", "plan_budget": float(head["plan_budget"] or 0),
+                 "plan_show": float(head["plan_show"] or 0), "plan_budget": float(head["plan_budget"] or 0),
                  "goals": goals, "wr_limit": goal_limit(goals), "as_of": _iso(as_of),
                  "offer_from": _iso(_first_offer_day(db, head["id"]))},
         "placements": placements,
