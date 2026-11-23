@@ -185,7 +185,13 @@ def test_marker_that_arrives_on_poll_is_announced(monkeypatch):
         return {"erid": "E1", "status": "Registering"}
     monkeypatch.setattr("app.ord.submit.issue_marker", issue)
     _patch(monkeypatch, "announce_marker", lambda db_, s_, d, actor, out: seen.append(out["erid"]))
-    lp.issue_marker_for_set(SimpleNamespace(commit=lambda: None), s, deal, None)
+    lp.issue_marker_for_set(SimpleNamespace(
+        commit=lambda: None,
+        # Гейт проверки ссылки спрашивает `db.query(...).filter(...).count()`; строк
+        # `ссылка` у этого комплекта нет — ноль.
+        query=lambda model: SimpleNamespace(
+            filter=lambda *a: SimpleNamespace(count=lambda: 0)),
+    ), s, deal, None)
     assert seen == ["E1"]
 
 
