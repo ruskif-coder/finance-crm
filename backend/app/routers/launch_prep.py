@@ -1918,6 +1918,37 @@ def _recompute_target_state(db: Session, target: LaunchPrepTarget):
         target.state = "ерид получен" if with_erid else "согласован"
 
 
+def _link_pending(db: Session, pair_id: int) -> bool:
+    """Ссылку этой пары запрашивали, а трафик её ещё не проверил (23.11.2026).
+
+    Строки нет — ссылку не запрашивали, проверять нечего. Строка есть и не «ок» —
+    пара ждёт трафика; согласованной она не считается.
+    """
+    rec = (db.query(LaunchPrepReview)
+           .filter(LaunchPrepReview.pair_id == pair_id,
+                   LaunchPrepReview.kind == "ссылка").first())
+    return rec is not None and rec.verdict != "ок"
+
+
+def _finalize_agreement(db: Session, pair, deal):
+    """Пара сошлась: код, `agreed_at`, состояние получателя.
+
+    Вынесено из `apply_platform_verdict` 23.11.2026, потому что теперь «согласована»
+    ставится из ДВУХ мест: «ок» площадки (когда ссылку не запрашивали или она уже
+    проверена) и «ок» трафика по ссылке. Вторая копия разошлась бы с первой.
+    """
+    from sqlalchemy.sql import func as sa_func
+    target = db.query(LaunchPrepTarget).filter(
+        LaunchPrepTarget.id == pair.target_id).first()
+    pub = db.query(SalesPublisher).filter(
+        SalesPublisher.id == target.publisher_id).first()
+    code = _pair_code(deal.code, pub.code, _next_pair_no(db, target.id))
+    pair.code = code
+    pair.agreed_at = sa_func.now()
+    _recompute_target_state(db, target)
+    return code
+
+
 class SendIn(BaseModel):
     """Отправка комплекта получателям. Список пуст = всем, кому этот комплект адресован."""
     target_ids: Optional[List[int]] = None
@@ -2212,15 +2243,12 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
             LaunchPrepTarget.id == pair.target_id).first()
         if target and _all_refused(db, target.id):
             target.state = "отказ площадки"
-    if verdict == "ок":
-        target = db.query(LaunchPrepTarget).filter(
-            LaunchPrepTarget.id == pair.target_id).first()
-        pub = db.query(SalesPublisher).filter(
-            SalesPublisher.id == target.publisher_id).first()
-        code = _pair_code(deal.code, pub.code, _next_pair_no(db, target.id))
-        pair.code = code
-        pair.agreed_at = sa_func.now()
-        _recompute_target_state(db, target)
+    # Ссылку, которую у площадки ЗАПРАШИВАЛИ, до ЕРИД проверяет трафик (23.11.2026): пока
+    # она не «ок», пара НЕ согласована — иначе была бы согласована в базе и «у трафика» на
+    # экране, а ЕРИД считал бы её согласованной.
+    finalized = verdict == "ок" and not _link_pending(db, pair.id)
+    if finalized:
+        code = _finalize_agreement(db, pair, deal)
 
     db.commit()
     # СОБЫТИЕ ВЕДЁТ СБОРКУ. Вердикт площадки меняет то, что кампания обязана знать:
@@ -2228,12 +2256,14 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
     # доезжало ночным прогоном — до суток ожидания на действии, которое делается за
     # минуты (владелец 18.09.2026).
     from app.ad.build import sync_deal_quietly
-    if verdict == "ок":
+    if finalized:
         # Согласованная площадка меняет объёмы СРАЗУ: пересборка РК и лимиты креативов в DSP по событию, а не
         # ночью (владелец 08.10.2026). Не падает — вердикт уже записан, ночной прогон страхует.
         from app.ad.volumes_now import refresh_volumes_now
         refresh_volumes_now(db, deal.id)
     else:
+        # В том числе «ок» площадки при непроверенной ссылке: пара не согласована, но
+        # статус креатива становится «у трафика» — пересобрать надо.
         sync_deal_quietly(db, deal.id)
     who = f" ({author_name})" if source == "кабинет" else ""
     from app.launch_prep.cabinet_label import verdict_prefix
@@ -2248,6 +2278,66 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor,
          ctx={"deal": deal})
+    db.commit()
+    return {"verdict": rec.verdict, "code": code, "deal_id": deal.id}
+
+
+class LinkVerdictIn(BaseModel):
+    verdict: str                    # ок | на переделку
+    reason: Optional[str] = None
+
+
+def apply_link_verdict(db: Session, pair_id: int, verdict: str, reason: Optional[str],
+                       author_name: Optional[str], actor=None) -> dict:
+    """Вердикт трафика по ССЫЛКЕ, присланной площадкой (23.11.2026).
+
+    ОДНА функция на ручку и массовую отметку. «ок» при уже согласованной площадке
+    финализирует пару (код, `agreed_at`, пересборка); «на переделку» оставляет её
+    «у трафика» — креатив не убивает, новая ссылка сбросит строку и проверится заново.
+    """
+    from sqlalchemy.sql import func as sa_func
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Пара не найдена")
+    rec = (db.query(LaunchPrepReview)
+           .filter(LaunchPrepReview.pair_id == pair_id,
+                   LaunchPrepReview.kind == "ссылка").with_for_update()
+           .populate_existing().first())
+    if rec is None:
+        raise HTTPException(status_code=400, detail="Ссылку этой пары не проверяли")
+    if rec.verdict is not None:
+        raise HTTPException(status_code=400, detail="Вердикт уже выставлен")
+    if verdict not in ("ок", "на переделку"):
+        raise HTTPException(status_code=400, detail="Вердикт: «ок» или «на переделку»")
+    if verdict == "на переделку" and not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Укажите, что не так со ссылкой")
+
+    rec.verdict = verdict
+    rec.reason = (reason or "").strip() or None
+    rec.decided_by = author_name or "трафик"
+    rec.decided_at = sa_func.now()
+    rec.source = "трафики"
+
+    s = db.query(LaunchPrepCreativeSet).filter(
+        LaunchPrepCreativeSet.id == pair.set_id).first()
+    deal = db.query(SalesDeal).filter(SalesDeal.id == s.deal_id).first()
+    code = None
+    if verdict == "ок":
+        plat = (db.query(LaunchPrepReview)
+                .filter(LaunchPrepReview.pair_id == pair_id,
+                        LaunchPrepReview.kind == "площадка").first())
+        if plat is not None and plat.verdict == "ок":
+            code = _finalize_agreement(db, pair, deal)
+
+    db.commit()
+    from app.ad.build import sync_deal_quietly
+    if code:
+        from app.ad.volumes_now import refresh_volumes_now
+        refresh_volumes_now(db, deal.id)
+    else:
+        sync_deal_quietly(db, deal.id)
+    log_action(db, actor, "traffic_link_verdict", "sales_deal", deal.id,
+               f"комплект №{s.no}: ссылка {verdict}" + (f", код {code}" if code else ""))
     db.commit()
     return {"verdict": rec.verdict, "code": code, "deal_id": deal.id}
 

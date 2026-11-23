@@ -712,12 +712,14 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
                CASE WHEN """ + readiness.ready_sql("cs") + """ THEN trim(cs.erid) END AS erid,
                t.publisher_id, t.surface_kind,
                tr.verdict AS traffic_verdict,
-               pv.verdict AS platform_verdict
+               pv.verdict AS platform_verdict,
+               (lk.id IS NOT NULL AND lk.verdict IS DISTINCT FROM 'ок') AS link_pending
           FROM launch_prep_pair pr
           JOIN launch_prep_creative_set cs ON cs.id = pr.set_id
           JOIN launch_prep_target t ON t.id = pr.target_id
           LEFT JOIN launch_prep_review tr ON tr.pair_id = pr.id AND tr.kind = 'трафики'
           LEFT JOIN launch_prep_review pv ON pv.pair_id = pr.id AND pv.kind = 'площадка'
+          LEFT JOIN launch_prep_review lk ON lk.pair_id = pr.id AND lk.kind = 'ссылка'
          WHERE cs.deal_id = :d
          ORDER BY pr.id
     """), {"d": camp.deal_id}).mappings().all()
@@ -748,7 +750,8 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         if pl is None:
             continue                      # площадки нет в этой РК — пара не наша
         sid = r["set_id"]
-        chain = chain_status(r["traffic_verdict"], r["platform_verdict"], has_pair=True)
+        chain = chain_status(r["traffic_verdict"], r["platform_verdict"], has_pair=True,
+                             link_pending=bool(r["link_pending"]))
         # Словари площадки и креатива различаются одним словом: у креатива согласованное
         # состояние зовётся «согласован», а не «ждёт запуска».
         chain = "согласован" if chain == PLACEMENT_READY else chain
