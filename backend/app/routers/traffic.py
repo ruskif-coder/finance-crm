@@ -37,7 +37,7 @@ from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import banner_origin, originals, pub_rules, sandbox
-from app.routers.launch_prep import url_state
+from app.routers.launch_prep import ensure_link_review, url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
@@ -410,6 +410,10 @@ def _apply_verdict(db: Session, pair, s, target, pub, deal,
             db.add(LaunchPrepReview(set_id=s.id, pair_id=pair.id, kind="площадка",
                                     source="аккаунт"))
         pair.sent_at = sa_func.now()
+        # Ссылку, которую запрашивали у площадки, перепроверит трафик (23.11.2026). Если
+        # она уже пришла к этому моменту (аккаунт вписал со слов площадки) — строка
+        # проверки заводится здесь же, чтобы не потеряться между двумя путями.
+        ensure_link_review(db, s.id, target.id)
         # Письмо площадке — НЕ здесь, а у вызывающего после коммита: отправка фиксирует
         # базу сама, и письмо изнутри записывало бы вердикт раньше, чем решит ручка
         # (аудит 23.09.2026, 5.M2).

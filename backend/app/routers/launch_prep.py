@@ -2742,6 +2742,52 @@ def url_state(target, surface_kind: Optional[str] = None) -> str:
     return "запрошена" if target.url_requested_at else "нужна"
 
 
+def ensure_link_review(db: Session, set_id: int, target_id: int):
+    """Строка повторной проверки ССЫЛКИ трафиком (23.11.2026).
+
+    Заводится, когда пришла ссылка на креатив, у которого ссылку **запрашивали**
+    (`url_requested_at` заполнен) и первая проверка трафика уже «ок». Нет запроса —
+    строки нет и цепочка остаётся трёхшаговой.
+
+    Новая ссылка после «на переделку» — ТА ЖЕ строка, сброшенная в NULL (второй строки не
+    даст `uq_lp_review (set_id, pair_id, kind)`): новая ссылка — новая проверка, как
+    `resend` у площадки. Возвращает строку или None.
+    """
+    from app.launch_prep.models import LaunchPrepPair, LaunchPrepReview, LaunchPrepTarget
+    member = _member(db, set_id, target_id)
+    if member is None or not member.url_requested_at:
+        return None
+    # Ссылка ещё не пришла — проверять нечего. Строка заведётся в момент её прихода
+    # (`set_member_url` / `cabinet_task_url`), а не на «ок» трафика по материалу.
+    surface = db.query(LaunchPrepTarget.surface_kind).filter(
+        LaunchPrepTarget.id == target_id).scalar()
+    if url_state(member, surface) != "есть":
+        return None
+    pair = (db.query(LaunchPrepPair)
+            .filter(LaunchPrepPair.set_id == set_id,
+                    LaunchPrepPair.target_id == target_id).first())
+    if pair is None:
+        return None
+    tr = (db.query(LaunchPrepReview)
+          .filter(LaunchPrepReview.pair_id == pair.id,
+                  LaunchPrepReview.kind == "трафики").first())
+    if tr is None or tr.verdict != "ок":
+        return None
+    rec = (db.query(LaunchPrepReview)
+           .filter(LaunchPrepReview.pair_id == pair.id,
+                   LaunchPrepReview.kind == "ссылка").first())
+    if rec is None:
+        rec = LaunchPrepReview(set_id=set_id, pair_id=pair.id, kind="ссылка",
+                               source="трафики")
+        db.add(rec)
+    elif rec.verdict is not None:
+        # Новая ссылка пришла после «на переделку» — та же строка снова пустая.
+        rec.verdict = rec.reason = rec.decided_by = rec.decided_email = rec.decided_at = None
+        from sqlalchemy.sql import func as sa_func
+        rec.asked_at = sa_func.now()
+    return rec
+
+
 class TargetUrlIn(BaseModel):
     url: Optional[str] = None
 
@@ -2782,6 +2828,7 @@ def set_member_url(set_id: int, target_id: int, payload: TargetUrlIn,
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
     m = _member(db, set_id, target_id, create=True)
     m.advertiser_url = url or None
+    ensure_link_review(db, set_id, target_id)
     db.commit()
     log_action(db, current_user, "set_target_url", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: {url or 'ссылка снята'}")

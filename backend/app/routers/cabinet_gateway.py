@@ -242,6 +242,10 @@ def cabinet_task_url(pair_id: int, payload: CabinetUrlIn,
     member.advertiser_url = url
     if app_url:
         member.deeplink_url = app_url
+    # Ссылку, которую мы запрашивали, трафик перепроверит до ЕРИД (23.11.2026): площадки
+    # дают их с опечатками, и трафик же может поправить посадочную.
+    from app.routers.launch_prep import ensure_link_review
+    ensure_link_review(db, pair.set_id, pair.target_id)
     journal.write(db, 'посадочная', cabinet_id=acc.cabinet_id, account_id=acc.id,
                   publisher_id=payload.publisher_id, actor_name=payload.author_name,
                   entity_type='launch_prep_target', entity_id=target.id)
