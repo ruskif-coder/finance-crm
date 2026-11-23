@@ -9,12 +9,11 @@
 # ruff: noqa: F811 — фикстура импортируется из соседнего файла (имя = аргумент теста).
 from datetime import datetime
 
-import pytest
 from fastapi import HTTPException
 
 from app.ad.flight import chain_status
 from app.launch_prep import erid_service
-from app.launch_prep.models import (LaunchPrepCreativeSet, LaunchPrepPair, LaunchPrepReview,
+from app.launch_prep.models import (LaunchPrepPair, LaunchPrepReview,
                                     LaunchPrepSetTarget, LaunchPrepTarget)
 from app.routers import launch_prep as lp
 from app.routers import traffic

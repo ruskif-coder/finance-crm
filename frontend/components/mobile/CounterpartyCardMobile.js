@@ -172,7 +172,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
             <div key={i} style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '12px 12px 4px', marginBottom: 10 }}>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <input value={b.bank_name || ''} onChange={e => setBank(i, 'bank_name', e.target.value)} placeholder="Банк" style={{ ...inpS, flex: 1 }} />
-                <button onClick={() => delBank(i)} aria-label="Удалить счёт" style={{ width: 38, flexShrink: 0, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: T.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
+                <button onClick={() => delBank(i)} aria-label="Удалить счёт" style={{ width: 38, flexShrink: 0, border: '1px solid var(--danger-border)', background: 'var(--bg-card)', color: T.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ marginBottom: 8 }}><input value={b.rs || ''} onChange={e => setBank(i, 'rs', e.target.value)} placeholder="Р/С" style={{ ...inpS, fontFamily: MONO }} /></div>
               <div style={{ marginBottom: 8 }}><input value={b.ks || ''} onChange={e => setBank(i, 'ks', e.target.value)} placeholder="К/С" style={{ ...inpS, fontFamily: MONO }} /></div>

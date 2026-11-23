@@ -241,7 +241,7 @@ AFTER_AGREEMENT_STATES = ("ерид получен", "заведён в DSP", "�
 
 def _recipient_out(target, pub, pair=None, review=None, traffic=None,
                    files_count=0, moved_to_no=None, external=None, member=None,
-                   rule=None) -> dict:
+                   rule=None, link=None) -> dict:
     """Строка получателя внутри комплекта.
 
     До отправки это кандидат, после — пара с вердиктом и кодом. Одна форма на оба случая
@@ -317,6 +317,13 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         "traffic_verdict": traffic.verdict if traffic else None,
         "traffic_reason": traffic.reason if traffic else None,
         "traffic_decided_by": traffic.decided_by if traffic else None,
+        # Повторная проверка ССЫЛКИ трафиком (23.11.2026): у аккаунта — чтобы он ВИДЕЛ
+        # возврат ссылки и мог прислать новую. `link_pending` отличает «ссылки не было»
+        # от «ссылка пришла и ждёт» — по одному NULL-вердикту это неразличимо.
+        "link_verdict": link.verdict if link else None,
+        "link_reason": link.reason if link else None,
+        "link_decided_by": link.decided_by if link else None,
+        "link_pending": bool(link is not None and link.verdict != "ок"),
         # «Есть скриншоты» в свёрнутой сводке и кнопка скачивания архива у аккаунта.
         "files_count": files_count,
         # Номер комплекта, в который площадка ушла по доработке. Не None — значит в этом
@@ -353,6 +360,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     primary = next((r for r in reviews if r.kind == "первичная_тт" and r.pair_id is None), None)
     by_pair = {r.pair_id: r for r in reviews if r.kind == "площадка" and r.pair_id}
     by_traffic = {r.pair_id: r for r in reviews if r.kind == "трафики" and r.pair_id}
+    by_link = {r.pair_id: r for r in reviews if r.kind == "ссылка" and r.pair_id}
     targets = targets or {}
     pubs = pubs or {}
     file_counts = file_counts or {}
@@ -371,7 +379,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
                 t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
                 file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id)),
                 ext_for_set(external.get(t.publisher_id), s.id), members.get((s.id, t.id)),
-                rules.get((t.publisher_id, t.surface_kind))))
+                rules.get((t.publisher_id, t.surface_kind)), link=by_link.get(p.id)))
     else:
         recipients = [_recipient_out(t, pubs.get(t.publisher_id),
                                      external=ext_for_set(external.get(t.publisher_id), s.id),
@@ -2336,6 +2344,16 @@ def apply_link_verdict(db: Session, pair_id: int, verdict: str, reason: Optional
         refresh_volumes_now(db, deal.id)
     else:
         sync_deal_quietly(db, deal.id)
+    if verdict == "на переделку":
+        # Возврат ссылки — задача аккаунту, как и возврат материала (23.11.2026): он
+        # правит посадочную или берёт новую у площадки, и ссылка проверится заново.
+        from app.notify import emit
+        emit(db, "traffic_rework",
+             title=f"Ссылку вернули на переделку · {deal_label(deal)}",
+             body=(reason or "").strip() or "Без комментария",
+             link=f"/sales/deals/{deal.code or deal.id}",
+             entity_type="sales_deal", entity_id=deal.id, actor=actor,
+             ctx={"deal": deal})
     log_action(db, actor, "traffic_link_verdict", "sales_deal", deal.id,
                f"комплект №{s.no}: ссылка {verdict}" + (f", код {code}" if code else ""))
     db.commit()

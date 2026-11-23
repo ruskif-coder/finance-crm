@@ -61,9 +61,6 @@ const TABS = [
   { key: 'waiting', label: 'Ждут проверки' },
   { key: 'done', label: 'Проверенные' },
   { key: 'all', label: 'Все' },
-  // Повторная проверка ссылки, присланной площадкой (23.11.2026): отдельная вкладка,
-  // потому что это работа другого рода и вердикт пишется в другую строку.
-  { key: 'links', label: 'Ссылки' },
 ]
 
 
@@ -248,6 +245,9 @@ export default function TrafficQueue() {
   const [urlAsk, setUrlAsk] = useState(null)   // { targetId, setId, name, text }
   const [phrases, setPhrases] = useState([])
   const [dragOver, setDragOver] = useState(false)
+  // Для окна переделки: одна площадка — переделка только её, иначе вся группа.
+  const reworkOnly = rework && rework.rows?.length === 1
+    ? (rework.rows[0].publisher?.name || rework.rows[0].publisher?.domain) : null
 
   // Фильтр «чья кампания». По умолчанию пусто — ВСЯ очередь: она общая (03.09.2026),
   // и разбирают её по наличию времени, а не по назначению. Фильтр доступен всем: он
@@ -322,6 +322,15 @@ export default function TrafficQueue() {
       setErr(detailText(e, 'Не удалось записать вердикт'))
     }
     setBusy(false)
+  }
+
+  /* Массовая отметка по строкам, где могут быть и баннер, и ссылка: вердикт у них
+     пишется в РАЗНЫЕ строки проверки, поэтому режем список по виду и зовём оба пути. */
+  async function verdictMany(rows, v, reason) {
+    const mat = rows.filter(x => !x.link_check).map(x => x.pair_id)
+    const lnk = rows.filter(x => x.link_check).map(x => x.pair_id)
+    if (mat.length) await verdict(mat, v, reason, false)
+    if (lnk.length) await verdict(lnk, v, reason, true)
   }
 
   /* Правка посадочной на проверке ссылки (23.11.2026): площадки присылают их с
@@ -480,8 +489,6 @@ export default function TrafficQueue() {
     `креатив №${r.set.no}`].filter(Boolean).join(' ').toLowerCase()
 
   const visible = rows.filter(r => {
-    if (tab === 'links') return !!r.link_check
-    if (r.link_check) return false
     if (tab === 'waiting' && r.verdict) return false
     if (tab === 'done' && !r.verdict) return false
     return !q.trim() || hay(r).includes(q.trim().toLowerCase())
@@ -663,7 +670,7 @@ export default function TrafficQueue() {
                 </span>
                 {/* Баннер прислал рекламодатель (владелец 27.09.2026): он не собран под
                     наш код и может быть с ошибками. Только плашка — шага «проверил» нет. */}
-                <span style={{ flex: '0 0 178px', display: 'inline-flex', gap: 6 }}>
+                <span style={{ flex: '0 0 auto', minWidth: 178, display: 'inline-flex', gap: 6 }}>
                   {g.rows.some(r => r.publisher?.site_down) && !g.set.from_advertiser && (
                     <span style={{ ...pill(...TONE.rework), fontSize: 11, whiteSpace: 'nowrap', cursor: 'default' }}
                       title={'Сайт не открывается: ' + g.rows.filter(r => r.publisher?.site_down).map(r => r.publisher.domain || r.publisher.name).join(', ')}>
@@ -674,6 +681,15 @@ export default function TrafficQueue() {
                       cursor: 'default', letterSpacing: '.03em' }}
                       title="Баннер прислал рекламодатель, а не мы: он не собран под наш код и может быть с ошибками. Проверьте предпросмотр, размеры и клик особенно внимательно">
                       ⚠ ПРОВЕРЬ ВНИМАТЕЛЬНЕЙ
+                    </span>
+                  )}
+                  {/* Ссылку прислала площадка (23.11.2026) — рядом с плашкой внешнего баннера,
+                      та же настороженность: чужая ссылка, и до ЕРИД её проверяет трафик. */}
+                  {g.rows.some(r => r.link_check) && (
+                    <span style={{ ...pill(...TONE.warn), fontSize: 11, whiteSpace: 'nowrap',
+                      cursor: 'default', letterSpacing: '.03em' }}
+                      title="Ссылку прислала площадка — проверьте её до ЕРИД. Поправить можно прямо в строке площадки (✎)">
+                      ⚠ ССЫЛКА ОТ ПЛОЩАДКИ
                     </span>
                   )}
                 </span>
@@ -767,15 +783,14 @@ export default function TrafficQueue() {
                   <button style={{ ...pill(...TONE.neutral), padding: '6px 13px',
                     fontSize: 12.5, cursor: 'pointer', color: 'var(--danger-fg)',
                     borderColor: 'var(--danger-border)' }} disabled={busy}
-                    onClick={() => setRework({ pairIds: pending.map(r => r.pair_id),
-                                               setNo: g.set.no, reason: '' })}>
+                    onClick={() => setRework({ rows: pending, setNo: g.set.no, reason: '' })}>
                     На переделку
                   </button>
                 )}
                 {mayApprove && pending.length > 1 && (
                   <button style={{ ...pill(...TONE.ok), padding: '6px 13px', fontSize: 12.5,
                     cursor: 'pointer', gap: 7 }} disabled={busy}
-                    onClick={() => verdict(pending.map(r => r.pair_id), 'ок', null, pending[0]?.link_check)}>
+                    onClick={() => verdictMany(pending, 'ок')}>
                     <span style={{ fontSize: 11 }}>✓</span> Все ок ({pending.length})
                   </button>
                 )}
@@ -900,6 +915,17 @@ export default function TrafficQueue() {
                           )}
                         </>
                       )}
+                      {/* Ссылку пришла от площадки (23.11.2026): плашка — в шапке креатива,
+                          рядом с баннером рекламодателя. Здесь — только правка посадочной. */}
+                      {r.link_check && mayEdit && (
+                        <button style={{ ...pill('var(--bg-card)', 'var(--accent)', 'var(--accent-border)'),
+                          cursor: 'pointer', fontSize: 11 }} disabled={busy}
+                          title="Поправить посадочную — уйдёт в ОРД/ЕРИД и DSP после «ок»"
+                          onClick={() => setLinkEdit({ pairId: r.pair_id, url: r.advertiser_url || '',
+                            name: r.publisher?.name || r.publisher?.domain })}>
+                          ✎
+                        </button>
+                      )}
                       <RuleBadges r={r} onDownload={(url) => download(url)} />
                       <BannerCheckMark check={r.banner_check} stage="pair" withLabel />
                     </div>
@@ -962,15 +988,6 @@ export default function TrafficQueue() {
                       )}
                       {!r.verdict && mayApprove && (
                         <>
-                          {r.link_check && mayEdit && (
-                            <button style={{ ...pill('var(--bg-card)', 'var(--accent)', 'var(--accent-border)'),
-                              cursor: 'pointer', fontSize: 11.5 }} disabled={busy}
-                              title="Поправить посадочную — она уйдёт в ОРД/ЕРИД и DSP после «ок»"
-                              onClick={() => setLinkEdit({ pairId: r.pair_id, url: r.advertiser_url || '',
-                                name: r.publisher?.name || r.publisher?.domain })}>
-                              ✎ ссылка
-                            </button>
-                          )}
                           {/* Возврат площадки — НАШ ОРАНЖЕВЫЙ (владелец 12.09.2026), тот
                               же, что у плашек «ждёт проверки». Не красный: красным на
                               этом экране говорит «На переделку» по всему комплекту, и
@@ -980,9 +997,8 @@ export default function TrafficQueue() {
                             style={{ ...iconBtn(true), background: 'var(--warning-tint)',
                               borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}
                             title={`Вернуть на переделку только ${r.publisher.name || 'эту площадку'}`}
-                            onClick={() => setRework({ pairIds: [r.pair_id], setNo: g.set.no,
-                              reason: '', link: r.link_check,
-                              only: r.publisher.name || r.publisher.domain })}>
+                            onClick={() => setRework({ rows: [r], setNo: g.set.no,
+                              reason: '' })}>
                             <Ico d={I_REDO} size={13} />
                           </button>
                           <button style={{ ...pill(...TONE.ok), cursor: 'pointer',
@@ -1096,10 +1112,10 @@ export default function TrafficQueue() {
       )}
 
       {rework && (
-        <Modal title={rework.only
-                 ? `Вернуть на переделку · ${rework.only}`
+        <Modal title={reworkOnly
+                 ? `Вернуть на переделку · ${reworkOnly}`
                  : `Вернуть креатив №${rework.setNo} на переделку`}
-               summary={rework.only
+               summary={reworkOnly
                  ? "Переделка одной площадки: технические требования у каждого сайта свои, и то, что не проходит здесь, могло пройти у остальных. Остальные получатели останутся как есть."
                  : "Материал один на всех получателей, поэтому переделка адресуется всей группе. Аккаунт соберёт новую итерацию."}
                width={560} onClose={() => setRework(null)}
@@ -1107,7 +1123,7 @@ export default function TrafficQueue() {
                  <>
                    <button style={btn(false)} onClick={() => setRework(null)}>Отмена</button>
                    <button style={btn(true)} disabled={busy || !rework.reason.trim()}
-                     onClick={() => verdict(rework.pairIds, 'на переделку', rework.reason, rework.link)}>
+                     onClick={() => verdictMany(rework.rows, 'на переделку', rework.reason)}>
                      Вернуть
                    </button>
                  </>
