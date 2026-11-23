@@ -21,7 +21,7 @@ from app.audit import log_action
 from app.files_safe import inside_uploads
 from app.launch_prep import pub_rules
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet, LaunchPrepPair,
-                                    LaunchPrepSetTarget, LaunchPrepTarget)
+                                    LaunchPrepReview, LaunchPrepSetTarget, LaunchPrepTarget)
 from app.notify import emit
 from app.ord import client as ord_client
 from app.ord import readiness, registry
@@ -274,6 +274,18 @@ def issue_marker_for_set(db: Session, s, deal, actor) -> dict:
     if not active_pairs(db, s.id):
         raise HTTPException(status_code=400,
                             detail="В комплекте нет ни одной площадки — маркер выпускать не на что")
+
+    # Ссылка, которую у площадки запрашивали, должна быть проверена трафиком (23.11.2026):
+    # маркер — на материал, который ведёт на проверенный адрес. Запись в ЕРИР необратима,
+    # поэтому гейт стоит ЗДЕСЬ и бьёт по обоим входам — кнопке и автовыпуску.
+    link_pending = (db.query(LaunchPrepReview)
+                    .filter(LaunchPrepReview.set_id == s.id,
+                            LaunchPrepReview.kind == "ссылка",
+                            LaunchPrepReview.verdict.is_distinct_from("ок")).count())
+    if link_pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ссылку проверяет трафик: {link_pending} — маркер выпустим после его «ок»")
 
     final_ord_id, initial_ord_id = _ord_chain(db, deal)
     brand = (db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first()

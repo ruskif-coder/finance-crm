@@ -6,6 +6,8 @@
 """
 from datetime import datetime
 
+import pytest
+
 from app.launch_prep.models import LaunchPrepPair, LaunchPrepReview, LaunchPrepSetTarget
 from app.routers import launch_prep as lp
 from app.routers import traffic
@@ -88,4 +90,38 @@ def test_agreement_waits_for_link(env):
     lp.apply_link_verdict(db, pair.id, 'ок', None, 'трафик', _ADMIN)
     db.refresh(pair)
     assert pair.agreed_at is not None and pair.code, 'ссылка проверена — пара согласована'
+
+
+def _pending_link_pair(env):
+    """Пара с пришедшей и НЕ проверенной ссылкой, площадка уже «ок»."""
+    db = env.db
+    m = db.query(LaunchPrepSetTarget).filter_by(
+        set_id=env.cset.id, target_id=env.targets[0].id).first()
+    m.advertiser_url = None
+    m.url_requested_at = datetime.utcnow()
+    db.commit()
+    lp.send_set(env.cset.id, lp.SendIn(), db, _ADMIN)
+    pair = _pair(db, env, env.targets[0])
+    traffic.pair_verdict(pair.id, traffic.VerdictIn(verdict='ок'), db, _ADMIN)
+    lp.set_member_url(env.cset.id, env.targets[0].id,
+                      lp.TargetUrlIn(url='https://site.test/tovar/2'), db, _ADMIN)
+    lp.apply_platform_verdict(db, pair.id, 'ок', None, 'площадка', None, 'кабинет', _ADMIN)
+    return pair
+
+
+def test_erid_blocked_while_link_pending(env):
+    """Маркер не выпускается, пока ссылку не проверил трафик (23.11.2026)."""
+    from fastapi import HTTPException
+    from app.launch_prep import erid_service
+    pair = _pending_link_pair(env)
+    with pytest.raises(HTTPException) as e:
+        erid_service.issue_marker_for_set(env.db, env.cset, env.deal, _ADMIN)
+    assert 'Ссылку проверяет трафик' in str(e.value.detail)
+    # проверили ссылку — гейт по ссылке больше не срабатывает (дальше уже ОРД/цепочка)
+    lp.apply_link_verdict(env.db, pair.id, 'ок', None, 'трафик', _ADMIN)
+    try:
+        erid_service.issue_marker_for_set(env.db, env.cset, env.deal, _ADMIN)
+    except HTTPException as ex:
+        assert 'Ссылку проверяет трафик' not in str(ex.detail)
+
 
