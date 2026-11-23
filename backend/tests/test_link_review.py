@@ -125,3 +125,18 @@ def test_erid_blocked_while_link_pending(env):
         assert 'Ссылку проверяет трафик' not in str(ex.detail)
 
 
+def test_traffic_landing_edit(env):
+    """Трафик правит посадочную на проверке ссылки (23.11.2026)."""
+    from fastapi import HTTPException
+    db = env.db
+    lp.send_set(env.cset.id, lp.SendIn(), db, _ADMIN)
+    pair = _pair(db, env, env.targets[1])
+    traffic.pair_verdict(pair.id, traffic.VerdictIn(verdict='ок'), db, _ADMIN)
+    out = traffic.pair_landing(pair.id, traffic.LandingIn(url='https://site.test/fixed'),
+                               db, _ADMIN)
+    assert out['advertiser_url'] == 'https://site.test/fixed'
+    with pytest.raises(HTTPException):
+        traffic.pair_landing(pair.id, traffic.LandingIn(url='javascript:alert(1)'), db, _ADMIN)
+
+
+

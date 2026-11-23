@@ -37,7 +37,7 @@ from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import banner_origin, originals, pub_rules, sandbox
-from app.routers.launch_prep import ensure_link_review, url_state
+from app.routers.launch_prep import apply_link_verdict, ensure_link_review, url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
@@ -584,6 +584,56 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
     db.commit()
     _stop_targeting({s.id for _p, s, _t, _pub, _d in applied}, db)
     return {"done": done, "skipped": skipped}
+
+
+# ============================== ссылка (23.11.2026) ==============================
+
+class LandingIn(BaseModel):
+    url: str
+    app_url: Optional[str] = None
+
+
+@router.put("/pair/{pair_id}/landing")
+def pair_landing(pair_id: int, payload: LandingIn, db: Session = Depends(get_db),
+                 current_user: User = Depends(EDIT)):
+    """Трафик правит посадочную на проверке ссылки.
+
+    Площадки дают ссылки с опечатками, а аккаунт не всегда на связи. Правило схемы ОДНО
+    с кабинетом и сборкой (`pub_rules.validate_landing`): вторая копия разошлась бы.
+    """
+    pair, s, target, pub, deal = _pair_in_scope(db, pair_id, current_user)
+    from app.routers.launch_prep import _member
+    try:
+        url = pub_rules.validate_landing((payload.url or "").strip(), target.surface_kind)
+        app_url = (pub_rules.validate_app_link(payload.app_url)
+                   if target.surface_kind == "app" else None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not url:
+        raise HTTPException(status_code=400, detail="Укажите ссылку")
+    if len(url) > 512:
+        raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
+    m = _member(db, s.id, target.id, create=True)
+    m.advertiser_url = url
+    if app_url:
+        m.deeplink_url = app_url
+    db.commit()
+    log_action(db, current_user, "traffic_landing_edit", "sales_deal", deal.id,
+               f"комплект №{s.no}, площадка {pub.code if pub else '?'}: посадочная поправлена трафиком")
+    return {"advertiser_url": m.advertiser_url, "url_state": url_state(m, target.surface_kind)}
+
+
+@router.post("/pair/{pair_id}/link-verdict")
+def pair_link_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db),
+                      current_user: User = Depends(APPROVE)):
+    """Вердикт трафика по ССЫЛКЕ. «Ок» при уже согласованной площадке финализирует пару;
+    «на переделку» оставляет её «у трафика» до новой ссылки — креатив не убивает."""
+    if payload.verdict not in ("ок", "на переделку"):
+        raise HTTPException(status_code=400, detail="Вердикт: «ок» или «на переделку»")
+    if payload.verdict == "на переделку" and not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="Укажите, что не так со ссылкой")
+    return apply_link_verdict(db, pair_id, payload.verdict, payload.reason,
+                              current_user.name, current_user)
 
 
 # ============================== архив креатива ==============================
