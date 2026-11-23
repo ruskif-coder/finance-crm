@@ -61,6 +61,9 @@ const TABS = [
   { key: 'waiting', label: 'Ждут проверки' },
   { key: 'done', label: 'Проверенные' },
   { key: 'all', label: 'Все' },
+  // Повторная проверка ссылки, присланной площадкой (23.11.2026): отдельная вкладка,
+  // потому что это работа другого рода и вердикт пишется в другую строку.
+  { key: 'links', label: 'Ссылки' },
 ]
 
 
@@ -228,6 +231,8 @@ export default function TrafficQueue() {
   const [preview, setPreview] = useState(null)   // { files, startId }
   const [open, toggle] = useOpenSets()
   const [aim, setAim] = useState(null)      // { setId, no, url } — ручная ссылка
+  // Правка посадочной на проверке ссылки (23.11.2026): площадки дают ссылки криво.
+  const [linkEdit, setLinkEdit] = useState(null)   // { pairId, url, name }
   // Какой комплект сейчас выпускает ссылку. Не общий `busy`: выпуск ходит наружу, и
   // гасить на это время вердикты по ВСЕЙ очереди значило бы останавливать работу.
   const [aiming, setAiming] = useState(null)
@@ -274,11 +279,16 @@ export default function TrafficQueue() {
     try {
       // Кого показываем: пусто — вся очередь (умолчание), id — конкретного трафика.
       const who = repId ? `&rep_id=${repId}` : ''
-      const r = await api.get(`/traffic/queue?status=all${who}`, auth())
-      setRows(r.data.rows || [])
-      setReps(r.data.reps || [])
-      setMyRepId(r.data.my_rep_id ?? null)
-      setCanViewOthers(!!r.data.can_view_others)
+      // Два вида работы одним заходом: проверка баннера и проверка ссылки (23.11.2026).
+      // Отдельный запрос, а не одна ручка: вердикт у них разный и строки разные.
+      const [mat, lnk] = await Promise.all([
+        api.get(`/traffic/queue?status=all${who}`, auth()),
+        api.get(`/traffic/queue?status=all&kind=${encodeURIComponent('ссылка')}${who}`, auth()),
+      ])
+      setRows([...(mat.data.rows || []), ...(lnk.data.rows || [])])
+      setReps(mat.data.reps || [])
+      setMyRepId(mat.data.my_rep_id ?? null)
+      setCanViewOthers(!!mat.data.can_view_others)
     } catch (e) {
       setErr(detailText(e, 'Не удалось загрузить очередь'))
     }
@@ -290,10 +300,17 @@ export default function TrafficQueue() {
   // `new Date()` при рендере даёт на сервере и в браузере разное — берём после монтажа.
   useEffect(() => { setToday(new Date()) }, [])
 
-  async function verdict(pairIds, v, reason) {
+  async function verdict(pairIds, v, reason, link) {
     setBusy(true); setErr('')
     try {
-      if (pairIds.length === 1 && !reason) {
+      if (link) {
+        // Ссылки — по одной: массовой ручки у них нет, и вердикт по ссылке
+        // финализирует пару, а не «пачку материала».
+        for (const pid of pairIds) {
+          await api.post(`/traffic/pair/${pid}/link-verdict`,
+            { verdict: v, reason: reason || null }, auth())
+        }
+      } else if (pairIds.length === 1 && !reason) {
         await api.post(`/traffic/pair/${pairIds[0]}/verdict`, { verdict: v }, auth())
       } else {
         await api.post('/traffic/pairs/verdict',
@@ -303,6 +320,23 @@ export default function TrafficQueue() {
       await load()
     } catch (e) {
       setErr(detailText(e, 'Не удалось записать вердикт'))
+    }
+    setBusy(false)
+  }
+
+  /* Правка посадочной на проверке ссылки (23.11.2026): площадки присылают их с
+     опечатками, а трафик видит это первым. Сохранённая ссылка уйдёт в ОРД/ЕРИД и DSP
+     только после «ок» по ссылке. */
+  async function saveLinkEdit() {
+    if (!linkEdit) return
+    setBusy(true); setErr('')
+    try {
+      await api.put(`/traffic/pair/${linkEdit.pairId}/landing`,
+        { url: (linkEdit.url || '').trim() }, auth())
+      setLinkEdit(null)
+      await load()
+    } catch (e) {
+      setErr(detailText(e, 'Не удалось сохранить посадочную'))
     }
     setBusy(false)
   }
@@ -446,6 +480,8 @@ export default function TrafficQueue() {
     `креатив №${r.set.no}`].filter(Boolean).join(' ').toLowerCase()
 
   const visible = rows.filter(r => {
+    if (tab === 'links') return !!r.link_check
+    if (r.link_check) return false
     if (tab === 'waiting' && r.verdict) return false
     if (tab === 'done' && !r.verdict) return false
     return !q.trim() || hay(r).includes(q.trim().toLowerCase())
@@ -739,7 +775,7 @@ export default function TrafficQueue() {
                 {mayApprove && pending.length > 1 && (
                   <button style={{ ...pill(...TONE.ok), padding: '6px 13px', fontSize: 12.5,
                     cursor: 'pointer', gap: 7 }} disabled={busy}
-                    onClick={() => verdict(pending.map(r => r.pair_id), 'ок')}>
+                    onClick={() => verdict(pending.map(r => r.pair_id), 'ок', null, pending[0]?.link_check)}>
                     <span style={{ fontSize: 11 }}>✓</span> Все ок ({pending.length})
                   </button>
                 )}
@@ -926,6 +962,15 @@ export default function TrafficQueue() {
                       )}
                       {!r.verdict && mayApprove && (
                         <>
+                          {r.link_check && mayEdit && (
+                            <button style={{ ...pill('var(--bg-card)', 'var(--accent)', 'var(--accent-border)'),
+                              cursor: 'pointer', fontSize: 11.5 }} disabled={busy}
+                              title="Поправить посадочную — она уйдёт в ОРД/ЕРИД и DSP после «ок»"
+                              onClick={() => setLinkEdit({ pairId: r.pair_id, url: r.advertiser_url || '',
+                                name: r.publisher?.name || r.publisher?.domain })}>
+                              ✎ ссылка
+                            </button>
+                          )}
                           {/* Возврат площадки — НАШ ОРАНЖЕВЫЙ (владелец 12.09.2026), тот
                               же, что у плашек «ждёт проверки». Не красный: красным на
                               этом экране говорит «На переделку» по всему комплекту, и
@@ -936,12 +981,13 @@ export default function TrafficQueue() {
                               borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}
                             title={`Вернуть на переделку только ${r.publisher.name || 'эту площадку'}`}
                             onClick={() => setRework({ pairIds: [r.pair_id], setNo: g.set.no,
-                              reason: '', only: r.publisher.name || r.publisher.domain })}>
+                              reason: '', link: r.link_check,
+                              only: r.publisher.name || r.publisher.domain })}>
                             <Ico d={I_REDO} size={13} />
                           </button>
                           <button style={{ ...pill(...TONE.ok), cursor: 'pointer',
                             padding: '5px 12px', fontSize: 11.5 }} disabled={busy}
-                            onClick={() => verdict([r.pair_id], 'ок')}>
+                            onClick={() => verdict([r.pair_id], 'ок', null, r.link_check)}>
                             Всё ок
                           </button>
                         </>
@@ -977,6 +1023,23 @@ export default function TrafficQueue() {
         <CreativePreview files={preview.files} startId={preview.startId}
           set={null} canApprove={false} onReviewed={() => {}}
           onClose={() => setPreview(null)} />
+      )}
+
+      {linkEdit && (
+        <Modal title={`Посадочная · проверка ссылки${linkEdit.name ? ` · ${linkEdit.name}` : ''}`}
+               summary="Площадки присылают ссылки с опечатками. Поправленная ссылка уйдёт в ОРД/ЕРИД и DSP после вашего «ок» по ссылке."
+               width={620} onClose={() => setLinkEdit(null)}
+               footer={
+                 <>
+                   <button style={btn(false)} onClick={() => setLinkEdit(null)}>Отмена</button>
+                   <button style={btn(true)} disabled={busy} onClick={saveLinkEdit}>Сохранить</button>
+                 </>
+               }>
+          <input autoFocus value={linkEdit.url} placeholder="https://…"
+            onChange={e => setLinkEdit({ ...linkEdit, url: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter' && !busy) saveLinkEdit() }}
+            style={{ ...inp, width: '100%', fontFamily: MONO, fontSize: 12.5 }} />
+        </Modal>
       )}
 
       {aim && (
@@ -1044,7 +1107,7 @@ export default function TrafficQueue() {
                  <>
                    <button style={btn(false)} onClick={() => setRework(null)}>Отмена</button>
                    <button style={btn(true)} disabled={busy || !rework.reason.trim()}
-                     onClick={() => verdict(rework.pairIds, 'на переделку', rework.reason)}>
+                     onClick={() => verdict(rework.pairIds, 'на переделку', rework.reason, rework.link)}>
                      Вернуть
                    </button>
                  </>

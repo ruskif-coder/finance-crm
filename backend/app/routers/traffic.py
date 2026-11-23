@@ -166,16 +166,15 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
           # публичный контракт для приборов, которые зовут её напрямую
           # (tests/test_traffic_queue.py: `traffic.queue('all', db, user)`). FastAPI
           # разбирает query-параметры по именам, ему порядок безразличен.
-          rep_id: Optional[int] = None, all_reps: bool = False):
+          rep_id: Optional[int] = None, all_reps: bool = False,
+          kind: str = "материал"):
     """Очередь проверки. `status`: waiting (по умолчанию) | done | all.
 
-    `rep_id` — фильтр «чья кампания», доступен всем: очередь общая (03.09.2026), и
-    переключатель здесь сужает список, а не выдаёт доступ. `all_reps` остался в
-    подписи ради контракта ручки и ничего не меняет.
-
-    Один запрос на весь экран — тем же приёмом, что сборка креативов: несколько запросов
-    на один список дают мигание и рассинхрон, когда часть уже обновилась, а часть нет.
+    `kind='материал'` (по умолчанию) — проверка баннера; `kind='ссылка'` — повторная
+    проверка ссылки, присланной площадкой (23.11.2026). Два вида работы в одной ручке,
+    потому что строка — та же пара, а экран и права те же.
     """
+    kinds = ("ссылка",) if kind == "ссылка" else ("трафики",)
     q = (db.query(LaunchPrepReview, LaunchPrepPair, LaunchPrepCreativeSet,
                   LaunchPrepTarget, SalesPublisher, SalesDeal)
          .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
@@ -183,7 +182,7 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
          .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
          .join(SalesDeal, SalesDeal.id == LaunchPrepCreativeSet.deal_id)
          .outerjoin(SalesPublisher, SalesPublisher.id == LaunchPrepTarget.publisher_id)
-         .filter(LaunchPrepReview.kind == "трафики"))
+         .filter(LaunchPrepReview.kind.in_(kinds)))
     if status == "waiting":
         q = q.filter(LaunchPrepReview.verdict.is_(None))
     elif status == "done":
@@ -257,6 +256,9 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
         v = urgency.evaluate(_facts(review, target, deal), today)
         out.append({
             "pair_id": pair.id,
+            # Вид работы в строке: проверка баннера (`трафики`) или ссылки (`ссылка`,
+            # 23.11.2026). Экран по нему решает, какую кнопку вердикта звать.
+            "kind": review.kind, "link_check": review.kind == "ссылка",
             # Полного кода пары на этой стадии НЕ существует: `-01` выдаётся по факту
             # схождения, а трафик смотрит до него. Показываем префикс, и это честно.
             "pair_prefix": f"{deal.code}-{pub.code}" if deal.code and pub and pub.code else None,
