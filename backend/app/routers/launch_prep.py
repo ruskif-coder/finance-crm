@@ -2866,7 +2866,8 @@ def ensure_link_review(db: Session, set_id: int, target_id: int):
     rec = (db.query(LaunchPrepReview)
            .filter(LaunchPrepReview.pair_id == pair.id,
                    LaunchPrepReview.kind == "ссылка").first())
-    if rec is None:
+    fresh = rec is None
+    if fresh:
         rec = LaunchPrepReview(set_id=set_id, pair_id=pair.id, kind="ссылка",
                                source="трафики")
         db.add(rec)
@@ -2875,7 +2876,34 @@ def ensure_link_review(db: Session, set_id: int, target_id: int):
         rec.verdict = rec.reason = rec.decided_by = rec.decided_email = rec.decided_at = None
         from sqlalchemy.sql import func as sa_func
         rec.asked_at = sa_func.now()
+        fresh = True
+    if fresh:
+        _notify_link_check(db, set_id)
     return rec
+
+
+def _notify_link_check(db: Session, set_id: int) -> None:
+    """Трафику: пришла ссылка на проверку (23.11.2026). Внутреннее, наружу не уходит.
+
+    Тем же событием, что и обычная проверка: адресат, канал и ссылка те же — отдельный
+    вид сообщал бы о том же самом мимо общего списка «что приходит трафику».
+    """
+    from app.notify import emit
+    from app.sales.deal_label import deal_label
+    from app.sales.models import SalesDeal
+    s = db.query(LaunchPrepCreativeSet).filter(
+        LaunchPrepCreativeSet.id == set_id).first()
+    if s is None:
+        return
+    deal = db.query(SalesDeal).filter(SalesDeal.id == s.deal_id).first()
+    if deal is None:
+        return
+    emit(db, "traffic_new_work",
+         title=f"Ссылка на проверку · комплект №{s.no} · {deal_label(deal)}",
+         body="Площадка прислала посадочную. Проверьте её (можно поправить) — маркер ЕРИД ждёт.",
+         link="/traffic/queue",
+         entity_type="sales_deal", entity_id=deal.id,
+         ctx={"deal": deal})
 
 
 class TargetUrlIn(BaseModel):
