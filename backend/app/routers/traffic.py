@@ -40,7 +40,7 @@ from app.launch_prep import banner_origin, originals, pub_rules, sandbox
 from app.routers.launch_prep import apply_link_verdict, ensure_link_review, url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
-                                    LaunchPrepTarget)
+                                    LaunchPrepSetTarget, LaunchPrepTarget)
 from app.models import Role, User
 from app.notify import emit
 from app.permissions import get_permissions_for_user, require_any_permission, require_permission
@@ -604,7 +604,6 @@ def pair_landing(pair_id: int, payload: LandingIn, db: Session = Depends(get_db)
     с кабинетом и сборкой (`pub_rules.validate_landing`): вторая копия разошлась бы.
     """
     pair, s, target, pub, deal = _pair_in_scope(db, pair_id, current_user)
-    from app.routers.launch_prep import _member
     try:
         url = pub_rules.validate_landing((payload.url or "").strip(), target.surface_kind)
         app_url = (pub_rules.validate_app_link(payload.app_url)
@@ -615,7 +614,12 @@ def pair_landing(pair_id: int, payload: LandingIn, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Укажите ссылку")
     if len(url) > 512:
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
-    m = _member(db, s.id, target.id, create=True)
+    m = (db.query(LaunchPrepSetTarget)
+         .filter(LaunchPrepSetTarget.set_id == s.id,
+                 LaunchPrepSetTarget.target_id == target.id).first())
+    if m is None:
+        m = LaunchPrepSetTarget(set_id=s.id, target_id=target.id)
+        db.add(m)
     m.advertiser_url = url
     if app_url:
         m.deeplink_url = app_url

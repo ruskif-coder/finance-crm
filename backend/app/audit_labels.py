@@ -263,6 +263,8 @@ ACTION_LABELS = {
     "creative_pair_verdict": "Решение площадки по креативу",
     "launch_target_state_fix": "Починка состояния площадки в сделке",
     "traffic_pair_verdict": "Решение трафика по паре",
+    "traffic_landing_edit": "Трафик поправил посадочную",
+    "traffic_link_verdict": "Решение трафика по ссылке",
     "traffic_pair_file": "Скриншот размещения приложен",
     "delete_pair_file": "Скриншот размещения удалён",
     "add_creative_targets": "Площадки добавлены к комплекту",

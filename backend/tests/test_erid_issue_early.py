@@ -25,7 +25,7 @@ class _Db:
 
     def query(self, model):
         s = self.s
-        return SimpleNamespace(filter=lambda *a: SimpleNamespace(first=lambda: s))
+        return SimpleNamespace(filter=lambda *a: SimpleNamespace(first=lambda: s, count=lambda: 0))
 
     def commit(self):
         pass

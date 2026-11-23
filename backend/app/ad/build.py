@@ -751,7 +751,7 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
             continue                      # площадки нет в этой РК — пара не наша
         sid = r["set_id"]
         chain = chain_status(r["traffic_verdict"], r["platform_verdict"], has_pair=True,
-                             link_pending=bool(r["link_pending"]))
+                             link_pending=bool(r.get("link_pending")))
         # Словари площадки и креатива различаются одним словом: у креатива согласованное
         # состояние зовётся «согласован», а не «ждёт запуска».
         chain = "согласован" if chain == PLACEMENT_READY else chain
