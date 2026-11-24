@@ -153,6 +153,15 @@ def master_registry(db: Session = Depends(get_db), user: User = Depends(MD_VIEW)
     return {"rows": RG.rows(db, user), "statuses": list(MST.STATUSES), "hidden": list(MST.HIDDEN)}
 
 
+@router.get("/count")
+def master_count(db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
+    """Сколько пакетов стоит в «выставление» — только число, для счётчика в меню (24.11.2026).
+
+    Тот же отбор, что у вкладки «выставление» реестра: область «свои». Поэтому цифра на иконке и строки
+    на экране не расходятся. Объявлено ВЫШЕ `/{code}`: иначе FastAPI отдал бы «count» карточке как код пакета."""
+    return {"waiting": RG.count_status(db, user, MST.ISSUE)}
+
+
 @router.get("/{code}")
 def master_view(code: str, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
     """Карточка пакета: шапка и сделки, раскладка, номера ДС договора, документы, выставление, «что нужно сейчас».

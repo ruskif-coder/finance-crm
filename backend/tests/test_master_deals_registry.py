@@ -48,3 +48,49 @@ def test_registry_lists_only_packages_in_scope(monkeypatch):
     finally:
         db.rollback()
         db.close()
+
+def test_paper_package_in_wait_pay_is_flagged_for_scans(monkeypatch):
+    """«Ждём сканы» (владелец 23.11.2026): бумажный пакет в «ждём оплату» без подписанных документов попадает в эту
+    вкладку — иначе оплата уводит его из поля зрения, хотя документов клиента ещё нет. Подписали все — флаг снимается.
+
+    Сломает: вкладка «ждём сканы» осталась пустой у бумаги или, наоборот, показывает пакет, который уже подписан."""
+    import pytest as _pytest
+    from sqlalchemy import text
+    from app.database import SessionLocal
+    from app.master_deal import issue as IS
+    from app.master_deal import registry as RG
+    from app.master_deal import scope as SC
+    from app.master_deal import status as MST
+    from app.master_deal.doc_sign import SIGNED
+    from app.master_deal.models import MasterDeal
+
+    db = SessionLocal()
+    try:
+        m = db.query(MasterDeal).filter(MasterDeal.status == MST.WAIT_PAY).first() or db.query(MasterDeal).first()
+        if m is None:
+            _pytest.skip("на стенде нет мастер-сделок")
+        db.execute(text("UPDATE contracts SET issue_channel = 'бумага' WHERE id = :c"), {"c": m.contract_id})
+        db.execute(text("UPDATE master_deals SET status = :s WHERE id = :i"), {"s": MST.WAIT_PAY, "i": m.id})
+        # и отметку подписи, и канал отправки — у УПД И у ДС: ушедшее по ЭДО держит канал и не становится бумагой (status.is_paper)
+        db.execute(text("UPDATE master_deal_upds SET sign_state = NULL, sign_channel = NULL WHERE master_deal_id = :i"), {"i": m.id})
+        db.execute(text("UPDATE sales_annexes SET sign_state = NULL, sign_channel = NULL WHERE master_deal_id = :i"), {"i": m.id})
+        db.flush()
+        db.expire_all()
+        monkeypatch.setattr(SC, "own_reps", lambda db, user: None)
+        monkeypatch.setattr(SC, "can_finance", lambda db, user: False)
+
+        def row():
+            return next(r for r in RG.rows(db, object()) if r["code"] == m.code)
+
+        assert row()["scans"] is True, "бумажный невыставленный пакет не попал во вкладку «ждём сканы»"
+        db.execute(text("UPDATE master_deal_upds SET sign_state = :s WHERE master_deal_id = :i"),
+                   {"s": SIGNED, "i": m.id})
+        db.execute(text("UPDATE sales_annexes SET sign_state = :s WHERE master_deal_id = :i"),
+                   {"s": SIGNED, "i": m.id})
+        db.flush()
+        db.expire_all()
+        assert row()["scans"] is False, "подписанный пакет остался в «ждём сканы»"
+        assert not IS.unsigned(db, m)
+    finally:
+        db.rollback()
+        db.close()

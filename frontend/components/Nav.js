@@ -690,10 +690,13 @@ export default function Nav({ children, onSearch, asPath }) {
   const trafficWaiting = useWaitingCount('/api/traffic/queue/count', visible('/traffic/queue'))
   const premodWaiting = useWaitingCount('/api/premod/count', visible('/traffic/premoderation'))
   const deskWaiting = useWaitingCount('/api/onec-desk/count', visible('/finance/onec-desk'))
+  // Пакеты, стоящие в «выставление»: их видно на вкладке реестра, счётчик считает то же (владелец 24.11.2026).
+  const masterWaiting = useWaitingCount('/api/master-deals/count', visible('/finance/master-deals'))
   // Клонируем ветку с пунктом и вешаем `badge`: механика карты дальше сама покажет число и
   // на пункте, и в значке раздела (sumBadge из lib/navModel). Мутировать nav.data.json нельзя — он общий
   // и кэшируется между рендерами.
-  const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting, '/finance/onec-desk': deskWaiting }
+  const badges = { '/traffic/queue': trafficWaiting, '/traffic/premoderation': premodWaiting, '/finance/onec-desk': deskWaiting,
+    '/finance/master-deals': masterWaiting }
   const sections = rawSections.map(sec => (sec.items?.some(i => badges[i.href] > 0)
     ? { ...sec, items: sec.items.map(i => (badges[i.href] > 0 ? { ...i, badge: String(badges[i.href]) } : i)) }
     : sec))

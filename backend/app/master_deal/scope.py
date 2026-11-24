@@ -24,10 +24,35 @@ def in_scope(db: Session, m, own) -> bool:
     return own is None or any(_deal_owned(rep, acc, own) for rep, acc in package_owners(db, m))
 
 
+def _owners_ok(owners, own) -> bool:
+    """Одно правило «свои ВСЕ сделки пакета» для обоих путей: по одному пакету и пачкой.
+
+    Две копии условия разошлись бы молча — вкладка реестра и счётчик в меню считали бы разное."""
+    from app.routers.sales_dashboard import _deal_owned
+    return own is None or all(_deal_owned(rep, acc, own) for rep, acc in owners)
+
+
 def all_in_scope(db: Session, m, own) -> bool:
     """Строгое правило — как у карточки и архива: свои ВСЕ сделки пакета. Реестр, кандидаты на присоединение (аудит 21.10.2026)."""
-    from app.routers.sales_dashboard import _deal_owned
-    return own is None or all(_deal_owned(rep, acc, own) for rep, acc in package_owners(db, m))
+    return _owners_ok(package_owners(db, m), own)
+
+
+def ids_all_in_scope(db: Session, ids, own) -> list:
+    """Какие из пакетов целиком в области «свои» — одним запросом владельцев, без чтения пакета по одному.
+
+    Нужно счётчику в меню (24.11.2026): он опрашивается с каждой страницы раз в минуту, и повторять
+    `all_in_scope` на каждый пакет значило бы N запросов на каждый опрос. Правило то же — `_owners_ok`;
+    поэтому число в меню и вкладка реестра считают одно и то же."""
+    ids = list(ids)
+    if own is None or not ids:
+        return ids if own is None else []
+    rows = db.execute(text(
+        "SELECT i.master_deal_id, d.sales_rep_id, d.account_manager_id FROM master_deal_items i "
+        "JOIN sales_deals d ON d.id = i.deal_id WHERE i.master_deal_id = ANY(:ids)"), {"ids": ids}).all()
+    owners = {}
+    for mid, rep, acc in rows:
+        owners.setdefault(mid, []).append((rep, acc))
+    return [i for i in ids if _owners_ok(owners.get(i, []), own)]
 
 
 def can_special(db: Session, user) -> bool:

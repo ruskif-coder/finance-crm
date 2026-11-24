@@ -29,6 +29,19 @@ _ROWS = text("""
      ORDER BY m.period DESC, m.code DESC""")
 
 
+_COUNT_IDS = text("SELECT id FROM master_deals WHERE status = :s")
+
+
+def count_status(db: Session, user, status: str) -> int:
+    """Сколько пакетов в статусе `status` видит пользователь — только число, для счётчика в меню (24.11.2026).
+
+    Отбор — тот же, что у реестра (`all_in_scope`, строгое правило): число в меню обязано совпасть с числом
+    на вкладке экрана. Один `SELECT id` вместо полной выдачи реестра: счётчик опрашивается с каждой страницы
+    раз в минуту, а `rows()` тянет суммы, ДС и сверку."""
+    ids = [r[0] for r in db.execute(_COUNT_IDS, {"s": status})]
+    return len(SC.ids_all_in_scope(db, ids, SC.own_reps(db, user)))
+
+
 def row_efficiency(db: Session, m) -> dict:
     from app.final_recon import closing as CL
     from app.master_deal import efficiency as EF
@@ -49,6 +62,7 @@ def rows(db: Session, user) -> list:
 
 
 def _rows(db: Session, user) -> list:
+    from app.master_deal import issue as IS
     from app.master_deal.models import MasterDeal
     own = SC.own_reps(db, user)
     fin = SC.can_finance(db, user)
@@ -67,5 +81,10 @@ def _rows(db: Session, user) -> list:
                     "contract_id": m.contract_id, "step": MST.row_step(db, m), "send": MST.send_count(db, m),
                     # канал — отдельной колонкой (хендофф v2): бумажный по факту пакет остаётся бумажным, иначе — из договора
                     "channel": MST.PAPER if MST.is_paper(db, m) else MST.channel_of(db, m),
+                    # «Ждём сканы» (23.11.2026, владелец): бумажный пакет ждёт сканов и в «ждём оплату», и в «ждём сканы» —
+                    # вкладка показывает его в обеих, пока подписанных документов нет. Оплата при этом в архив не уводит:
+                    # в архив пускает только `_check_forward` по подписанным документам.
+                    "scans": bool(MST.is_paper(db, m) and m.status in (MST.WAIT_PAY, MST.WAIT_SCANS)
+                                  and IS.unsigned(db, m)),
                     **({"efficiency": row_efficiency(db, m)} if fin and r[10] is not None else {})})
     return out

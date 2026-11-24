@@ -33,6 +33,10 @@ import { detailText } from '@/lib/loadError'
 // макета): делят свободное место и обрезаются многоточием, полный текст в title. Окно владельца ≈ 2000 px — минимумы макета (200 px)
 // туда не влезали (урок 19.10); прокрутка — лишь на окне уже 1800 px.
 const COLS = '84px 76px 150px minmax(200px,1.6fr) 150px 96px minmax(140px,1.2fr) minmax(60px,0.6fr) minmax(80px,1fr) minmax(80px,1fr) 136px 52px 104px 104px 142px'
+// Порядок вкладок — как в конвейере, но «ждём закрытия» перед «черновиком» (владелец 23.11.2026). На уровне модуля: это
+// константа, и внутри компонента она давала предупреждение хуков (`ord` в зависимостях useMemo) — а гейт сборки считает их штукой.
+const TAB_ORDER = ['ждём закрытия', 'черновик', 'согласование', 'ждём 1С', 'выставление', 'ждём оплату', 'ждём сканы', 'архив']
+const ord = (k) => { const i = TAB_ORDER.indexOf(k); return i === -1 ? TAB_ORDER.length : i }
 export default function MasterDealsRegistry() {
   const router = useRouter()
   // NAVY: оформление как у «Моих сделок» (navy.css, .navy-scr) — фон, мягкие кнопки, расхлоп пакета продолжением строки (18.11.2026)
@@ -83,10 +87,17 @@ export default function MasterDealsRegistry() {
     // и по коду исходной сделки (владелец 12.11.2026): «T6WY56» находит пакет, в котором она
     return byMonth.filter(r => !s || [r.code, r.contract?.number, r.counterparty, r.payer, ...r.advertisers, ...r.brands, ...(r.deal_codes || [])].join(' ').toLowerCase().includes(s))
   }, [byMonth, q])
-  const inTab = useCallback((r) => (tab === KEEP ? !hidden.has(r.status) : r.status === tab), [tab, hidden])
+  // Порядок вкладок и «ждём сканы» — см. TAB_ORDER выше.
+  const inTab = useCallback((r) => {
+    if (tab === KEEP) return !hidden.has(r.status)
+    if (r.status === tab) return true
+    // «Ждём сканы»: бумажный пакет дублируется сюда из «ждём оплату», пока нет подписанных документов (владелец 23.11.2026)
+    return tab === 'ждём сканы' && !!r.scans
+  }, [tab, hidden])
   const shown = useMemo(() => bySearch.filter(r => inTab(r) || moved[r.code]), [bySearch, inTab, moved])
-  const tabs = useMemo(() => [KEEP, ...(data?.statuses || [])].map(key => ({
-    key, count: bySearch.filter(r => (key === KEEP ? !hidden.has(r.status) : r.status === key)).length })), [data, bySearch, hidden])
+  const tabs = useMemo(() => [KEEP, ...(data?.statuses || []).slice().sort((a, b) => ord(a) - ord(b))].map(key => ({
+    key, count: bySearch.filter(r => (key === KEEP ? !hidden.has(r.status)
+      : r.status === key || (key === 'ждём сканы' && !!r.scans))).length })), [data, bySearch, hidden])
   const months = useMemo(() => [...new Set(rows.map(r => r.period))].sort().reverse(), [rows])
 
   const done = useCallback(async (r) => {
