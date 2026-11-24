@@ -44,6 +44,13 @@ def save(db: Session, m, k, user, *, slot: str, filename: str, content: bytes) -
         raise DeskError(400, "Файл пустой")
     if len(content) > MAX_BYTES:
         raise DeskError(413, f"Файл больше {MAX_BYTES // 1024 // 1024} МБ")
+    if ext == ".zip":
+        # Контейнер ЭДО вместо XML (24.11.2026, M-0029 и M-0030: бухгалтер положила «Экосистем 4.zip»). В слот кладём
+        # сам УПД: иначе в архиве пакета для Диадока лежит вложенный zip, а Диадок ждёт XML. Архив без УПД — отказ.
+        from app.onec_desk import xmlparse as XP
+        content = XP.unpack(content)
+        ext = ".xml"
+        original = os.path.splitext(original)[0] + ".xml"
     os.makedirs(os.path.join(ROOT, SUBDIR), exist_ok=True)
     safe = re.sub(r"[^\w.-]", "_", original)
     rel = os.path.join(SUBDIR, f"{m.id}_1c_{uuid.uuid4().hex[:8]}_{safe}")

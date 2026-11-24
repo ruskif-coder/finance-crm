@@ -11,6 +11,8 @@
 - возврат без комментария, возврат уже внесённого, «исправлено» без возврата;
 - внесение в пакет, который ещё не дошёл до 1С.
 Живой пакет стенда, транзакция откатывается."""
+import io
+import zipfile
 from datetime import date
 
 import pytest
@@ -104,6 +106,33 @@ def test_onec_file_types(env, tmp_path, monkeypatch):
     with pytest.raises(DeskError):
         OF.save(db, m, k, user, slot="upd", filename="упд.xml", content=b"<x/>")
     OF.save(db, m, k, user, slot="xml", filename="упд.xml", content=b"<x/>")
+
+
+def test_xml_slot_unpacks_edo_container(env, tmp_path, monkeypatch):
+    """Контейнер ЭДО в слоте «XML УПД» распаковывается в сам УПД (24.11.2026, M-0029 и M-0030).
+
+    Сломает: в архив пакета для Диадока попадёт вложенный zip вместо XML — Диадок такой файл как УПД не примет,
+    а в карточке «УПД» будет скачиваться архивом. Проверяем и отказ: архив без УПД внутрь не пускаем."""
+    db, m, k, user, _ = env
+    from app.master_deal.models import MasterDealFile
+    from app.onec_desk import files as OF
+    from app.onec_desk.service import DeskError
+    monkeypatch.setattr(OF, "ROOT", str(tmp_path))
+    xml = b'<?xml version="1.0" encoding="windows-1251"?><Fajl><Dokument/></Fajl>'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("ON_NSCHFDOPPR_7728474136_770401001_7725261852_770101001_20261124_x_0_0_0_0_0_00.xml", xml)
+    got = OF.save(db, m, k, user, slot="xml", filename="Экосистем 4.zip", content=buf.getvalue())
+    assert got["filename"].endswith(".xml"), "архив остался архивом — в Диадок уедет zip"
+    f = db.query(MasterDealFile).filter_by(id=got["id"]).one()
+    assert f.content_type == "application/xml" and f.size == len(xml)
+    # Читаем с диска напрямую: `OF.read` ищет файл в боевом ROOT, а тест пишет во временный каталог.
+    assert (tmp_path / f.path).read_bytes() == xml, "в слот легли байты архива, а не УПД"
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("readme.txt", b"no upd here")
+    with pytest.raises(DeskError):
+        OF.save(db, m, k, user, slot="xml", filename="пусто.zip", content=bad.getvalue())
 
 
 def test_scan_delete_does_not_touch_onec_file(env):
