@@ -85,7 +85,7 @@ def printable_doc(db: Session, a: SalesAnnex) -> dict:
     deal_ids = annex_deals(db, a.id)
     doc = annex_build.build(db, c, period_from=a.period_from, period_to=a.period_to,
                             amount=a.total_amount or 0, vat_rate=a.vat_rate, no=a.no,
-                            deal_ids=deal_ids)
+                            deal_ids=deal_ids, doc_date=a.date)
     # Пункт 1 и замечания — из шаблона ДС (мост до переписывания генерации файлов).
     return tpl_doc.bridge_old_doc(db, a, c, doc, deal_ids)
 

@@ -36,9 +36,12 @@ def test_no_dated_rows_falls_back_to_document_period():
     assert placement_span([{"kind": "extra"}], *NOV) == NOV
 
 
-def test_master_annex_default_date_is_rk_start_from_rows():
-    # Владелец 05.11.2026: дата ДС мастер-сделки по умолчанию — начало РК из строк, а не 1-е число месяца
+def test_master_annex_default_date_is_period_start_not_rk_start():
+    """Владелец 25.11.2026: дата ДС по умолчанию — начало ПЕРИОДА, а не первый день РК.
+
+    Сломает: ДС снова начнёт датироваться днём старта первой РК (14.10 у пакета с месяцем с 01.10), и документ
+    разойдётся с основанием к закрытию и с тем, что печатает кнопка «Скачать ДС»."""
     from app.master_deal.to_annex import default_date
     rows = [{"date_from": "2026-11-07", "date_to": "2026-11-30"}, {"kind": "discount", "date_from": None}]
-    assert default_date(rows, *NOV) == date(2026, 11, 7)
+    assert default_date(rows, *NOV) == date(2026, 11, 1)     # строки с 07.11 — дата всё равно 01.11
     assert default_date([], *NOV) == date(2026, 11, 1)

@@ -73,6 +73,27 @@ def annex_date(period_from: date) -> date:
     return period_from
 
 
+def rk_start(annex) -> Optional[date]:
+    """Первый день РК по строкам ДС — верхняя граница даты документа (владелец 25.11.2026: «дата ДС не может быть
+    позже даты начала РК»). Нет строк — границы нет, проверять нечего: у ДС, подписанного вне системы, строк может
+    не быть вовсе.
+
+    Разбор строк — тем же `placement_span`, что считает период в тексте ДС: второй разбор дат разошёлся бы с ним."""
+    from app.annex_tpl.assemble import placement_span
+    start, _ = placement_span(getattr(annex, "rows", None) or [], None, None)
+    return start
+
+
+def doc_date_problem(annex, doc_date) -> Optional[str]:
+    """Текст отказа, если дата ДС позже начала РК; `None` — дату ставить можно. Одна проверка на все входы, где
+    дата ДС задаётся руками (смена даты, подтверждение, «подписан вне системы»): иначе три места разойдутся."""
+    rk = rk_start(annex)
+    if doc_date is not None and rk is not None and doc_date > rk:
+        return (f"Дата ДС {doc_date:%d.%m.%Y} позже начала РК ({rk:%d.%m.%Y}): соглашение не может быть датировано "
+                f"позже первого дня размещения. Поставьте дату не позже {rk:%d.%m.%Y}.")
+    return None
+
+
 def party(cp: Optional[Counterparty], signer=None, on: Optional[date] = None) -> dict:
     """Сторона договора для шапки: «в лице Генерального директора Иванова Ивана
     Ивановича, действующего на основании Устава».
@@ -329,8 +350,12 @@ def plan_rows(db: Session, deal_ids) -> list:
 def build(db: Session, contract: Contract, *, period_from: date, period_to: date,
           amount: float, brand: Optional[str] = None,
           vat_rate: Optional[float] = None, no: Optional[int] = None,
-          deal_ids=None) -> dict:
+          deal_ids=None, doc_date: Optional[date] = None) -> dict:
     """Всё, что нужно документу, одним словарём — и для docx, и для PDF.
+
+    `doc_date` — дата ДОКУМЕНТа (поле «Дата ДС», которое аккаунт может поставить руками). Без неё — начало
+    периода. До 25.11.2026 параметра не было вовсе: печать по кнопке всегда ставила `period_from`, и дата,
+    выставленная на экране ДС, в документ не попадала (владелец: «всё должно совпадать»).
 
     Ничего не пишет в базу: это предпросмотр. Запись происходит при подтверждении, когда
     номер занимается насовсем.
@@ -343,7 +368,8 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
     # Ставка юрлица не заполнена — ставка ЗАКОНА на период документа (`app/vat.py`). До
     # ревью 23.09.2026 запасом было `vat_rate` контрагента, а за ним 0: ДС выходил без НДС.
     from app import vat as vat_rules
-    rate = vat_rate if vat_rate is not None else vat_rules.for_document(db, contract, annex_date(period_from))
+    on = doc_date or annex_date(period_from)      # дата документа: выставленная на экране ДС или начало периода
+    rate = vat_rate if vat_rate is not None else vat_rules.for_document(db, contract, on)
     n = no or next_no(db, contract)
 
     # НДС по строке НАЧИСЛЯЕТСЯ, а не извлекается: `r["amount"]` — стоимость размещения
@@ -381,13 +407,12 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
                          if contract.contract_date else ""),
     }
     from app.signers.service import party_of
-    on = annex_date(period_from)
     us_party, payer_party = party_of(db, us, contract, "исполнитель", on), party_of(db, payer, contract, "заказчик", on)
     return {
         "no": n,
         # Предпросмотр называет документ тем же словом, что выпуск (тумблер договора, 31.10.2026).
         "number": DK.number_text(DK.resolve(None, getattr(contract, "annex_word", None)), n),
-        "date": annex_date(period_from),
+        "date": on,
         "period_from": period_from, "period_to": period_to,
         "signed_place": (getattr(us, "signed_place", None) or "г. Москва"),
         # Ссылка на договор в ЭДО и признак прикреплённого файла — чтобы с экрана сборки

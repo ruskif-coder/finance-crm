@@ -488,7 +488,7 @@ export default function AnnexAssembly() {
                     <AnnexQuickEdit key={b.id} title={`Пункт ${b.num} ${b.title || ''}`} hint="до таблицы медиаплана — правит аккаунт"
                                     source={b.source_text != null ? b.source_text : (b.template_text || '')} defaultText={b.template_text} edited={!!b.edited} inheritedFrom={b.inherited_from} values={a.model.values}
                                     canEdit={mayEdit} onSave={(txt) => saveEdit(b.id, txt)}
-                                    aside={i === 0 ? <AnnexDateField value={a.date} periodFrom={a.period_from} canEdit={mayEdit} onSave={saveDate} /> : null} />
+                                    aside={i === 0 ? <AnnexDateField value={a.date} periodFrom={a.period_from} rkStart={a.rk_start} canEdit={mayEdit} onSave={saveDate} /> : null} />
                   ))}
                 </div>
               </div>

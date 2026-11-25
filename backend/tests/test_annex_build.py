@@ -371,3 +371,23 @@ def test_rounding_does_not_split_the_totals_on_many_rows(db):
     gross = round(sum(round(n * (100 + rate) / 100, 2) for n in nets), 2)
     assert by_rows != annex.vat_of(gross, rate), \
         'если формулы совпали — тест устарел, но правило остаётся: печатаем сумму строк'
+
+# ── дата документа — та, что выставлена на экране ДС (владелец 25.11.2026: «всё должно совпадать») ───
+
+def test_document_date_is_the_one_set_on_the_screen(db):
+    """Сломает: печать по кнопке снова начнёт ставить начало периода, игнорируя дату ДС, — документ разойдётся
+    с конструктором и с основанием к закрытию, при том что оба показывают выставленную дату."""
+    c = db.query(Contract).order_by(Contract.id).first()
+    if not c:
+        pytest.skip("нужен договор")
+    out = annex.build(db, c, period_from=date(2026, 6, 1), period_to=date(2026, 6, 30), amount=100000,
+                      doc_date=date(2026, 6, 10))
+    assert out["date"] == date(2026, 6, 10)
+
+
+def test_document_date_without_argument_stays_the_period_start(db):
+    c = db.query(Contract).order_by(Contract.id).first()
+    if not c:
+        pytest.skip("нужен договор")
+    out = annex.build(db, c, period_from=date(2026, 6, 1), period_to=date(2026, 6, 30), amount=100000)
+    assert out["date"] == date(2026, 6, 1)

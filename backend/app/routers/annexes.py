@@ -116,7 +116,9 @@ def _out(a: SalesAnnex) -> dict:
         # заводить не стали: два признака одного состояния разъезжаются.
         "is_draft": a.no is None,
         # Подписан вне системы (03.11.2026): документ — файл или ссылка ЭДО, конструктора у него нет.
+        # «Дата ДС не может быть позже начала РК» — проверка одна на все входы (владелец 25.11.2026)
         "origin": getattr(a, "origin", None) or "система", "edo_link": getattr(a, "edo_link", None),
+        "rk_start": annex_build.rk_start(a),
     }
 
 
@@ -478,6 +480,9 @@ def set_annex_date(annex_id: int, payload: DateIn, db: Session = Depends(get_db)
     was = a.date
     if was == payload.doc_date:
         return _out(a)
+    problem = annex_build.doc_date_problem(a, payload.doc_date)
+    if problem:
+        raise HTTPException(400, problem)
     a.date = payload.doc_date
     if frozen:
         a.blocks = _freeze_for_confirm(db, a, c, a.no, version=tpl_doc.version_row(db, a.template_version_id))
@@ -604,6 +609,9 @@ def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple
             raise HTTPException(409, "У мастер-сделки не задан номер ДС — задайте его на раскладке")
     _check_no(db, c, no, sub_no) if sub_no else _check_no(db, c, no)
     if payload.doc_date:
+        problem = annex_build.doc_date_problem(a, payload.doc_date)
+        if problem:
+            raise HTTPException(400, problem)
         a.date = payload.doc_date
     frozen = _freeze_for_confirm(db, a, c, no)
     a.template_version_id = frozen["template"]["version_id"]
@@ -880,6 +888,9 @@ async def sign_external(annex_id: int, no: int = Form(...), doc_date: date = For
     stored, moved = {}, {}
 
     def work():
+        problem = annex_build.doc_date_problem(a, doc_date)
+        if problem:
+            raise HTTPException(400, problem)
         stored.update(X.sign_external(db, a, user, no=no, number_text=number, doc_date=doc_date, total=total, items=lines,
                                       edo_link=edo_link, file_name=file.filename if file is not None else None,
                                       file_bytes=content, own_number=own_number, may_change_dates=_may_change_rk(db, user)))

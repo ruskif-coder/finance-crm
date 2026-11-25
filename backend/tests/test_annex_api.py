@@ -668,3 +668,44 @@ def test_registry_says_how_many_there_are_in_total(env):
     assert out["limit"] == A.LIST_LIMIT
     assert out["total"] >= len(out["items"])
     assert out["truncated"] is (out["total"] > len(out["items"]))
+
+# ── дата ДС не может быть позже начала РК (владелец 25.11.2026) ──────────────────────────────────
+
+def test_doc_date_later_than_rk_start_is_refused():
+    """Сломает: ДС датируют позже первого дня размещения — документ относится к периоду, который ещё не начался."""
+    from app.sales import annex as AX
+    a = SimpleNamespace(rows=[{"date_from": "2026-10-14", "date_to": "2026-10-31"}])
+    msg = AX.doc_date_problem(a, date(2026, 10, 20))
+    assert msg and "позже начала РК" in msg and "14.10.2026" in msg and "20.10.2026" in msg
+
+
+@pytest.mark.parametrize("d, ok", [
+    (date(2026, 10, 14), True),    # ровно начало РК — можно
+    (date(2026, 10, 1), True),     # раньше начала РК — можно (типичный случай: начало периода)
+    (date(2026, 10, 15), False),   # на день позже — нельзя
+])
+def test_doc_date_boundary_is_the_first_rk_day(d, ok):
+    from app.sales import annex as AX
+    a = SimpleNamespace(rows=[{"date_from": "2026-10-14", "date_to": "2026-10-31"},
+                              {"date_from": "2026-10-20", "date_to": "2026-10-25"}])
+    assert (AX.doc_date_problem(a, d) is None) is ok
+
+
+def test_no_rows_means_no_bound():
+    """ДС, подписанный вне системы, строк может не иметь — границы нет, иначе правило заблокирует его молча."""
+    from app.sales import annex as AX
+    assert AX.doc_date_problem(SimpleNamespace(rows=None), date(2026, 12, 31)) is None
+    assert AX.doc_date_problem(SimpleNamespace(rows=[]), date(2026, 12, 31)) is None
+
+
+def test_set_date_endpoint_refuses_the_day_after_rk_start(env):
+    a = _draft(env)
+    row = env.db.query(SalesAnnex).filter(SalesAnnex.id == a["id"]).first()
+    row.rows = [{"date_from": "2026-06-10", "date_to": "2026-06-30"}]
+    env.db.commit()
+    with pytest.raises(HTTPException) as e:
+        A.set_annex_date(a["id"], A.DateIn(doc_date=date(2026, 6, 11)), env.db, env.user)
+    assert e.value.status_code == 400 and "начала РК" in e.value.detail
+    # ровно начало РК проходит и пишется
+    out = A.set_annex_date(a["id"], A.DateIn(doc_date=date(2026, 6, 10)), env.db, env.user)
+    assert str(out["date"])[:10] == "2026-06-10"
