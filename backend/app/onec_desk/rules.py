@@ -65,6 +65,8 @@ class Form:
     upd_pdf_id: int | None = None; upd_xml_id: int | None = None
     xml_buyer_inn: str | None = None; xml_buyer_kpp: str | None = None; xml_contract: str | None = None
     xml_basis: str | None = None   # наименование услуги из XML — должно совпасть с согласованным основанием (05.11.2026)
+    xml_lines: list | None = None       # строки XML УПД: наименование и суммы (25.11.2026)
+    lines_expected: list | None = None  # наши строки: service/net/vat/gross — с ними сверяем строки XML
     comment: str = ""
 
     def started(self) -> bool:
@@ -78,6 +80,34 @@ def xml_mismatch(inn, kpp, contract, basis, req) -> list[str]:
     if getattr(req, "basis", ""):
         pairs.append(("основание", basis, req.basis))
     return [label for label, got, want in pairs if got != want]
+
+
+def _norm_text(s) -> str:
+    """Наименование услуги к сравнению: пробелы/переносы — один пробел, «N°»/«№» — знак, кавычки-ёлочки не трогаем."""
+    t = re.sub(r"N[°º]", "№", str(s or ""))
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def lines_mismatch(xml_lines, our_lines) -> list[str]:
+    """Строки XML против строк УПД: сколько их, наименование каждой услуги и сумма каждой строки (допуск 1 ₽).
+
+    Зачем (владелец 25.11.2026, M-0043): у УПД из двух строк (WEB и APP одного бренда) сверялись только итоги,
+    покупатель, договор и основание — то есть 1С могла склеить две услуги в одну с той же суммой, и проверка
+    молча проходила. Расхождение строк блокирует внесение так же, как расхождение основания."""
+    xml, ours = list(xml_lines or []), list(our_lines or [])
+    out: list[str] = []
+    if xml and ours and len(xml) != len(ours):
+        out.append(f"строк в XML {len(xml)}, ожидаем {len(ours)}")
+    for i, (x, o) in enumerate(zip(xml, ours), 1):
+        # строки пакета несут текст в «text», строки заявки — в «service»: обе формы допустимы
+        o_text = (o.get("service") or o.get("text")) if isinstance(o, dict) else o
+        if _norm_text(x.get("name")) != _norm_text(o_text):
+            out.append(f"строка {i}: другое наименование")
+        got = x.get("gross")
+        want = (o.get("gross") if isinstance(o, dict) else None)
+        if got is not None and want is not None and abs(Decimal(str(got)) - Decimal(str(want))) > SUM_TOLERANCE:
+            out.append(f"строка {i}: сумма расходится")
+    return out
 
 
 @dataclass
@@ -101,8 +131,10 @@ def evaluate(req, f: Form, *, expected: dict[str, Decimal], dup_inv: str | None,
     need_comment = max_diff > SUM_TOLERANCE
     sum_ok = not any_empty and not bad_num and (not need_comment or f.comment.strip() != "")
 
+    # строки XML (25.11.2026): количество, наименование каждой услуги и сумма каждой строки — блокируют, как основание
+    line_bad = lines_mismatch(f.xml_lines, f.lines_expected) if (f.upd_xml_id and f.xml_lines is not None) else []
     xml_err = bool(f.upd_xml_id) and f.xml_buyer_inn is not None and bool(
-        xml_mismatch(f.xml_buyer_inn, f.xml_buyer_kpp, f.xml_contract, f.xml_basis, req))
+        xml_mismatch(f.xml_buyer_inn, f.xml_buyer_kpp, f.xml_contract, f.xml_basis, req)) or bool(line_bad)
 
     inv_d, upd_d = ru_date(f.inv_date), ru_date(f.upd_date)
     inv_date_bad = bool(f.inv_date) and inv_d is None
@@ -126,6 +158,7 @@ def evaluate(req, f: Form, *, expected: dict[str, Decimal], dup_inv: str | None,
     if not f.upd_pdf_id: missing.append(("PDF УПД", "need"))
     if need_xml and not f.upd_xml_id: missing.append(("XML УПД", "need"))
     if xml_err: missing.append(("XML: покупатель, договор или основание не совпадает", "bad"))
+    if line_bad: missing.append(("XML: строки — " + "; ".join(line_bad), "bad"))
 
     warns: list[str] = []
     if not req.ds_signed: warns.append("ДС не подписан")

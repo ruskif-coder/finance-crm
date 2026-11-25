@@ -92,6 +92,9 @@ export function sumCheck(f, exp, tol = SUM_TOLERANCE) {
   return { vals, diff, anyEmpty, allEmpty, badNum, maxDiff, needComment, ok, state };
 }
 
+/** Наименование услуги к сравнению — как на сервере (`rules._norm_text`): пробелы в один, «N°» → «№». */
+const normText = (s) => String(s || '').replace(/N[°º]/g, '№').replace(/\s+/g, ' ').trim();
+
 /** Сверка покупателя/договора из XML со сделкой. xml = ответ разбора (см. sampleData) */
 export function xmlCheck(xml, req) {
   if (!xml) return { on: false, err: false, rows: [] };
@@ -99,6 +102,15 @@ export function xmlCheck(xml, req) {
     // стенд: согласованное основание — наименование услуги в строке УПД (владелец 05.11.2026); сервер сравнивает без оформления
     .concat(req.basis ? [['основание', xml.basis, req.basis]] : [])
     .map(([label, value, want]) => ({ label, value: value || '—', want, ok: value === want }));
+  // строки (25.11.2026, M-0043): у УПД из двух услуг 1С могла склеить их в одну с той же суммой — итоги тогда сходятся
+  const xl = xml.lines || [], ol = req.lines || [];
+  if (xl.length || ol.length) {
+    rows.push({ label: 'строк в XML', value: String(xl.length), want: String(ol.length), ok: xl.length === ol.length });
+    for (let i = 0; i < Math.min(xl.length, ol.length); i += 1) {
+      rows.push({ label: `строка ${i + 1}`, value: normText(xl[i].name) || '—', want: normText(ol[i].service),
+        ok: normText(xl[i].name) === normText(ol[i].service) });
+    }
+  }
   return { on: true, err: rows.some(r => !r.ok), rows };
 }
 

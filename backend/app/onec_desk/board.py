@@ -145,8 +145,10 @@ def request(db: Session, m, k, kit: dict, n_kits: int, evs: list, cal: tuple, no
     if basis:              # в строку УПД идёт согласованное основание, а не позиция ДС (владелец 05.11.2026)
         own = {x.get("row_id"): x["text"] for x in kit.get("lines") or []}
         lines = [{**x, "service": own.get(x.get("row_id")) or basis} for x in lines]
-        if len(lines) > 1:     # строки со своим основанием (06.11.2026, «вариант 3»): в 1С — столько же строк с этими текстами
-            basis = "\n".join(x["service"] for x in lines)
+        # «Основание» остаётся ОДНОЙ фразой уровня УПД (владелец 25.11.2026: «в конструкторе было так»).
+        # До этого при нескольких строках поле заменялось склейкой их текстов через перевод строки, а поле
+        # рисуется без переносов — две фразы слипались в одну («каша», M-0043 УПД 1). Тексты строк живут
+        # отдельно, в блоке «Строки УПД»: именно их бухгалтер копирует в 1С построчно.
     pf = (a.period_from if a is not None and a.period_from else None)
     pt = (a.period_to if a is not None and a.period_to else None)
     if pf is None or pt is None:
@@ -298,8 +300,21 @@ def sk_in_bill(db: Session, m, only: Optional[set] = None) -> list:
 def kit_sk_note(db: Session, m, a, lines: list) -> list:
     """Плашка заявки «со скидкой в счёт»: сделки СВОЕГО комплекта, чьё размещение в нём есть (доп СК не облагается).
     ДС по старому правилу (строка «Скидка СК», до 11.11.2026) — без плашки: такую строку заявка не видит, и «скидка уже
-    в цене» было бы неправдой (ревью 11.11.2026)."""
+    в цене» было бы неправдой (ревью 11.11.2026).
+
+    Одинаковый процент разных сделок сводится к одному (владелец 25.11.2026: «СК 2 раза указана»): в комплекте
+    из WEB и APP у обеих сделок СК 45 %, и плашка печатала «45, 45». Разные проценты остаются списком — там
+    важен каждый."""
     if a is not None and any((r or {}).get("kind") == "discount" for r in (a.rows or [])):
         return []
     ids = {x.get("deal_id") for x in lines if x.get("kind") == "размещение" and x.get("deal_id")}
-    return sk_in_bill(db, m, ids) if ids else []
+    items = sk_in_bill(db, m, ids) if ids else []
+    from app.final_recon.money import r2 as _r2      # одно округление на весь контур (ratchet money_round)
+    out, seen = [], set()
+    for x in items:
+        key = _r2(x.get("pct") or 0)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(x)
+    return out

@@ -377,3 +377,43 @@ def test_file_of_entered_kit_can_be_replaced_not_removed(env, tmp_path, monkeypa
     with pytest.raises(SV.DeskError) as e:
         OF.delete(db, m, k, new_id)
     assert e.value.status == 409 and f["id"] != new_id
+
+# ── строки XML: сколько их и какие услуги (25.11.2026, M-0043) ─────────────────────────────────
+
+def test_xml_line_count_and_service_names_are_compared():
+    """Сломает: 1С склеила две услуги в одну строку с той же суммой, а проверка молчит — расходится только состав."""
+    from app.onec_desk import rules as R
+    ours = [{"service": "Размещение … (WEB), с 01.10.2026", "gross": 184525.0},
+            {"service": "Размещение … (APP), с 05.10.2026", "gross": 150781.75}]
+    same = [{"name": "Размещение … (WEB), с 01.10.2026", "gross": 184525.0},
+            {"name": "Размещение … (APP), с 05.10.2026", "gross": 150781.75}]
+    assert R.lines_mismatch(same, ours) == [], "одинаковые строки — расхождений нет"
+    merged = [{"name": "Размещение … (WEB), с 01.10.2026", "gross": 335306.75}]
+    got = R.lines_mismatch(merged, ours)
+    assert any("строк в XML 1" in x for x in got), got
+
+
+def test_xml_line_text_and_sum_mismatches_are_named():
+    from app.onec_desk import rules as R
+    ours = [{"service": "Услуга А, с 01.10.2026", "gross": 100.0}]
+    assert R.lines_mismatch([{"name": "Услуга Б, с 01.10.2026", "gross": 100.0}], ours) == ["строка 1: другое наименование"]
+    assert R.lines_mismatch([{"name": "Услуга А, с 01.10.2026", "gross": 150.0}], ours) == ["строка 1: сумма расходится"]
+    # оформление не считается расхождением: пробелы, «N°» и разные тире
+    assert R.lines_mismatch([{"name": "Услуга А,  с 01.10.2026", "gross": 100.4}], ours) == []
+
+
+def test_xml_line_mismatch_blocks_the_entry():
+    """Расхождение строк — блокирует внесение так же, как расхождение основания (решение владельца 25.11.2026)."""
+    from decimal import Decimal
+    from app.onec_desk import rules as R
+    from datetime import date
+    req = type("Req", (), {"buyer_inn": "7700000001", "buyer_kpp": "770001001", "contract_no": "1",
+                           "ds_signed": True, "basis": "Основание", "channel": "ЭДО"})()
+    f = R.Form(inv_no="7", inv_date="31.10.2026", inv_pdf_id=1, upd_no="8", upd_date="31.10.2026",
+               net="100", vat="22", gross="122", upd_pdf_id=1, upd_xml_id=1,
+               xml_buyer_inn="7700000001", xml_buyer_kpp="770001001", xml_contract="1", xml_basis="Основание",
+               xml_lines=[{"name": "одна склеенная строка", "gross": 122.0}],
+               lines_expected=[{"service": "строка 1", "gross": 61.0}, {"service": "строка 2", "gross": 61.0}])
+    res = R.evaluate(req, f, expected={"net": Decimal("100"), "vat": Decimal("22"), "gross": Decimal("122")},
+                     dup_inv=None, dup_upd=None, closed_until=None, period_end=date(2026, 10, 31))
+    assert not res.ready and any("XML: строки" in lab for lab, _ in res.missing), res.missing

@@ -224,7 +224,10 @@ def submit(db: Session, m, k, form: dict, req: dict, user, closed_until=None) ->
     from app.onec_desk import rules as R
     from app.onec_desk import xmlparse as XP
     fl = OF.files_of(db, m, k)
-    xml = XP.parse(OF.read(OF.get(db, m, k, fl["xml"]["id"])), req["contract"]["no"], req["basis"]) if fl.get("xml") else None
+    raw = OF.read(OF.get(db, m, k, fl["xml"]["id"])) if fl.get("xml") else None
+    xml = XP.parse(raw, req["contract"]["no"], req["basis"]) if raw else None
+    # строки XML — отдельно от `parse`: он отдаёт реквизиты, а наименования услуг и суммы строк берутся из документа
+    xml_lines = (XP.upd_document(raw) or {}).get("lines") if raw else None
 
     def g(key: str) -> str:
         return str(form.get(key) or "").strip()
@@ -233,7 +236,8 @@ def submit(db: Session, m, k, form: dict, req: dict, user, closed_until=None) ->
                 upd_no=g("updNo"), upd_date=g("updDate"), net=g("net"), vat=g("vat"), gross=g("gross"),
                 upd_pdf_id=(fl.get("upd") or {}).get("id"), upd_xml_id=(fl.get("xml") or {}).get("id"),
                 xml_buyer_inn=xml["buyer"]["inn"] if xml else None, xml_buyer_kpp=xml["buyer"]["kpp"] if xml else None,
-                xml_contract=xml["contract"] if xml else None, xml_basis=xml["basis"] if xml else None, comment=g("comment"))
+                xml_contract=xml["contract"] if xml else None, xml_basis=xml["basis"] if xml else None,
+                xml_lines=xml_lines, lines_expected=req["lines"], comment=g("comment"))
     exp = {key: R.Decimal(str(round(sum(float(x[key]) for x in req["lines"]), 2))) for key in ("net", "vat", "gross")}
     who = SimpleNamespace(buyer_inn=req["buyer"]["inn"], buyer_kpp=req["buyer"]["kpp"],
                           contract_no=req["contract"]["no"], ds_signed=req["ds_signed"], basis=req["basis"],
@@ -260,6 +264,7 @@ def check_late_xml(m, k, content: bytes, req: dict) -> None:
     who = SimpleNamespace(buyer_inn=req["buyer"]["inn"], buyer_kpp=req["buyer"]["kpp"], contract_no=req["contract"]["no"],
                           basis=req["basis"])
     bad = R.xml_mismatch(x["buyer"]["inn"], x["buyer"]["kpp"], x["contract"], x["basis"], who)
+    bad += R.lines_mismatch(XP.upd_document(content).get("lines"), req.get("lines"))   # строки: сколько и какие (25.11.2026)
     if (x["number"] or "").strip() != (k.onec_upd_no or "").strip():
         bad.append("№ УПД")
     if bad:

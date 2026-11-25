@@ -499,3 +499,36 @@ def test_archived_pack_leaves_the_board_and_comes_by_button(env):
     m.status = ST.WAIT_PAY
     db.flush()
     assert code in _ids(BD.board(db)["requests"]) and code not in _ids(BD.board(db, archive=True)["requests"])
+
+# ── основание одной фразой и один процент СК (25.11.2026, M-0043 УПД 1) ────────────────────────
+
+def test_basis_stays_one_phrase_when_the_upd_has_several_lines(env, monkeypatch):
+    """Сломает: поле «Основание» снова получает склейку текстов строк — на экране это две слипшиеся фразы,
+    а в 1С копируется мусор. Основание — уровня УПД; свои тексты — у строк."""
+    db, m, k, *_ = env
+    from app.onec_desk import board as BD
+    kit = {"basis": "Основание УПД одной фразой.", "lines": [{"row_id": 1, "text": "Строка WEB, с 01.10"},
+                                                             {"row_id": 2, "text": "Строка APP, с 05.10"}]}
+    from app.onec_desk import queue as Q
+    monkeypatch.setattr(BD.R, "work_hours", lambda *a, **k: 0.0)
+    monkeypatch.setattr(Q, "_lines", lambda db_, k_, a_, values, rate: [
+        {"row_id": 1, "service": "", "net": 100.0, "vat_rate": 22, "vat": 22.0, "gross": 122.0, "kind": "размещение"},
+        {"row_id": 2, "service": "", "net": 200.0, "vat_rate": 22, "vat": 44.0, "gross": 244.0, "kind": "размещение"}])
+    r = BD.request(db, m, k, kit, 1, [], ("09:00", "18:00", 1), __import__("datetime").datetime(2026, 11, 25, 12, 0),
+                   c=__import__("types").SimpleNamespace(counterparty_name="X", inn="1", kpp=None, contract_number="1",
+                                                         contract_date=None, issue_channel="ЭДО"))
+    assert r["basis"] == "Основание УПД одной фразой.", r["basis"]
+    assert len(r["lines"]) == 2 and [x["service"] for x in r["lines"]] == ["Строка WEB, с 01.10", "Строка APP, с 05.10"]
+
+
+def test_sk_note_shows_one_percent_for_equal_deals_and_both_for_different(monkeypatch):
+    """Сломает: плашка снова печатает «45, 45» — два одинаковых процента разных сделок одного комплекта."""
+    from types import SimpleNamespace
+    from app.onec_desk import board as B
+    lines = [{"kind": "размещение", "deal_id": 1}, {"kind": "размещение", "deal_id": 2}]
+    monkeypatch.setattr(B, "sk_in_bill", lambda db_, m_, only: [{"deal": "AAA", "pct": 45.0}, {"deal": "BBB", "pct": 45.0}])
+    got = B.kit_sk_note(None, SimpleNamespace(), SimpleNamespace(rows=[]), lines)
+    assert [x["pct"] for x in got] == [45.0], "одинаковый процент — одной записью"
+    monkeypatch.setattr(B, "sk_in_bill", lambda db_, m_, only: [{"deal": "AAA", "pct": 45.0}, {"deal": "BBB", "pct": 30.0}])
+    got2 = B.kit_sk_note(None, SimpleNamespace(), SimpleNamespace(rows=[]), lines)
+    assert [x["pct"] for x in got2] == [45.0, 30.0], "разные проценты — оба видны"
