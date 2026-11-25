@@ -192,3 +192,51 @@ def test_assembly_applies_inherited_text_by_template_block_id_and_marks_it(db, s
     assert reset["closing_basis"]["template"] == AS.closing_template_for([{"kind": "base"}, {"kind": "extra"}])
     assert reset["edits"]["p1"] is None and reset["edits"]["closing_basis"] is None        # сброс замораживается и обрывает цепочку для следующего ДС
 
+
+# ── период основания — своей УПД, а не документа (25.11.2026, M-0043) ──────────────────────────
+
+def _upd(brand="Teva / Ново-пассит"):
+    from types import SimpleNamespace
+    return SimpleNamespace(brand=brand, service=None, basis_text=None, master_deal_id=None)
+
+
+def _row(brand, start, end="2026-10-31", device="WEB"):
+    return {"brand": brand, "date_from": start, "date_to": end, "device": device,
+            "position": "еФарм", "kind": "base", "amount": 100.0}
+
+
+def test_basis_period_is_taken_from_its_own_rows_not_the_whole_document(db, stub_plan):  # noqa: F811
+    """Сломает: в мультибрендовом ДС каждая УПД получает документный минимум (01.10) вместо своего старта."""
+    from app.annex_tpl import document as TD
+    m = _assemble(db)
+    # документный период в модели — 01.11–30.11; у строки своё начало
+    out = TD.upd_closing(m, _upd(), rows=[_row("Teva / Ново-пассит", "2026-10-08")], db=None)
+    assert "с 08.10.2026 по 31.10.2026" in out["text"], out["text"]
+
+
+def test_basis_period_of_a_second_brand_differs_from_the_first(db, stub_plan):  # noqa: F811
+    """Две УПД одного ДС — у каждой свой старт: 08.10 у одной, 26.10 у другой."""
+    from app.annex_tpl import document as TD
+    m = _assemble(db)
+    a = TD.upd_closing(m, _upd("Teva / Ново-пассит"), rows=[_row("Teva / Ново-пассит", "2026-10-08")], db=None)["text"]
+    b = TD.upd_closing(m, _upd("Teva / Изопринозин"), rows=[_row("Teva / Изопринозин", "2026-10-26")], db=None)["text"]
+    assert "с 08.10.2026" in a and "с 26.10.2026" in b and a != b
+
+
+def test_without_dated_rows_the_document_period_stays(db, stub_plan):  # noqa: F811
+    """Доп без дат (или внешний ДС) — периода строки нет, остаётся документный: молча пустым не становится."""
+    from app.annex_tpl import document as TD
+    m = _assemble(db)
+    out = TD.upd_closing(m, _upd(), rows=[{"brand": "Teva / Ново-пассит", "kind": "extra", "amount": 100.0}], db=None)
+    assert "с 01.11.2026 по 30.11.2026" in out["text"], out["text"]
+
+
+def test_edited_text_with_a_literal_date_is_not_rewritten(db, stub_plan):  # noqa: F811
+    """Текст, где человек вписал дату буквами, не трогаем: подставлять нечего, правка остаётся как есть."""
+    from types import SimpleNamespace
+    from app.annex_tpl import document as TD
+    m = _assemble(db)
+    k = SimpleNamespace(brand="Teva / Ново-пассит", service=None, master_deal_id=None,
+                        basis_text="Размещение по бренду «Ново-пассит», период с 05.10.2026 по 31.10.2026, ДС №32.")
+    out = TD.upd_closing(m, k, rows=[_row("Teva / Ново-пассит", "2026-10-08")], db=None)
+    assert "с 05.10.2026 по 31.10.2026" in out["text"] and "08.10.2026" not in out["text"]

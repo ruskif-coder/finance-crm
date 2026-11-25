@@ -401,12 +401,19 @@ def upd_closing(model: dict, k, rows=None, db=None) -> dict:
     значения — своего ДС, бренд — свой у каждого УПД. Порядок: свой текст УПД → основание, поправленное в конструкторе этого ДС или
     унаследованное от прошлого ДС договора → шаблон по составу ДС. С базой состав и {услуга} — по строкам СВОЕЙ УПД (03.11.2026):
     у УПД размещения не «и оказание дополнительных услуг», у УПД допа — не «размещение рекламных материалов»."""
-    from app.annex_tpl.assemble import closing_resolve
+    from app.annex_tpl.assemble import _date, closing_resolve, placement_span
     cb = model.get("closing_basis") or {}
     values = dict(model.get("values") or {})
     rows = _upd_own(db, k, rows, values)
     sep = separate_price(db)
     values = with_device(values, rows, sep)    # один девайс у всей УПД — он в основании (06.11.2026)
+    # Период основания — СВОЕЙ УПД, а не всего документа (владелец 25.11.2026, M-0043). В мультибрендовом
+    # ДС строки стартуют в разные дни, и документный минимум (01.10) врал всем брендам, кроме первого:
+    # «полный месяц» вместо 08.10, 19.10, 26.10. Тот же `placement_span`, что считает период в тексте ДС
+    # и в построчных основаниях; нет строк с датами (доп, внешний ДС) — остаются документные значения.
+    own_from, own_to = placement_span(rows, None, None)
+    if own_from and own_to:
+        values = {**values, "период_с": _date(own_from), "период_по": _date(own_to)}
     if getattr(k, "basis_text", None):
         out = closing_resolve(k.basis_text, values, True)
     elif cb.get("edited") or cb.get("inherited_from"):
