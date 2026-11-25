@@ -35,6 +35,8 @@ def person(db):
                             db=db, current_user=types.SimpleNamespace(id=0, name="админ"))
     uid = out["id"]
     yield uid
+    from app.sales.models import SalesRep
+    db.query(SalesRep).filter(SalesRep.user_id == uid).delete()   # профиль продавца держит FK (25.11.2026)
     db.query(AuditLog).filter(AuditLog.user_id == uid).update({"user_id": None})
     db.query(User).filter(User.id == uid).delete()
     db.commit()

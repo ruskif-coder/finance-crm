@@ -30,7 +30,11 @@ def sent(monkeypatch):
 def made(db):
     yield
     db.rollback()
+    # Профиль продавца отвязываем ПЕРЕД удалением учётки: с 25.11.2026 создание сейлза заводит
+    # строку в `sales_reps`, и `delete users` без этого упирается во внешний ключ.
+    from app.sales.models import SalesRep
     for u in db.query(User).filter(User.email.like("zz-unotify-%")).all():
+        db.query(SalesRep).filter(SalesRep.user_id == u.id).delete()
         db.query(AuditLog).filter(AuditLog.user_id == u.id).update({"user_id": None})
         db.delete(u)
     db.commit()

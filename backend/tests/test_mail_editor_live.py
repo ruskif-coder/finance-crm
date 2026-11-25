@@ -167,6 +167,7 @@ def test_the_shell_reaches_the_staff_digest(db, monkeypatch):
         digest.run()
     finally:
         db.query(NotificationDelivery).filter(NotificationDelivery.id == row.id).delete()
+        db.execute(text("DELETE FROM sales_reps WHERE user_id = :u"), {"u": u.id})   # профиль продавца держит FK (25.11.2026)
         db.query(User).filter(User.id == u.id).delete()
         db.commit()
     assert got.get("subject", "").startswith("ТЕМА-ТЕСТ 1 событие"), got.get("subject")

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models import RolePermission, User, Role, AuditLog
 from app.audit import log_action, require_admin
@@ -179,6 +180,12 @@ def _create(db: Session, current_user, data: UserCreate) -> tuple:
     )
     db.add(user)
     db.flush()
+    # Продавцу профиль нужен сразу, а не «когда-нибудь при первом назначении»: без строки в
+    # `sales_reps` его нет в списке «Плана продаж» (25.11.2026 — новый сейлз не появился, хотя
+    # роль выдана). Профиль заводит роль, а не сделка.
+    if role.staff_group == "seller":
+        from app.sales.reps import ensure_rep
+        ensure_rep(db, user.id)
     return user, f"Создан пользователь {user.name} ({user.email}), роль {role.label}"
 
 
@@ -223,6 +230,11 @@ def _update(db: Session, current_user, user: User, data: UserUpdate) -> list:
             raise HTTPException(status_code=400, detail="Нельзя изменить собственную роль")
         changes.append(f"роль: {user.role.label} → {new_role.label}")
         user.role_id = new_role.id
+        # Человека перевели в продавцы — профиль заводим тем же действием: «План продаж» строит
+        # список продавцов по профилям, и без строки он не появится до первой сделки (25.11.2026).
+        if new_role.staff_group == "seller":
+            from app.sales.reps import ensure_rep
+            ensure_rep(db, user.id)
 
     if data.is_active is not None and bool(user.is_active) != data.is_active:
         if user.id == current_user.id and not data.is_active:
@@ -314,6 +326,20 @@ def _delete(db: Session, current_user, user: User) -> str:
 
     # Журнал действий не трогаем: отвязываем user_id, имя остаётся в денормализованном user_name
     db.query(AuditLog).filter(AuditLog.user_id == user.id).update({"user_id": None})
+    # Профиль продавца: заводили его мы (25.11.2026), значит и убираем. Свежий сейлз без сделок
+    # удаляется вместе с профилем; если на профиль уже ссылаются сделки — отвязываем и гасим,
+    # чтобы имя осталось в истории. Оставлять «висячий» профиль нельзя: он попадает в выбор
+    # ответственного и ломает область «свои» (на стенде такие хвосты увели годовой план).
+    from app.sales.models import SalesRep
+    rep = db.query(SalesRep).filter(SalesRep.user_id == user.id).first()
+    if rep is not None:
+        try:
+            with db.begin_nested():
+                db.delete(rep)
+                db.flush()
+        except IntegrityError:
+            rep.user_id = None
+            rep.is_active = False
 
     details = f"Удалён пользователь {user.name} ({user.email})"
     db.delete(user)

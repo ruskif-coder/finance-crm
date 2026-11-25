@@ -80,6 +80,7 @@ def empty_role_client():
     db.execute(text("UPDATE publisher_balance_index SET updated_by = NULL WHERE updated_by = :u"),
                {"u": user.id})
     db.execute(text("UPDATE audit_log SET user_id = NULL WHERE user_id = :u"), {"u": user.id})
+    db.execute(text("DELETE FROM sales_reps WHERE user_id = :u"), {"u": user.id})   # профиль продавца держит FK (25.11.2026)
     db.query(User).filter(User.id == user.id).delete()
     db.query(RolePermission).filter(RolePermission.role_id == role.id).delete()
     db.query(Role).filter(Role.id == role.id).delete()

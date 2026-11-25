@@ -31,8 +31,12 @@ def made(db):
     box = []
     yield box
     db.rollback()
+    # Профили продавцов — первыми: с 25.11.2026 создание сейлза заводит строку в `sales_reps`,
+    # и удаление учётки без неё упирается во внешний ключ.
+    from app.sales.models import SalesRep
     ids = box + [u.id for u in db.query(User).filter(User.email.like("zz-batch-%")).all()]
     for uid in set(ids):
+        db.query(SalesRep).filter(SalesRep.user_id == uid).delete()
         db.query(AuditLog).filter(AuditLog.user_id == uid).update({"user_id": None})
         db.query(User).filter(User.id == uid).delete()
     db.query(LoginAttempt).filter(LoginAttempt.email.like("zz-batch-%")).delete(synchronize_session=False)

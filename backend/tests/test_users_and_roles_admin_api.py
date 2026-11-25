@@ -35,13 +35,23 @@ def audit(monkeypatch):
 @pytest.fixture
 def made(db):
     """Что создал тест — убирается в конце. Порядок важен: сначала пользователи, потом роли."""
+    from app.sales.models import SalesRep
     box = {"users": [], "roles": []}
     yield box
+    # Сессия могла остаться в откаченной транзакции (тесты отказов бросают HTTPException посреди
+    # правки) — без сброса уборка падает на «transaction is deactive», а не на данных.
+    db.rollback()
+    # Профили продавцов — ПЕРВЫМИ: с 25.11.2026 создание сейлза заводит строку в `sales_reps`,
+    # и удаление учётки без неё упирается во внешний ключ.
     for uid in box["users"]:
+        db.query(SalesRep).filter(SalesRep.user_id == uid).delete()
         db.query(AuditLog).filter(AuditLog.user_id == uid).update({"user_id": None})
         db.query(User).filter(User.id == uid).delete()
     for rid in box["roles"]:
         db.query(RolePermission).filter(RolePermission.role_id == rid).delete()
+        uids = [row[0] for row in db.query(User.id).filter(User.role_id == rid).all()]
+        if uids:
+            db.query(SalesRep).filter(SalesRep.user_id.in_(uids)).delete(synchronize_session=False)
         db.query(User).filter(User.role_id == rid).delete()
         db.query(Role).filter(Role.id == rid).delete()
     db.query(LoginAttempt).filter(LoginAttempt.email.like("zz-users-%")).delete(synchronize_session=False)
@@ -404,3 +414,31 @@ def test_list_returns_accounts_dashboard_scope_as_saved(db, made):
     db.commit()
     got = next(r for r in roles.list_roles(db=db, current_user=_admin())["roles"] if r["id"] == role.id)
     assert got["acc_scope"] == "own"
+
+# ── продавец получает профиль сразу, а не при первой сделке (25.11.2026) ──────────────────────
+
+def test_new_seller_gets_a_rep_profile_without_any_deal(db, made):
+    """Сломает: новый сейлз без сделок не появляется в «Плане продаж» — там список продавцов строится
+    по профилям `sales_reps`, а профиль до этого заводился только при первом назначении на сделку."""
+    from app.sales.models import SalesRep
+    email = _email()
+    user, _ = users._create(db, _admin(), users.UserCreate(name="Новый Сейлз", email=email,
+                                                           password=PW, role="role_7"))
+    made["users"].append(user.id)
+    try:
+        rep = db.query(SalesRep).filter(SalesRep.user_id == user.id).first()
+        assert rep is not None, "у продавца нет профиля — он не попадёт в «План продаж»"
+        assert rep.name == "Новый Сейлз" and rep.is_active
+    finally:
+        db.query(SalesRep).filter(SalesRep.user_id == user.id).delete()
+        db.commit()
+
+
+def test_non_seller_does_not_get_a_rep_profile(db, made):
+    """Профиль — не «список сотрудников»: юристу и бухгалтеру он не нужен и не должен появляться."""
+    from app.sales.models import SalesRep
+    email = _email()
+    user, _ = users._create(db, _admin(), users.UserCreate(name="Юрист Тест", email=email,
+                                                           password=PW, role="role_6"))
+    made["users"].append(user.id)
+    assert db.query(SalesRep).filter(SalesRep.user_id == user.id).first() is None

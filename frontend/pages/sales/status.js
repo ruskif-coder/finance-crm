@@ -6,7 +6,7 @@ import useLatest from '@/lib/useLatest'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
-import Navbar, { can as canDo } from '@/components/Navbar'
+import Navbar, { can as canAccess, getPermissions } from '@/components/Navbar'
 import { PortalPopover } from '@/components/salesTableKit'
 import { Header, Kpi, Pending } from '@/components/salesStatus/Top'
 import Matrix from '@/components/salesStatus/Matrix'
@@ -75,7 +75,8 @@ export default function SalesStatusPage() {
   // Ссылка из будильника ведёт сюда с ?find=<клиент> — строка сразу находится поиском (23.10.2026)
   const router = useRouter()
   useEffect(() => { if (router.isReady && router.query.find) set({ search: String(router.query.find) }) }, [router.isReady, router.query.find]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setMayEdit(canDo('sales_status', 'edit')) }, [])
+  // Трёхаргументная форма: см. plan.js — can('sales_status','edit') давала false всем, кроме админа (25.11.2026)
+  useEffect(() => { setMayEdit(canAccess(getPermissions(), 'sales_status', 'edit')) }, [])
 
   const flash = useCallback((t) => { setToast(t); setTimeout(() => setToast(''), 2400) }, [])
   const latest = useLatest()

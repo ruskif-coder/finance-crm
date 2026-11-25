@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useLatest from '@/lib/useLatest'
 import Head from 'next/head'
 import api, { auth } from '@/lib/api'
-import Navbar, { can as canDo } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, Seg, Z, LoadErrorScreen, IconBtn, XlsxIcon } from '@/components/salesTableKit'
 import PlanGrid, { editKey, editable, layout } from '@/components/salesPlan/PlanGrid'
 import CellPanel from '@/components/salesPlan/CellPanel'
@@ -74,7 +74,10 @@ export default function SalesPlanPage() {
   const [weeks, setWeeks] = useState(null)    // прогноз года по неделям — из ночных снимков
   const [anaOpen, setAnaOpen] = useState(true)
   const fileRef = useRef(null)
-  useEffect(() => { setMayEdit(canDo('sales_plan', 'edit')) }, [])
+  // Право спрашиваем ТОЛЬКО трёхаргументной формой `can(права, раздел, действие)`: до 25.11.2026
+  // здесь стояло `canDo('sales_plan', 'edit')`, и второй аргумент уезжал в `section` — проверка
+  // молча давала false всем, кроме админа (у него bypass). Права в ролях при этом были выданы.
+  useEffect(() => { setMayEdit(can(getPermissions(), 'sales_plan', 'edit')) }, [])
   // Поповер «разложить год» закрывается кликом мимо — как остальные поповеры (data-pop-root)
   useEffect(() => {
     if (!spread) return
