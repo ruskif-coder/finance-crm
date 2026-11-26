@@ -19,6 +19,9 @@ import { shortAnnexNumber } from '@/lib/annexNumber'
 const GRID = { display: 'grid', gridTemplateColumns: '260px minmax(120px,1fr) 150px max-content', gap: 10, alignItems: 'center' }
 // Первая ячейка ДС и комплекта: название строкой, статус подписи — второй строкой под ним, одинаково у обоих (владелец 18.11.2026: «разнобой», «можно 2 строкой»)
 const TITLE_CELL = { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, minWidth: 0 }
+// Плашка статуса — по левому краю под названием (владелец 26.11.2026). У самого бейджа `alignSelf:'center'` для строк,
+// и в колонке он центрировался по всем 260 px — статусы «уезжали» от названия.
+const BADGE_LEFT = { alignSelf: 'flex-start' }
 const ICON = { dl: 'M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14', none: 'M5 12h14', ok: 'M5 12.5l4.5 4.5L19 7.5', plus: 'M12 5v14M5 12h14',
   clock: 'M12 8v4l2.5 1.5' }
 const EDIT_STATUSES = new Set(['черновик', 'согласование'])
@@ -74,7 +77,7 @@ function KitRow({ k, i, code, onPick, setErr, canEdit, onDone, mode }) {
           <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
             Комплект {i}{k.upd_doc_no ? ` · УПД № ${k.upd_doc_no}` : ''}</span>
         </span>
-        {mode ? <SendBadge sign={k.sign} mode={mode} /> : <SignBadge s={s} small />}
+        <span style={BADGE_LEFT}>{mode ? <SendBadge sign={k.sign} mode={mode} /> : <SignBadge s={s} small />}</span>
       </span>
       <span title={k.deals.length ? `сделки: ${k.deals.join(', ')}` : undefined}
         style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.group}</span>
@@ -115,7 +118,7 @@ function Pack({ d, kitStart, status, canEdit, code, onPick, setErr, onDone, mode
       <div style={{ ...GRID, padding: '6px 10px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)' }}>
         <span style={TITLE_CELL}>
           <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }} title={d.number}>{shortAnnexNumber(d.number)}</span>
-          {d.edo_link ? <InEdo link={d.edo_link} small /> : mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}
+          <span style={BADGE_LEFT}>{d.edo_link ? <InEdo link={d.edo_link} small /> : mode ? <SendBadge sign={d.sign} mode={mode} /> : <SignBadge s={d.sign?.state || 'none'} small />}</span>
         </span>
         <span title={`Услуги в ДС: ${d.services.join(', ')}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           <span style={{ display: 'flex', alignItems: 'baseline', gap: '4px 8px', flex: '0 0 auto' }}>
