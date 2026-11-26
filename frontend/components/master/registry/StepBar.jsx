@@ -7,6 +7,7 @@ import Link from 'next/link'
 import api, { auth } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
 import { stepBar } from '@/lib/masterStepBar'
+import { can, getPermissions } from '@/lib/auth'
 import { MONO } from '@/components/salesTableKit'
 import { detailText } from '@/lib/loadError'
 import { useDialogs } from '@/components/dialogs'
@@ -24,6 +25,10 @@ const ZIP = {
 }
 const BTN = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 14px', boxSizing: 'border-box', borderRadius: 9, fontSize: 12,
   fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }
+// «Отозвать» (владелец 26.11.2026): с «выставления» и дальше — все комплекты пакета разом назад бухгалтеру в 1С.
+// Правила те же, что у построчной «Вернуть на переделку» (revert.revert → _reset_kits), причина обязательна.
+const RECALL_FROM = new Set(['выставление', 'ждём оплату', 'ждём сканы'])
+const BACK_ICON = 'M9 14L4 9l5-5M4 9h9a7 7 0 0 1 0 14h-3'
 const Svg = ({ d, w = 2 }) => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
 )
@@ -33,6 +38,17 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
   const [busy, setBusy] = useState(false)
   const b = stepBar(m, canEdit)
   const [bg, border, fg] = TONE[b.tone] || TONE.wait
+  const mayRecall = RECALL_FROM.has(m.status) && can(getPermissions(), 'master_deals_revert', 'edit')
+  const recall = async () => {
+    const reason = await prompt('Отозвать все пакеты к бухгалтеру — с причиной: что не так с документами')
+    if (reason === null) return
+    if (!reason.trim()) { setErr('Без причины не отзываем — напишите, что переделываем'); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post(`/master-deals/${m.code}/back`, { to: 'ждём 1С', reason: reason.trim() }, auth())
+      onDone(r.data)
+    } catch (e) { setErr(detailText(e, 'Не удалось отозвать пакеты')) } finally { setBusy(false) }
+  }
   const run = async () => {
     const { btn } = b
     let body = btn.body
@@ -76,6 +92,16 @@ export default function StepBar({ m, canEdit, onDone, setErr }) {
           <Link href={b.link.href} data-act={b.link.tone === 'act' ? 'main' : undefined}
             style={{ ...BTN, background: b.link.tone === 'act' ? 'var(--accent)' : 'var(--bg-card)', border: `1px solid ${b.link.tone === 'act' ? 'var(--accent)' : 'var(--danger-border)'}`,
               color: b.link.tone === 'act' ? 'var(--on-accent)' : 'var(--danger-fg)' }}>{b.link.label}</Link>
+        )}
+        {/* после всех кнопок: пиктограмма с красным контуром — вернуть ВСЕ комплекты бухгалтеру в 1С */}
+        {mayRecall && (
+          <button type="button" disabled={busy} onClick={recall} title="Отозвать все пакеты к бухгалтеру в 1С"
+            aria-label="Отозвать все пакеты к бухгалтеру в 1С"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, boxSizing: 'border-box',
+              padding: 0, borderRadius: 9, border: '1px solid var(--danger-border)', background: 'transparent',
+              color: 'var(--danger-fg)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+            <Svg d={BACK_ICON} w={2.2} />
+          </button>
         )}
       </span>
     </div>

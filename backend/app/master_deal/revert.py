@@ -77,11 +77,15 @@ def _mark_redo(db: Session, m, kits: list, user, reason: str) -> None:
 
 def _reset_kits(db: Session, m, user, reason: str) -> tuple:
     """Комплекты — снова у бухгалтера и не у клиента. (сколько комплектов, сколько из них уже было внесено в 1С)."""
-    from app.master_deal.models import MasterDealUpd
+    from app.master_deal.models import MasterDealUpd, OnecDeskEvent
     kits = db.query(MasterDealUpd).filter(MasterDealUpd.master_deal_id == m.id).all()
     in_1c = sum(1 for k in kits if k.onec_at is not None)          # возвращённые аккаунту в 1С не вносились
     _mark_redo(db, m, [k for k in kits if k.onec_at is not None], user, reason)
     for k in kits:
+        # лента комплекта — как у построчной «Вернуть на переделку» (владелец 26.11.2026): бухгалтер видит, что вернули
+        # и почему. Ставим только внесённым: остальные в 1С не уходили.
+        if k.onec_at is not None:
+            db.add(OnecDeskEvent(upd_id=k.id, kind="переделка", text=reason, by_user=getattr(user, "id", None)))
         k.onec_state, k.onec_at = None, None
         if k.sign_state is not None:
             DSG._write_event(db, k, state=EVENT, channel=k.sign_channel, source="вручную", reason=reason, file_id=None,

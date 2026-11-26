@@ -180,3 +180,25 @@ def test_redo_kit_lands_in_kit_feed_for_accountant_and_pack_card(pack):
     feed = B._thread(evs, None)
     assert feed[0]["text"] == "Вернули на переделку: в счёте не тот КПП" and feed[0]["tone"] == "warn"
     assert MDOC._desk(db, k.upd_no, None, k)["redo"] == "в счёте не тот КПП"
+
+def test_recall_all_kits_from_issue_writes_the_reason(pack):
+    """Кнопка «Отозвать» (владелец 26.11.2026): с «выставления» ВСЕ комплекты разом назад бухгалтеру.
+
+    Сломает: отзыв трогает только часть комплектов, пакет остаётся в «выставлении», или причина не попадает в ленту —
+    тогда бухгалтер не понимает, что переделывать."""
+    from sqlalchemy import text as _text
+    db, m, user = pack
+    m.status = ST.ISSUE
+    db.flush()
+    before = db.execute(_text("SELECT count(*) FROM master_deal_upds WHERE master_deal_id = :m AND onec_at IS NOT NULL"),
+                        {"m": m.id}).scalar()
+    assert before >= 1, "в пакете нет внесённых комплектов — проверять нечего"
+    out = RV.revert(db, m, ST.WAIT_1C, user, "не тот КПП во всех УПД")
+    db.expire_all()
+    assert m.status == ST.WAIT_1C
+    assert [k for k in _kits(db, m) if k[0] is not None] == [], "остались комплекты с отметкой внесения"
+    assert out["in_1c"] == before, "сняли отметки не у всех внесённых комплектов"
+    evs = db.execute(_text("""SELECT e.kind, e.text FROM onec_desk_events e
+                                JOIN master_deal_upds k ON k.id = e.upd_id
+                               WHERE k.master_deal_id = :m"""), {"m": m.id}).all()
+    assert any(kind == "переделка" and "не тот КПП во всех УПД" in (txt or "") for kind, txt in evs), evs
