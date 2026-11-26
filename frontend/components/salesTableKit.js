@@ -88,12 +88,25 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
   const anchor = useRef(null)   // скрытый маркер на месте вызова: его parentElement — триггер
   const panel = useRef(null)    // сама панель: нужна, чтобы прижать её по ФАКТИЧЕСКОЙ ширине
   const [pos, setPos] = useState(null)
+  // Открыта ИЗ МОДАЛКИ — рисовать НАД ней (владелец 26.11.2026: календарь «Отчёта по РК» в модалке сделки уходил
+  // под неё). Портал живёт в body, но слой модалки — `Z.overlay`, поэтому обычный `Z.dropdown` оказывался ниже.
+  const overModal = useRef(false)
   // Прижим к краю — ОДИН раз на каждую расстановку (см. второй проход).
   const clamped = useRef(false)
   useLayoutEffect(() => {
     if (!open) { setPos(null); return }
     const trigger = anchor.current && anchor.current.parentElement
     if (!trigger) return
+    // Модалка — это fixed-слой на всю вьюпорт-область; если триггер внутри такого, выпадашка обязана быть выше.
+    overModal.current = (() => {
+      let n = trigger
+      while (n && n !== document.body) {
+        const cs = getComputedStyle(n)
+        if (cs.position === 'fixed' && (parseInt(cs.zIndex, 10) || 0) >= Z.overlay) return true
+        n = n.parentElement
+      }
+      return false
+    })()
     const place = () => {
       const r = trigger.getBoundingClientRect()
       const left = align === 'right'
@@ -135,11 +148,22 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
         // stopPropagation: события портала всплывают по РЕАКТ-дереву (не DOM), иначе клик по
         // опции доходит до onClick родителя-триггера (напр. тумблера ячейки) и переключает его.
         <div ref={panel} data-pop-root onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{
-          position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, zIndex: Z.dropdown, minWidth, maxHeight,
+          position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, minWidth, maxHeight,
           width: 'max-content', maxWidth: `calc(100vw - ${EDGE_GAP * 2}px)`,
-          overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-          borderRadius: 12, boxShadow: 'var(--shadow-card, 0 8px 28px rgba(28,36,51,.14))',
+          overflowY: 'auto',
+          // Над модалкой панель обязана быть ВИДНА как отдельный слой (владелец 26.11.2026): у модалки и у выпадашки
+          // одна и та же подложка `--bg-card`, и панель сливалась с окном. В этом случае берём тон на ступень выше
+          // (`--bg-subtle`), рамку заметнее и тень модалки — вместо тени карточки.
+          background: overModal.current ? 'var(--bg-subtle)' : 'var(--bg-card)',
+          border: `1px solid ${overModal.current ? 'var(--border-hover)' : 'var(--border-card)'}`,
+          borderRadius: 12,
+          boxShadow: overModal.current
+            ? 'var(--shadow-modal, 0 24px 64px rgba(16,24,32,.45))'
+            : 'var(--shadow-card, 0 8px 28px rgba(28,36,51,.14))',
           display: 'flex', flexDirection: 'column', padding: 6, ...style,
+          // z-index — ПОСЛЕ стиля вызова: из модалки он обязан быть выше её слоя, иначе клик по выпадашке
+          // попадает в подложку модалки, а сама она не видна (26.11.2026)
+          zIndex: overModal.current ? Z.overlay + 10 : (style && style.zIndex) || Z.dropdown,
         }}>{children}</div>,
         document.body
       )}
