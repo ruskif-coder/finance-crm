@@ -238,7 +238,7 @@ export default function Login() {
               style={{
                 width: '100%', padding: '12px',
                 background: checked ? 'var(--primary)' : 'var(--border)',
-                color: checked ? 'white' : 'var(--muted)',
+                color: checked ? 'var(--on-accent)' : 'var(--muted)',
                 border: 'none', borderRadius: '8px', fontSize: '16px',
                 fontWeight: '500', cursor: checked ? 'pointer' : 'not-allowed',
                 transition: 'background var(--dur-base)'

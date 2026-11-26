@@ -139,7 +139,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
                 <button onClick={save} disabled={saving || loading || !dirty}
                   style={{ padding: '7px 16px', borderRadius: 8, border: 'none', cursor: dirty ? 'pointer' : 'default',
                     background: dirty ? 'var(--accent)' : 'var(--bg-subtle)',
-                    color: dirty ? '#fff' : 'var(--muted)', fontSize: 13, fontWeight: 600 }}>
+                    color: dirty ? 'var(--on-accent)' : 'var(--muted)', fontSize: 13, fontWeight: 600 }}>
                   {saving ? 'Сохранение…' : 'Сохранить'}
                 </button>
               )}

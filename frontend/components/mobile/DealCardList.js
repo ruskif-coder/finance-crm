@@ -214,7 +214,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
           <button onClick={() => setEditing(false)} disabled={saving} style={{ flex: '0 0 auto', padding: '14px 20px', borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>
           <button onClick={save} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
         </>) : (<>
-          <button onClick={canEdit ? startEdit : undefined} disabled={!canEdit} style={{ flex: 1, background: canEdit ? 'var(--accent)' : 'var(--bg-subtle)', color: canEdit ? '#fff' : 'var(--text-faint)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: canEdit ? 'pointer' : 'default' }}>Редактировать</button>
+          <button onClick={canEdit ? startEdit : undefined} disabled={!canEdit} style={{ flex: 1, background: canEdit ? 'var(--accent)' : 'var(--bg-subtle)', color: canEdit ? 'var(--on-accent)' : 'var(--text-faint)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: canEdit ? 'pointer' : 'default' }}>Редактировать</button>
           <button aria-label="Скачать" style={{ width: 48, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 18 }}>⭳</button>
         </>)}
       </div>

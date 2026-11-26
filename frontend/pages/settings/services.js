@@ -196,7 +196,7 @@ export default function SettingsServices() {
         <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
           {[['list', 'Услуги'], ...(mayEditSvc ? [['matrix', 'Что требует учёта']] : [])].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ height: 32, padding: '0 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 700,
-              border: tab === k ? 'none' : '1px solid var(--border-card)', background: tab === k ? 'var(--accent)' : 'var(--bg-card)', color: tab === k ? '#fff' : 'var(--text-secondary)' }}>{l}</button>
+              border: tab === k ? 'none' : '1px solid var(--border-card)', background: tab === k ? 'var(--accent)' : 'var(--bg-card)', color: tab === k ? 'var(--on-accent)' : 'var(--text-secondary)' }}>{l}</button>
           ))}
         </div>
         {tab === 'matrix' && mayEditSvc ? <RequirementsMatrix services={services} canEdit={mayEditSvc} /> : (<>

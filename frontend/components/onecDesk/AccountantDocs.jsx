@@ -259,7 +259,7 @@ export default function AccountantDocs({ data, onUpload, onParseXml, onCheckNumb
                 log: (localNotes[r.code] || []).map(n => ({ ...n, mine: true })).concat(r.thread || []), seenNow: seen[r.code], dupRow: dup[r.code] || {} }} />}
         </div>
       </div>
-      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: '#FFFFFF', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: 10, display: 'flex', alignItems: 'center', gap: 14 }}>{typeof toast === 'string' ? toast : <>{toast.text}<button type="button" onClick={toast.go}
+      {toast && <div role="status" style={{ position: 'fixed', right: 24, bottom: 96, background: 'var(--text-primary)', color: 'var(--on-accent)', padding: '11px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-float)', animation: 'm-rise var(--dur-base) var(--ease-out) both', zIndex: 10, display: 'flex', alignItems: 'center', gap: 14 }}>{typeof toast === 'string' ? toast : <>{toast.text}<button type="button" onClick={toast.go}
         style={{ border: 0, background: 'transparent', color: 'inherit', font: 'inherit', fontWeight: 800, textDecoration: 'underline', cursor: 'pointer', padding: 0 }}>{toast.label}</button></>}</div>}
     </div>
   );

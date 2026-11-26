@@ -1,6 +1,6 @@
 {
   "name": "finance-frontend",
-  "version": "2.7.76",
+  "version": "2.7.77",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -12,6 +12,7 @@
     "check-tokens": "node scripts/check-tokens.mjs",
     "check-dates": "node scripts/check-dates.mjs",
     "check-tone": "node scripts/check-tone.mjs",
+    "check-on-accent": "node scripts/check-on-accent.mjs",
     "check-cabinet-state": "node scripts/check-cabinet-state.mjs",
     "check-style-fn": "node scripts/check-style-fn.mjs",
     "check-notify": "node scripts/check-notify.mjs",
@@ -19,7 +20,7 @@
     "check-unsaved": "node scripts/check-unsaved.mjs",
     "check-detail": "node scripts/check-detail.mjs",
     "lint": "next lint --dir pages --dir components --dir lib",
-    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms && npm run check-login && npm run check-tokens && npm run check-dates && npm run check-tone && npm run check-cabinet-state && npm run check-style-fn && npm run check-notify && npm run check-freshness && npm run check-unsaved && npm run check-detail && npm run check-money-input && npm run check-vat && npm run check-hrefs && npm run check-embeds && npm run check-adblock && npm run check-screens && npm run check-hooks-lint && npm run check-motion && npm run check-role-levels && npm run check-month-input && npm run check-readiness-schema && npm run test-rk",
+    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms && npm run check-login && npm run check-tokens && npm run check-dates && npm run check-tone && npm run check-on-accent && npm run check-cabinet-state && npm run check-style-fn && npm run check-notify && npm run check-freshness && npm run check-unsaved && npm run check-detail && npm run check-money-input && npm run check-vat && npm run check-hrefs && npm run check-embeds && npm run check-adblock && npm run check-screens && npm run check-hooks-lint && npm run check-motion && npm run check-role-levels && npm run check-month-input && npm run check-readiness-schema && npm run test-rk",
     "build": "next build",
     "start": "next start -p 3000",
     "check-inline": "node scripts/check-inline-components.mjs",

@@ -51,7 +51,7 @@ const Toggle = ({ value, onChange, options }) => (
         style={{
           padding: '8px 13px', fontSize: 13, border: 'none', cursor: 'pointer', fontFamily: UI,
           background: value === o.value ? 'var(--accent)' : 'var(--bg-card)',
-          color: value === o.value ? '#fff' : 'var(--text-secondary)',
+          color: value === o.value ? 'var(--on-accent)' : 'var(--text-secondary)',
           fontWeight: value === o.value ? 700 : 600,
         }}>{o.label}</button>
     ))}

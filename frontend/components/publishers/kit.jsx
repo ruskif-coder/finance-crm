@@ -21,7 +21,7 @@ export const INTEG_TONE = {
   'НЕТ':          ['var(--bg-subtle)', 'var(--text-faint)', 'var(--border-card)'],
 }
 // В строке реестра подключённая поверхность заливается целиком — её видно с расстояния.
-export const INTEG_TONE_SOLID = { ...INTEG_TONE, 'ПОДКЛЮЧЕНО': ['var(--accent)', '#fff', 'var(--accent)'] }
+export const INTEG_TONE_SOLID = { ...INTEG_TONE, 'ПОДКЛЮЧЕНО': ['var(--accent)', 'var(--on-accent)', 'var(--accent)'] }
 
 export const STATUS_TONE = {
   'СОТРУДНИЧАЕМ': ['var(--income-tint)', 'var(--income)'],

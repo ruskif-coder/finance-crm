@@ -331,7 +331,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>
           <button onClick={onClose} disabled={busy} style={{ flex: '0 0 auto', padding: '14px 20px', borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>
-          <button onClick={submit} disabled={busy || !canSubmit} style={{ flex: 1, background: canSubmit ? 'var(--accent)' : 'var(--bg-subtle)', color: canSubmit ? '#fff' : 'var(--text-faint)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: canSubmit ? 'pointer' : 'default' }}>{busy ? 'Создание…' : 'Создать сделку'}</button>
+          <button onClick={submit} disabled={busy || !canSubmit} style={{ flex: 1, background: canSubmit ? 'var(--accent)' : 'var(--bg-subtle)', color: canSubmit ? 'var(--on-accent)' : 'var(--text-faint)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: canSubmit ? 'pointer' : 'default' }}>{busy ? 'Создание…' : 'Создать сделку'}</button>
         </div>
       </div>
     )
@@ -347,7 +347,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border-inner)', background: 'var(--bg-subtle)', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           <button onClick={submit} disabled={busy || !canSubmit}
             style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, fontFamily: MONO,
-              background: canSubmit ? 'var(--accent)' : 'var(--accent-tint)', color: canSubmit ? '#fff' : '#A9B6F2', cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
+              background: canSubmit ? 'var(--accent)' : 'var(--accent-tint)', color: canSubmit ? 'var(--on-accent)' : 'var(--text-muted)', cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
             {busy ? 'Создание…' : 'Создать сделку'}</button>
           <button onClick={onClose} style={{ padding: '9px 16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-primary)', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Отмена</button>
           <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>суммы пересчитываются в обе стороны по НДС {vatPct ?? '…'}% · обязательны: рекламодатель, услуга, период, сумма</span>

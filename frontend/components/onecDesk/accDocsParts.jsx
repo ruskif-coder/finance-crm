@@ -19,7 +19,7 @@ export const STYLE = `
 .acc-btn { display:inline-flex; align-items:center; gap:6px; height:34px; box-sizing:border-box; padding:0 14px; border:1px solid var(--border-card); background:var(--bg-card); border-radius:12px; font:600 13px ${SANS}; color:var(--text-secondary); white-space:nowrap; cursor:pointer; user-select:none }
 .acc-btn:hover { border-color:var(--border-hover); color:var(--accent-fg) }
 .acc-btn:focus-visible, .acc-row:focus-visible, .acc-copy:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
-.acc-btn.p { background:var(--accent); border-color:var(--accent); color:#FFFFFF; font-weight:700 } .acc-btn.p:hover { background:var(--accent-hover); border-color:var(--accent-hover); color:#FFFFFF }
+.acc-btn.p { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:700 } .acc-btn.p:hover { background:var(--accent-hover); border-color:var(--accent-hover); color:var(--on-accent) }
 .acc-btn[aria-disabled="true"] { opacity:0.45 }
 .acc-in { font:600 14px ${SANS}; color:var(--text-primary); box-sizing:border-box; width:100%; min-width:0; height:38px; padding:0 12px; border:1px solid var(--border-card); border-radius:12px; background:var(--bg-card); outline:none }
 .acc-in.mono { font-family:${MONO}; font-weight:500 } .acc-in:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint) } .acc-in::placeholder { color:var(--text-disabled); font-weight:500 }
@@ -53,7 +53,7 @@ export const Chip = ({ tone = 'need', children, dashed, title }) => { const t = 
 
 /** Метка в строке очереди. onGreen — строка «готово», метки на белом */
 export const Pip = ({ kind, label, title, onGreen }) => {
-  const m = { flag: ['var(--accent)', '#FFFFFF'], ok: ['var(--income-tint)', 'var(--income-fg)'], warn: ['var(--warning-tint)', 'var(--warning-fg)'], off: ['var(--bg-subtle)', 'var(--text-faint)'],
+  const m = { flag: ['var(--accent)', 'var(--on-accent)'], ok: ['var(--income-tint)', 'var(--income-fg)'], warn: ['var(--warning-tint)', 'var(--warning-fg)'], off: ['var(--bg-subtle)', 'var(--text-faint)'],
     'edo-off': ['var(--bg-card)', 'var(--text-disabled)'], 'edo-info': ['var(--accent-tint)', 'var(--accent-fg)'], 'edo-ok': ['var(--income-tint)', 'var(--income-fg)'], 'edo-bad': ['var(--danger-tint)', 'var(--danger-fg)'] }[kind];
   /* аудит п.2: на зелёной строке неподписанный ДС — залитая жёлтая метка, чтобы предупреждение не терялось */
   const loud = onGreen && kind === 'warn';
