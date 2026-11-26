@@ -22,6 +22,7 @@ from app.annex_tpl.check import MAX_TEXT, NUMBERED, numbering, unknown_keys, zon
 from app.annex_tpl.legal_name import legal_name
 from app.annex_tpl.party import party_line
 from app.annex_tpl import doc_kind as DK
+from app.annex_tpl import doc_units
 from app.annex_tpl.models import AnnexTplTemplate
 from app.annex_tpl.subs import SUBS
 from app.annex_tpl.service import AnnexTplError
@@ -163,9 +164,12 @@ def placement_span(rows: list, period_from, period_to) -> tuple:
 
 
 def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, advertisers, brand_only="", doc_date=None,
-            service: str = "", legal_names=(), kind=None) -> dict:
+            service: str = "", legal_names=(), kind=None, units_text: str = "") -> dict:
     return {
         "услуга": service,
+        # Единицы закупки и объёмы строк документа (владелец 26.11.2026) — считает `doc_units.phrase`, формат и слово
+        # единицы те же, что у колонок таблицы МП, поэтому текст и таблица расходятся только вместе с кодом
+        "единицы_сделки": units_text,
         "бренд_название": brand_only, "сеть": A.PLACEMENT_NETWORK,
         "дата_дс_кратко": _short(doc_date), "договор_дата_кратко": _short(contract.contract_date),
         "рекламодатель": advertisers, "бренд": brand or "",
@@ -370,6 +374,10 @@ def _missing(empties: dict, executor: dict, customer: dict, rows: list, brand) -
     out = []
     for key in empties:
         info = SUBS.get(key, {})
+        if info.get("optional"):
+            # Необязательный тег (владелец 26.11.2026: «единицы сделки» — выгрузку не блокирует): в тексте его не будет
+            # видно, но печатать из-за него ДС нельзя — это украшение фразы, а не сумма.
+            continue
         if NUMBERED.match(key) and key not in SUBS:
             n = key.rsplit("_", 1)[1]
             out.append({"text": f"не заполнено: юр. название рекламодателя № {n}",
@@ -423,7 +431,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     values = _values(no=no_text, contract=contract, period_from=text_from, period_to=text_to, rate=rate, gross=gross, vat=vat,
                      brand=A.deal_brand(db, deal_ids), advertisers=_advertisers(db, deal_ids),
                      brand_only=_brands_only(db, deal_ids), doc_date=doc_date, service=service_text(db, deal_ids, rows),
-                     legal_names=_legal_names(db, deal_ids), kind=kind)
+                     legal_names=_legal_names(db, deal_ids), kind=kind,
+                     units_text=doc_units.phrase(rows))
     # `None` в правках — «явно по шаблону»: прошлый ДС не наследуется. Строки — собственные правки этого ДС.
     reset = {k for k, v in (edits or {}).items() if v is None}
     edits = {k: v for k, v in (edits or {}).items() if isinstance(v, str) and v.strip()}

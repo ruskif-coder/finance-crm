@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.annex_tpl import doc_kind as DK
+from app.annex_tpl import doc_units
 from app.annex_tpl import service as S
 from app.annex_tpl.assemble import assemble
 from app.annex_tpl.models import AnnexTplTemplate, AnnexTplVersion
@@ -407,6 +408,9 @@ def upd_closing(model: dict, k, rows=None, db=None) -> dict:
     rows = _upd_own(db, k, rows, values)
     sep = separate_price(db)
     values = with_device(values, rows, sep)    # один девайс у всей УПД — он в основании (06.11.2026)
+    # Единицы закупки и объёмы — СВОЕЙ УПД (владелец 26.11.2026), как и период ниже: в мультибрендовом ДС у УПД
+    # одного бренда объём своего бренда, а не всего документа.
+    values["единицы_сделки"] = doc_units.phrase(rows)
     # Период основания — СВОЕЙ УПД, а не всего документа (владелец 25.11.2026, M-0043). В мультибрендовом
     # ДС строки стартуют в разные дни, и документный минимум (01.10) врал всем брендам, кроме первого:
     # «полный месяц» вместо 08.10, 19.10, 26.10. Тот же `placement_span`, что считает период в тексте ДС
@@ -491,7 +495,7 @@ def with_device(values: dict, rows, separate) -> dict:
 
 def line_bases(template: str, values: dict, rows, separate) -> list:
     """Основание каждой строки УПД (владелец 06.11.2026, «вариант 3»): тот же шаблон, подстановки — по своей строке: девайс в
-    {сеть} и период строки. Строка без дат (доп) берёт период УПД."""
+    {сеть}, период строки и объём строки в её единице. Строка без дат (доп) берёт период УПД."""
     from app.annex_tpl.assemble import _date, closing_resolve, placement_span
     out = []
     for r in rows or []:
@@ -499,6 +503,7 @@ def line_bases(template: str, values: dict, rows, separate) -> list:
         f, t = placement_span([r], None, None)
         if f and t:
             v = {**v, "период_с": _date(f), "период_по": _date(t)}
+        v = {**v, "единицы_сделки": doc_units.phrase([r])}
         out.append({"row_id": r.get("row_id"), "text": closing_resolve(template, v, False)["text"]})
     return out
 

@@ -131,9 +131,16 @@ def _fix2(v) -> str:
     return "" if v is None else f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
-def _unit(r: dict) -> str:
+def unit_of(r: dict) -> str:
+    """Единица строки — одна на весь проект: доп. услуга правилом допов (по итогам РК — показы, разово — штуки),
+    размещение — моделью закупки (CPM — показы, CPC — клики, иначе штуки). Колонка «Единица измерения» печатает её
+    же словом («Показов»), подстановка `{единицы_сделки}` — в именительном («показы»)."""
     from app.sales import units
-    u = units.addon_unit(r.get("period")) if r.get("kind") == "extra" else units.service_unit(r.get("model"))
+    return units.addon_unit(r.get("period")) if r.get("kind") == "extra" else units.service_unit(r.get("model"))
+
+
+def _unit(r: dict) -> str:
+    u = unit_of(r)
     return UNIT_WORD.get(u, u)
 
 
