@@ -118,6 +118,15 @@
   --danger:var(--bad); --danger-tint:var(--bad-tint); --danger-border:var(--bad-border); --danger-fg:var(--bad-fg);
 }
 
+/* ПОДЛОЖКИ РОЛЕЙ В ТОН-ЗОНАХ (26.11.2026). `--warning-bg` / `--danger-bg` / `--income-bg` объявлены ОДИН раз на корне темы
+   (`[data-theme^="navy"]`), и var() в них подставляется там же: вложенной зоне достаётся уже готовый цвет. В карточке пакета
+   светлая зона «Документов» переопределяет `--attn-fg`, а `--warning-bg` остаётся тёмным из корня — полоса сканов получала
+   фон #2F5373 и текст #1D4E74, контраст 1,09:1. Пересчитываем подложки в КАЖДОЙ зоне от её собственных ролей. */
+[data-theme^="navy"] [data-tone] {
+  --warning-bg:var(--attn-tint); --danger-bg:var(--bad-tint); --income-bg:var(--money-tint);
+  --warning-text:var(--attn-fg); --empty-bg:var(--attn-tint); --empty-border:var(--attn-border); --empty-text:var(--attn-fg);
+}
+
 /* общее для обеих схем */
 [data-theme^="navy"] body { background:var(--page-bg) fixed; color:var(--text-primary) }
 [data-theme^="navy"] [data-tone] { background:var(--bg-card); color:var(--text-primary) }
@@ -259,8 +268,13 @@
 }
 [data-theme^="navy"] .md-card [data-tone="dark"] { --stage-done:#6E849C }
 [data-theme="navy-dark"] .md-card [data-tone="light"] { --stage-done:#9FB0C2 }
-/* полоса сканов на «ждём сканы» — ход за нами */
-[data-theme^="navy"] .md-card [data-scans-due] {
+/* Полоса сканов: свои роли в ОБОИХ состояниях и НА САМОМ элементе (26.11.2026). Раньше набор был только для «ждём сканы»,
+   а на остальных стадиях полоса падала на `--warning-*` — то есть на подложку из чужого слоя. Объявленные на элементе,
+   `var(--attn-tint)`/`var(--attn-fg)` считаются в ЕГО зоне, поэтому фон и текст всегда приходят из одного места. */
+[data-theme^="navy"] [data-scans] {
+  --scans-bg:var(--attn-tint); --scans-bd:var(--attn-border); --scans-fg:var(--attn-fg); --scans-dot:var(--attn) }
+/* «ждём сканы» — ход за нами, оранжевый (README §3); ниже по файлу, потому что специфичность у правил равная */
+[data-theme^="navy"] [data-scans-due] {
   --scans-bg:var(--signal-tint); --scans-bd:var(--signal-border); --scans-fg:var(--signal-text); --scans-dot:var(--signal) }
 /* отмеченные чекбоксы раскладки и тумблер — --hot (README §4) */
 [data-theme^="navy"] .md-card input[type="checkbox"]:checked { background:var(--hot); border-color:var(--hot) }
