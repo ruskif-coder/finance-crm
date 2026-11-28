@@ -86,9 +86,17 @@ def _upd(db: Session, k, m, op) -> Optional[dict]:
     c = db.execute(text("""SELECT e.text, e.at, u.name FROM onec_desk_events e LEFT JOIN users u ON u.id = e.by_user
                             WHERE e.upd_id = :k AND e.kind IN ('внесено', 'правка') AND coalesce(e.text, '') <> ''
                             ORDER BY e.id DESC LIMIT 1"""), {"k": k.id}).first()
+    # «Своё основание УПД» (`basis_text`) хранится ШАБЛОНОМ с подстановками — его разворачивает печать. В панель идёт
+    # развёрнутый текст: 27.11.2026 владелец увидел в основании операции `{бренд_название} … {единицы_сделки}` — «галиматья
+    # из конструктора» (в базе 6 комплектов M-0043 со своим основанием, панель печатала шаблон как есть). Не развернулось —
+    # описание моста (оно уже посчитано при внесении), и только в последнюю очередь шаблон, чтобы не потерять текст вовсе.
+    from app.annex_tpl import document as tpl_doc
+    basis = tpl_doc.kit_basis_text(db, m, k) if k.basis_text else None
+    if basis and "{" in basis:
+        basis = None
     return {"kit_id": k.id, "inv_no": k.onec_invoice_no, "inv_date": _d(k.onec_invoice_date), "upd_no": k.onec_upd_no,
             "upd_date": _d(k.onec_upd_date), "amount": round(float(k.onec_gross), 2) if k.onec_gross is not None else None,
-            "basis": k.basis_text or op.description,          # своё основание комплекта, иначе — то, что мост вписал в операцию
+            "basis": basis or op.description or k.basis_text,   # развёрнутое основание комплекта, иначе — что мост вписал в операцию
             "entered_by": by, "entered_at": _utc(k.onec_at),
             "comment": c.text if c else None, "comment_by": c.name if c else None, "comment_at": _utc(c.at) if c else None,
             **{key: files.get(key) for key in ONEC_KINDS.values()}}

@@ -85,6 +85,31 @@ def test_manual_operation_keeps_its_hand_written_description_and_requisites(db):
                  "invoice_date": "2026-05-01", "document_link": "https://example.org/doc"}
 
 
+def test_kit_basis_template_is_resolved_like_print(db):
+    """«Своё основание УПД» хранится шаблоном с подстановками — так его правит конструктор, так разворачивает печать.
+
+    Поломка 27.11.2026: владелец открыл операцию M-0043 и увидел в «основании» `{бренд_название} … {единицы_сделки}` —
+    «галиматья из конструктора». Панель печатала `k.basis_text` как есть. Ломается, если снова вернуть шаблон напрямую:
+    тогда в основании появляются фигурные скобки.
+    """
+    from app.master_deal.models import MasterDealUpd
+    from app.models import Operation
+    op = (db.query(Operation).filter(Operation.master_deal_upd_id.isnot(None), Operation.description.isnot(None))
+          .order_by(Operation.id).first())
+    if op is None:
+        pytest.skip("на стенде нет операций моста с описанием")
+    k = db.get(MasterDealUpd, op.master_deal_upd_id)
+    tpl = "Бренд «{бренд_название}», период {период_с}—{период_по}"
+    k.basis_text = tpl
+    basis = OC.build(db, op)["upd"]["basis"]
+    assert "{" not in basis and "}" not in basis, f"в панель ушёл шаблон: {basis}"
+    assert basis != tpl and "бренд_название" not in basis
+    # ДС у комплекта не нашёлся — откат на описание моста, а не на шаблон с подстановками
+    k.annex_id = None
+    fallback = OC.build(db, op)["upd"]["basis"]
+    assert fallback == op.description and "{" not in fallback
+
+
 def test_endpoint_answers_404_with_a_hint_for_a_missing_operation(db):
     from fastapi import HTTPException
     from app.routers.operations import operation_context

@@ -434,6 +434,33 @@ def upd_closing(model: dict, k, rows=None, db=None) -> dict:
 _BASIS_INVISIBLE = re.compile("[­​-‏⁠﻿]")
 
 
+def kit_basis_text(db: Session, m, k) -> Optional[str]:
+    """Основание комплекта, развёрнутое так же, как при печати (шаблон → текст).
+
+    Зачем отдельная функция (27.11.2026). «Своё основание УПД» хранится ШАБЛОНОМ с подстановками — так его и правит
+    конструктор, и разворачивает печать. Панель операции печатала `basis_text` как есть, и у первого же комплекта со
+    своим основанием владелец увидел в «основании» `{бренд_название} … {единицы_сделки}` — «галиматья из конструктора».
+    Тем же кодом это считает мост (`bridge.sync_kit`) для `operations.description`: один разворот на двоих.
+
+    None — развернуть нечем (нет ДС, строк или модели): вызывающий берёт `op.description`.
+    """
+    from sqlalchemy import text
+
+    from app.models import Contract
+    if m is None or getattr(k, "annex_id", None) is None:
+        return None
+    a = db.get(SalesAnnex, k.annex_id)
+    if a is None:
+        return None
+    c = db.get(Contract, m.contract_id) if m.contract_id else None
+    deal_ids = [r[0] for r in db.execute(text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"),
+                                         {"a": a.id})]
+    model = basis_model(db, a, c, deal_ids)
+    if not model:
+        return None
+    return upd_closing(model, k, a.rows, db).get("text") or None
+
+
 def basis_line(text: Optional[str]) -> str:
     """Основание одной услуги — одной чистой строкой (владелец 19.11.2026, M-0039): бухгалтер копирует его в 1С, 1С кладёт в XML
     УПД одной строкой, и сверка должна совпасть буква в букву. Переводы строк, неразрывные пробелы и табуляции — один пробел,

@@ -15,6 +15,7 @@ import { T } from '@/lib/tokens'
 import { errText, isAuth, detailText } from '@/lib/loadError'
 import { nowTime, fileStamp, todayMsk, monthEnd } from '@/lib/dates'
 import { sanMoney, moneyNum } from '@/lib/money'
+import { requiredKeys, missingFields, isBlank } from '@/lib/opRequirements'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import PayPlanSummary, { DupTag, FilterChip } from '@/components/operations/PayPlanSummary'
@@ -55,12 +56,19 @@ const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '
 // с копейками (для сумм выбранного): всегда 2 знака
 const fmt2 = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
 const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
-const emptyForm = () => ({ date: todayMsk(), status: 'ОПЛАЧЕНО', income: '', expense: '', bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
+// Статус не выбирается заранее (владелец 27.11.2026: «при создании новой операции по умолчанию статус не выбран»):
+// пока его нет, форма показывает «статус» и красит поле контуром, а остальные обязательные появляются по выбору —
+// какие именно, решает `lib/opRequirements` (одно правило на подсветку и на проверку сохранения).
+const emptyForm = () => ({ date: '', status: '', income: '', expense: '', bank: '', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
 
 
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
 const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 11px', fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', fontFamily: UI }
+// «Обязательное не заполнено»: контур внимания на поле формы (владелец 27.11.2026). Цвет — ролью, не хексом.
+// Полная рамка, а не borderColor: шорткат border у поля содержит var(), и правка одного цвета разложила бы
+// его на пустые longhands — рамка отвалилась бы к браузерной серой (проверено зондом 27.11.2026).
+const NEEDS = { border: '1px solid var(--warning)', boxShadow: '0 0 0 3px var(--warning-tint)' }
 
 // сегмент-переключатель (Месяц|Квартал, ставка НДС и т.п.)
 function Seg({ options, value, onChange, mono }) {
@@ -75,8 +83,9 @@ function Seg({ options, value, onChange, mono }) {
   )
 }
 
-// Однослот с поиском в шапке (для длинных списков — Статья/Контрагент)
-function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
+// Однослот с поиском в шапке (для длинных списков — Статья/Контрагент). `invalid` — обязательное ещё не выбрано:
+// рамка по роли внимания, как у обычных полей (владелец 27.11.2026).
+function SingleSelect({ value, onChange, options, placeholder, emptyLabel, invalid }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -88,7 +97,7 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
   const shown = options.filter(o => !q.trim() || String(o.label).toLowerCase().includes(q.trim().toLowerCase())).slice(0, 300)
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <div onClick={() => setOpen(o => !o)} style={{ ...inp, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selO ? 'var(--text-primary)' : 'var(--text-faint)' }}>{selO ? selO.label : placeholder} ▾</div>
+      <div onClick={() => setOpen(o => !o)} style={{ ...inp, ...(invalid ? NEEDS : null), cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selO ? 'var(--text-primary)' : 'var(--text-faint)' }}>{selO ? selO.label : placeholder} ▾</div>
       {open && (
         <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, minWidth: 210, zIndex: Z.dropdown, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: 8 }}><input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск" style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} /></div>
@@ -188,6 +197,9 @@ const docRowName = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: '
 const Cell = ({ label, opt, accent, children }) => (
   <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? T.warningText : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
 )
+// Метка поля для проб формы (подсветка обязательных, 27.11.2026): `data-op-field` на обёртке, чтобы зонд читал
+// рамку того же элемента, что видит человек, и не зависел от порядка селектов на странице.
+const Field = ({ k, children }) => <span data-op-field={k} style={{ display: 'block' }}>{children}</span>
 
 function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
                     files = [], onAttach, onRemoveFile, busyFiles }) {
@@ -200,13 +212,17 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
   // правильное значение. Расхождение двух разборов одной строки не видно глазами.
   const amt = moneyNum(f.income) || moneyNum(f.expense)
   const vatAmount = f.vat_rate > 0 && amt > 0 ? amt * f.vat_rate / (100 + f.vat_rate) : 0
-  // Смена статуса (только при создании): «оплачено» — дата сегодня + банк по умолчанию;
+  // Смена статуса (только при создании): «оплачено» — дата сегодня, банк выбирает человек (пустой подсветится);
   // «план оплат/поступлений» — дата и банк пустые (даже при переключении).
   const onStatus = (v) => {
     if (mode !== 'create') return set({ status: v })
-    if (v === 'ОПЛАЧЕНО') set({ status: v, date: f.date || todayMsk(), bank: f.bank || 'АльфаБанк' })
+    if (v === 'ОПЛАЧЕНО') set({ status: v, date: f.date || todayMsk(), bank: f.bank })
     else set({ status: v, date: '', bank: '' })
   }
+  // Обязательные поля подсвечиваются контуром только при создании: у старых записей пустой банк или статья — норма.
+  // Какие именно обязательны при выбранном статусе, решает lib/opRequirements — то же правило, что проверяет сохранение.
+  const need = mode === 'create' ? new Set(requiredKeys(f.status)) : new Set()
+  const warn = (k) => (need.has(k) && isBlank(f[k]) ? NEEDS : null)
   // Выбор контрагента подтягивает его статью/НДС по умолчанию — по направлению суммы
   // (поступление → доходные, списание → расходные).
   const onCounterparty = (v) => {
@@ -221,18 +237,18 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
     }
     set(patch)
   }
-  const sel = (val, onCh, opts, ph) => (
-    <select value={val} onChange={e => onCh(e.target.value)} style={inp}><option value="">{ph}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+  const sel = (val, onCh, opts, ph, extra) => (
+    <select value={val} onChange={e => onCh(e.target.value)} style={{ ...inp, ...(extra || null) }}><option value="">{ph}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
   )
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
-        <Cell label="Статус">{sel(f.status, onStatus, STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
-        <Cell label="Дата" opt accent={accent}>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
+        <Cell label="Статус"><Field k="status">{sel(f.status, onStatus, STATUSES.map(s => ({ value: s, label: s })), 'статус', warn('status'))}</Field></Cell>
+        <Cell label="Дата" opt accent={accent}><Field k="date">{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { border: '1px solid var(--dot-current-dz)' } : null), ...(warn('date') || null) }} />}</Field></Cell>
         <Cell label="Поступление"><input inputMode="decimal" value={f.income ?? ''} onChange={e => set({ income: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Списание"><input inputMode="decimal" value={f.expense ?? ''} onChange={e => set({ expense: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
-        <Cell label="Банк" opt accent={accent}>{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан')}</Cell>
-        <Cell label="Период"><PeriodSelect dense value={f.period} onChange={v => set({ period: v })} /></Cell>
+        <Cell label="Банк" opt accent={accent}><Field k="bank">{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан', warn('bank'))}</Field></Cell>
+        <Cell label="Период"><Field k="period"><PeriodSelect dense invalid={!!warn('period')} value={f.period} onChange={v => set({ period: v })} /></Field></Cell>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
         <Cell label="НДС">
@@ -244,8 +260,8 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
               style={{ ...inp, flex: 1, minWidth: 0, fontFamily: MONO, textAlign: 'right', background: 'var(--bg-subtle)', color: 'var(--text-muted)' }} />
           </div>
         </Cell>
-        <Cell label="Статья"><SingleSelect value={f.article_id} onChange={v => set({ article_id: v })} options={artOpts} placeholder="не выбрана" emptyLabel="— не выбрано —" /></Cell>
-        <Cell label="Контрагент"><SingleSelect value={f.counterparty_id} onChange={onCounterparty} options={cpOpts} placeholder="выберите или введите" emptyLabel="— не выбрано —" /></Cell>
+        <Cell label="Статья"><Field k="article_id"><SingleSelect value={f.article_id} onChange={v => set({ article_id: v })} options={artOpts} placeholder="не выбрана" emptyLabel="— не выбрано —" invalid={!!warn('article_id')} /></Field></Cell>
+        <Cell label="Контрагент"><Field k="counterparty_id"><SingleSelect value={f.counterparty_id} onChange={onCounterparty} options={cpOpts} placeholder="выберите или введите" emptyLabel="— не выбрано —" invalid={!!warn('counterparty_id')} /></Field></Cell>
         <Cell label="№ ДС"><input value={f.ds_num} onChange={e => set({ ds_num: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="№ счёта"><input value={f.invoice} onChange={e => set({ invoice: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Дата счёта"><input type="date" value={f.invoice_date} onChange={e => set({ invoice_date: e.target.value })} style={inp} /></Cell>
@@ -546,13 +562,9 @@ export default function Operations2() {
 
   const saveCreate = async () => {
     const f = createForm
-    const isPaid = f.status === 'ОПЛАЧЕНО'
-    const miss = []
-    if (!f.period) miss.push('период')
-    if (!f.article_id) miss.push('статья')
-    if (!f.counterparty_id) miss.push('контрагент')
-    if (isPaid) { if (!f.date) miss.push('дата'); if (!f.bank) miss.push('банк') }
-    if (miss.length) { alert('Заполните обязательные поля: ' + miss.join(', ')); return }
+    // Проверка и подсветка — одно правило (lib/opRequirements): список полей не дублируется здесь словами.
+    const miss = missingFields(f)
+    if (miss.length) { alert('Заполните обязательные поля: ' + miss.map(m => m.label).join(', ')); return }
     setSaving(true)
     try {
       const res = await api(tok()).post('/operations/', cleanOp(createForm))
@@ -877,7 +889,7 @@ export default function Operations2() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'var(--bg-subtle)', borderTop: '1px solid var(--border-inner)' }}>
               <button onClick={saveCreate} disabled={saving} style={{ ...primaryBtn, ...HEAD_BTN }}>Добавить операцию</button>
               <button onClick={() => setCreateOpen(false)} style={{ ...btn(false), ...HEAD_BTN }}>Отмена</button>
-              <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>сумма НДС считается автоматически по ставке · обязательны статус, дата, банк, статья, сумма</span>
+              <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>обязательны статус, период, статья и контрагент · у «Оплачено» — ещё дата и банк · НДС считается по ставке</span>
             </div>
           </div>
         )}

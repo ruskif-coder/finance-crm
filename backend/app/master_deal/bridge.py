@@ -31,6 +31,8 @@ def main_service(rows: list) -> Optional[str]:
 
 def _kit_rows(annex, k) -> list:
     rows = list(annex.rows or [])
+    if k is None:                 # без комплекта — все строки ДС (основной ДС для проверки правила)
+        return rows
     if k.brand:
         rows = [r for r in rows if (r.get("brand") or "") == k.brand] or rows
     if k.service:
@@ -38,17 +40,38 @@ def _kit_rows(annex, k) -> list:
     return rows
 
 
-def _article(db: Session, annex, k) -> Optional[int]:
+# Статья доп-услуг: допы, вынесенные в отдельный ДС `#n-01` под основным, при формировании операции получают её
+# (владелец 28.11.2026: «допы отдельно от основной услуги, когда идут под основным ДС (n-01), имеют статью доп услуги»).
+ADDONS_ARTICLE = "Доп услуги"
+
+
+def _addons_article(db: Session) -> Optional[int]:
+    return db.execute(text("SELECT id FROM articles WHERE name = :n"), {"n": ADDONS_ARTICLE}).scalar()
+
+
+def _article_of_annex(db: Session, annex, k=None) -> Optional[int]:
+    """Статья по строкам ДС: базовая услуга с наибольшей суммой → её статья в справочнике услуг; нет базовой
+    (только допы) → статья услуги сделки комплекта."""
     name = main_service(_kit_rows(annex, k))
     if name:
         a = db.execute(text("SELECT revenue_article_id FROM sales_services WHERE name = :n"), {"n": name}).scalar()
         if a:
             return a
-    # Только допы (или услуга без статьи) — статья услуги сделки комплекта
     return db.execute(text("""SELECT s.revenue_article_id FROM sales_deal_annex_allocation x JOIN sales_deals d ON d.id = x.deal_id
                                JOIN sales_services s ON s.id = d.service_id
                               WHERE x.annex_id = :a AND s.revenue_article_id IS NOT NULL ORDER BY x.deal_id LIMIT 1"""),
                       {"a": annex.id}).scalar()
+
+
+def _article(db: Session, annex, k) -> Optional[int]:
+    """Статья операции комплекта. Доп-ДС (`#n-01`) — «Доп услуги»: это допы, вынесенные из основного ДС, и доход у них
+    свой (раньше бралась статья услуги сделки и у пакета OLV она совпадала, а у еФарм-пакетов доп-операция получала
+    «еФарм» — владелец 28.11.2026). Остальные ДС — по своему составу."""
+    if getattr(annex, "sub_no", None):
+        art = _addons_article(db)
+        if art:
+            return art
+    return _article_of_annex(db, annex, k)
 
 
 def _has_parts(db: Session, op) -> bool:
@@ -99,9 +122,8 @@ def sync_kit(db: Session, m, k):
         return op
     a = db.get(SalesAnnex, k.annex_id)
     c = db.get(Contract, m.contract_id)
-    model = tpl_doc.basis_model(db, a, c, [r[0] for r in db.execute(
-        text("SELECT deal_id FROM sales_deal_annex_allocation WHERE annex_id = :a"), {"a": a.id})])
-    basis = tpl_doc.upd_closing(model, k, a.rows, db)["text"] if model else None
+    # «Своё основание» комплекта хранится шаблоном с подстановками — разворачиваем тем же кодом, что печать (27.11.2026).
+    basis = tpl_doc.kit_basis_text(db, m, k)
     vat = float(a.vat_rate or 0)
     income = round(float(k.onec_gross if k.onec_gross is not None else (k.gross or 0)), 2)   # вернувшаяся из 1С сумма — факт (решение 42)
     # «Дата» операции у плана пустая (владелец 09.11.2026) — её ставит оплата; дата счёта — своё поле `invoice_date`

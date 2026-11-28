@@ -12,6 +12,11 @@ import { todayMsk } from '../lib/dates'
 
 const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
 
+// «Обязательное не заполнено» — тот же контур внимания, что у полей формы операции (владелец 27.11.2026).
+// Проп `invalid` необязательный: остальные экраны зовут PeriodSelect как раньше и ничего не подсвечивают.
+// Рамка целиком: у поля шорткат border содержит var(), и одиночный borderColor его разваливает (проверено зондом).
+const NEEDS = { border: '1px solid var(--warning)', boxShadow: '0 0 0 3px var(--warning-tint)' }
+
 function parsePeriod(v) {
   const q = /^Q([1-4])\s+(\d{4})$/.exec(v || '')
   if (q) return { mode: 'quarter', y: q[2], m: '', q: q[1] }
@@ -20,7 +25,7 @@ function parsePeriod(v) {
   return { mode: 'month', y: '', m: '', q: '' }
 }
 
-export function PeriodSelect({ value, onChange, allowQuarter = true, dense = false }) {
+export function PeriodSelect({ value, onChange, allowQuarter = true, dense = false, invalid = false }) {
   const init = parsePeriod(value)
   const [mode, setMode] = useState(init.mode)
   const [y, setY] = useState(init.y)
@@ -56,23 +61,23 @@ export function PeriodSelect({ value, onChange, allowQuarter = true, dense = fal
     return (
       <div style={{ display: 'flex', gap: 6, height: 36, alignItems: 'stretch' }}>
         {allowQuarter && (
-          <div style={{ display: 'flex', flex: '0 0 auto', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', flex: '0 0 auto', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, alignItems: 'stretch', ...(invalid ? NEEDS : null) }}>
             <button type="button" onClick={() => { setMode('month'); emit('month', y, m, q) }} style={segBtn(mode === 'month')}>Мес</button>
             <button type="button" onClick={() => { setMode('quarter'); emit('quarter', y, m, q) }} style={segBtn(mode === 'quarter')}>Кв</button>
           </div>
         )}
         {mode === 'month' ? (
-          <select value={m} onChange={e => { const nm = e.target.value; const ny = y || (nm ? String(nowY) : ''); setM(nm); setY(ny); emit('month', ny, nm, q) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
+          <select value={m} onChange={e => { const nm = e.target.value; const ny = y || (nm ? String(nowY) : ''); setM(nm); setY(ny); emit('month', ny, nm, q) }} style={{ ...sel, flex: 1, minWidth: 0, ...(invalid ? NEEDS : null) }}>
             <option value="">Месяц</option>
             {MONTHS_RU.map((mn, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{mn}</option>)}
           </select>
         ) : (
-          <select value={q} onChange={e => { const nq = e.target.value; const ny = y || (nq ? String(nowY) : ''); setQ(nq); setY(ny); emit('quarter', ny, m, nq) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
+          <select value={q} onChange={e => { const nq = e.target.value; const ny = y || (nq ? String(nowY) : ''); setQ(nq); setY(ny); emit('quarter', ny, m, nq) }} style={{ ...sel, flex: 1, minWidth: 0, ...(invalid ? NEEDS : null) }}>
             <option value="">Квартал</option>
             {[1, 2, 3, 4].map(n => <option key={n} value={String(n)}>{n}-й кв</option>)}
           </select>
         )}
-        <select value={y} onChange={e => { setY(e.target.value); emit(mode, e.target.value, m, q) }} style={{ ...sel, flex: '0 0 74px' }}>
+        <select value={y} onChange={e => { setY(e.target.value); emit(mode, e.target.value, m, q) }} style={{ ...sel, flex: '0 0 74px', ...(invalid ? NEEDS : null) }}>
           <option value="">Год</option>
           {years.map(yr => <option key={yr} value={yr}>{yr}</option>)}
         </select>
